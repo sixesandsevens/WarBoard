@@ -1,0 +1,210 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>WarBoard Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; }
+    #top { padding: 10px; display: flex; gap: 10px; align-items: center; }
+    #board { width: 100vw; height: calc(100vh - 60px); background: #222; position: relative; overflow: hidden; }
+    .token {
+      position: absolute;
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.5);
+      display: grid; place-items: center;
+      color: #111;
+      font-weight: 700;
+      user-select: none;
+      cursor: grab;
+    }
+    .token small { display:block; font-size: 10px; color: rgba(0,0,0,0.7); margin-top: 2px; }
+    #log { font-family: ui-monospace, monospace; font-size: 12px; max-height: 120px; overflow:auto; padding: 10px; background: #111; color:#ddd; }
+    input { padding: 6px; }
+    button { padding: 6px 10px; }
+  </style>
+</head>
+<body>
+  <div id="top">
+    <label>Room: <input id="room" value="demo"/></label>
+    <label>Client ID: <input id="cid" value="chris"/></label>
+    <button id="connect">Connect</button>
+    <button id="spawn">Spawn Token</button>
+    <label><input type="checkbox" id="playersMove"> Players can move (GM-only to toggle later)</label>
+  </div>
+  <div id="board"></div>
+  <div id="log"></div>
+
+<script>
+  const board = document.getElementById("board");
+  const logEl = document.getElementById("log");
+  const roomEl = document.getElementById("room");
+  const cidEl = document.getElementById("cid");
+  const playersMoveEl = document.getElementById("playersMove");
+
+  let ws = null;
+  let state = null; // server state
+  const tokens = new Map(); // id -> el
+
+  function log(line) {
+    logEl.textContent += line + "\n";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function send(type, payload={}) {
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({type, payload}));
+  }
+
+  function upsertToken(t) {
+    let el = tokens.get(t.id);
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "token";
+      el.dataset.id = t.id;
+      el.innerHTML = `<div>${t.name[0] ?? "T"}<small>${t.name}</small></div>`;
+      board.appendChild(el);
+      tokens.set(t.id, el);
+
+      // drag
+      let dragging = false;
+      let offX = 0, offY = 0;
+
+      el.addEventListener("mousedown", (e) => {
+        dragging = true;
+        el.style.cursor = "grabbing";
+        offX = e.offsetX;
+        offY = e.offsetY;
+      });
+      window.addEventListener("mousemove", (e) => {
+        if (!dragging) return;
+        const rect = board.getBoundingClientRect();
+        const x = e.clientX - rect.left - offX;
+        const y = e.clientY - rect.top - offY;
+
+        // optimistic update
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+
+        // send move event (throttle-ish: only on animation frame)
+        requestAnimationFrame(() => send("TOKEN_MOVE", {id: t.id, x, y}));
+      });
+      window.addEventListener("mouseup", () => {
+        if (!dragging) return;
+        dragging = false;
+        el.style.cursor = "grab";
+      });
+
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        const owner = prompt("Assign token to which client_id? (blank = GM/unassigned)", t.owner_id || "");
+        if (owner === null) return;
+        send("TOKEN_ASSIGN", { id: t.id, owner_id: owner.trim() || null });
+      });
+    }
+
+    el.style.left = `${t.x}px`;
+    el.style.top = `${t.y}px`;
+    el.style.background = t.color || "#fff";
+    el.querySelector("small").textContent = t.name;
+    el.firstElementChild.firstChild.textContent = (t.name && t.name[0]) ? t.name[0] : "T";
+  }
+
+  function deleteToken(id) {
+    const el = tokens.get(id);
+    if (el) el.remove();
+    tokens.delete(id);
+  }
+
+  playersMoveEl.addEventListener("change", (e) => {
+    send("ROOM_SETTINGS", { allow_players_move: e.target.checked });
+  });
+
+  document.getElementById("connect").onclick = () => {
+    const room = encodeURIComponent(roomEl.value.trim());
+    const cid = encodeURIComponent(cidEl.value.trim());
+    const proto = (location.protocol === "https:") ? "wss" : "ws";
+    const url = `${proto}://${location.host}/ws/${room}?client_id=${cid}`;
+    ws = new WebSocket(url);
+
+    ws.onopen = () => log(`connected: ${url}`);
+    ws.onclose = () => log(`disconnected`);
+    ws.onerror = () => log(`ws error`);
+
+    ws.onmessage = (msg) => {
+      const ev = JSON.parse(msg.data);
+      if (ev.type === "STATE_SYNC") {
+        state = ev.payload;
+        log(`STATE_SYNC v${state.version} gm=${state.gm_id}`);
+        playersMoveEl.checked = !!state.allow_players_move;
+        const isGM = (state.gm_id === cidEl.value.trim());
+        playersMoveEl.disabled = !isGM;
+        log(isGM ? "You are GM" : `GM is ${state.gm_id}`);
+        // redraw all
+        for (const [id, t] of Object.entries(state.tokens || {})) upsertToken(t);
+        return;
+      }
+
+      if (ev.type === "TOKEN_CREATE") {
+        // server echo - apply
+        // update local state if present
+        log(`TOKEN_CREATE ${ev.payload.id}`);
+        return;
+      }
+
+      if (ev.type === "TOKEN_MOVE") {
+        // apply authoritative position from server
+        const {id, x, y, rejected, reason} = ev.payload;
+        const el = tokens.get(id);
+        if (el) {
+          el.style.left = `${x}px`;
+          el.style.top = `${y}px`;
+        }
+        if (rejected) log(`MOVE REJECTED for ${id}: ${reason}`);
+        if (state && state.tokens && state.tokens[id]) {
+          state.tokens[id].x = x;
+          state.tokens[id].y = y;
+        }
+        return;
+      }
+
+      if (ev.type === "TOKEN_DELETE") {
+        deleteToken(ev.payload.id);
+        if (state && state.tokens) delete state.tokens[ev.payload.id];
+        return;
+      }
+
+      if (ev.type === "TOKEN_ASSIGN") {
+        const {id, owner_id} = ev.payload;
+        if (state && state.tokens && state.tokens[id]) state.tokens[id].owner_id = owner_id;
+        log(`TOKEN_ASSIGN ${id} -> ${owner_id}`);
+        return;
+      }
+
+      if (ev.type === "ROOM_SETTINGS") {
+        const {allow_players_move} = ev.payload;
+        if (state) state.allow_players_move = !!allow_players_move;
+        playersMoveEl.checked = !!allow_players_move;
+        log(`ROOM_SETTINGS allow_players_move=${!!allow_players_move}`);
+        return;
+      }
+
+      if (ev.type === "ERROR") {
+        log(`ERROR: ${ev.payload.message}`);
+        return;
+      }
+    };
+  };
+
+  document.getElementById("spawn").onclick = () => {
+    const id = crypto.randomUUID();
+    const name = prompt("Token name?", "Gobbo") || "Token";
+    const color = "#" + Math.floor(Math.random()*16777215).toString(16).padStart(6,"0");
+    // spawn near top-left
+    send("TOKEN_CREATE", {id, x: 30 + Math.random()*200, y: 30 + Math.random()*200, name, color});
+    // optimistic create locally (optional)
+    upsertToken({id, x: 50, y: 50, name, color});
+  };
+</script>
+</body>
+</html>

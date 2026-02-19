@@ -1,0 +1,1381 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>WarBoard Canvas Test</title>
+  <style>
+    body { margin:0; font-family: system-ui, sans-serif; background:#111; color:#eee; }
+    #top {
+      padding: 10px;
+      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+      background:#0f0f0f; border-bottom:1px solid #222;
+    }
+    input, select { padding: 6px; }
+    button { padding: 6px 10px; cursor:pointer; }
+    label { display:flex; gap:6px; align-items:center; }
+    #wrap { position: relative; width: 100vw; height: calc(100vh - 64px); }
+    canvas { display:block; width:100%; height:100%; background:#222; }
+    #log {
+      position:absolute; left:10px; bottom:10px;
+      width:min(560px, calc(100vw - 20px));
+      max-height: 180px; overflow:auto;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 8px;
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      z-index: 2;
+    }
+    #hint {
+      position:absolute; right:10px; bottom:10px;
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 8px;
+      font-size: 12px;
+      max-width: 420px;
+      line-height: 1.35;
+      z-index: 2;
+    }
+    .pill { display:inline-block; padding:2px 6px; border-radius:999px; border:1px solid rgba(255,255,255,0.18); }
+  </style>
+</head>
+<body>
+  <div id="top">
+    <label>Room <input id="room" value="demo"></label>
+    <label>Client ID <input id="cid" value="chris"></label>
+    <label>GM Key <input id="gmKey" placeholder="optional"></label>
+    <button id="connect">Connect</button>
+    <button id="spawn">Spawn Token</button>
+    <button id="undo">Undo</button>
+    <button id="redo">Redo</button>
+    <button id="gmPanelBtn">GM Panel</button>
+    <button id="roomsPanelBtn">Rooms</button>
+
+    <label><input type="checkbox" id="allowPlayersMove"> Players move assigned</label>
+    <label><input type="checkbox" id="allowAllMove"> Everyone moves everything</label>
+    <label><input type="checkbox" id="lockdown"> Lockdown</label>
+
+    <label>BG URL <input id="bgUrl" placeholder="https://..."></label>
+    <button id="setBg">Set BG</button>
+
+    <label>Tool
+      <select id="tool">
+        <option value="move">Move</option>
+        <option value="pen">Pen</option>
+        <option value="eraser">Eraser (GM)</option>
+        <option value="rect">Rect</option>
+        <option value="circle">Circle</option>
+        <option value="line">Line</option>
+        <option value="ruler">Ruler</option>
+      </select>
+    </label>
+
+    <label>Color <input id="color" type="color" value="#ffffff"></label>
+    <label>Size <input id="size" type="number" value="3" min="1" max="30" style="width:70px"></label>
+    <label>ft/sq <input id="feetPerSq" type="number" value="5" min="1" max="100" style="width:70px"></label>
+
+    <label><input type="checkbox" id="snap" checked> Snap</label>
+    <label>Grid <input id="grid" value="50" style="width:70px"></label>
+    <label><input type="checkbox" id="showGrid" checked> Grid</label>
+
+    <label><input type="checkbox" id="layerGrid" checked> Layer Grid</label>
+    <label><input type="checkbox" id="layerDraw" checked> Layer Drawings</label>
+    <label><input type="checkbox" id="layerShapes" checked> Layer Shapes</label>
+    <label><input type="checkbox" id="layerTokens" checked> Layer Tokens</label>
+  </div>
+
+  <div id="wrap">
+    <canvas id="c"></canvas>
+    <div id="roomsPanel" style="
+      position:absolute; top:10px; left:10px;
+      width:min(460px, calc(100vw - 20px));
+      max-height: calc(100vh - 120px);
+      overflow:auto;
+      background: rgba(0,0,0,0.78);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px;
+      display:none;
+      z-index: 3;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <b>Rooms</b>
+        <button id="roomsPanelClose">Close</button>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+        <input id="newRoomName" placeholder="Room name" style="flex:1; min-width:150px;">
+        <input id="newRoomId" placeholder="optional id" style="width:120px;">
+        <button id="createRoomBtn">Create</button>
+        <button id="refreshRoomsBtn">Refresh</button>
+      </div>
+      <div id="roomsList" style="margin-top:8px; font-size:12px;"></div>
+
+      <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:10px 0;">
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <b>Snapshots for</b>
+        <code id="snapshotRoomLabel">demo</code>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+        <input id="snapshotLabelInput" placeholder="Save Point label" style="flex:1; min-width:180px;">
+        <button id="saveSnapshotBtn">Save Point</button>
+        <button id="refreshSnapshotsBtn">Refresh</button>
+      </div>
+      <div id="snapshotsList" style="margin-top:8px; font-size:12px;"></div>
+    </div>
+    <div id="gmPanel" style="
+      position:absolute; top:10px; right:10px;
+      width:min(480px, calc(100vw - 20px));
+      max-height: calc(100vh - 120px);
+      overflow:auto;
+      background: rgba(0,0,0,0.78);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px;
+      display:none;
+      z-index: 3;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <b>GM Panel</b>
+        <button id="gmPanelClose">Close</button>
+      </div>
+
+      <div style="margin-top:10px;">
+        <div style="opacity:.9; margin-bottom:6px;">Connected players</div>
+        <div id="playerList" style="font-family: ui-monospace, monospace; font-size:12px;"></div>
+      </div>
+
+      <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:10px 0;">
+      <div>
+        <div style="opacity:.9; margin-bottom:6px;">Tokens (owner + lock)</div>
+        <div id="tokenList"></div>
+      </div>
+
+      <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:10px 0;">
+      <div>
+        <div style="opacity:.9; margin-bottom:6px;">Strokes (lock)</div>
+        <div id="strokeList"></div>
+      </div>
+
+      <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:10px 0;">
+      <div>
+        <div style="opacity:.9; margin-bottom:6px;">Shapes (lock)</div>
+        <div id="shapeList"></div>
+      </div>
+    </div>
+
+    <div id="log"></div>
+    <div id="hint">
+      <div><span class="pill">Left-drag</span> act with tool</div>
+      <div><span class="pill">Right-drag</span> pan</div>
+      <div><span class="pill">Wheel</span> zoom</div>
+      <div><span class="pill">Delete</span> delete selected token (GM)</div>
+      <div style="opacity:.85;margin-top:6px">
+        Layer visibility and background are server-synced room settings.
+      </div>
+    </div>
+  </div>
+
+<script>
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+  const logEl = document.getElementById("log");
+
+  const roomEl = document.getElementById("room");
+  const cidEl = document.getElementById("cid");
+  const gmKeyEl = document.getElementById("gmKey");
+  const allowPlayersMoveEl = document.getElementById("allowPlayersMove");
+  const allowAllMoveEl = document.getElementById("allowAllMove");
+  const lockdownEl = document.getElementById("lockdown");
+  const bgUrlEl = document.getElementById("bgUrl");
+
+  const layerGridEl = document.getElementById("layerGrid");
+  const layerDrawEl = document.getElementById("layerDraw");
+  const layerShapesEl = document.getElementById("layerShapes");
+  const layerTokensEl = document.getElementById("layerTokens");
+
+  const gmPanel = document.getElementById("gmPanel");
+  const roomsPanel = document.getElementById("roomsPanel");
+  const playerListEl = document.getElementById("playerList");
+  const tokenListEl = document.getElementById("tokenList");
+  const strokeListEl = document.getElementById("strokeList");
+  const shapeListEl = document.getElementById("shapeList");
+  const roomsListEl = document.getElementById("roomsList");
+  const snapshotsListEl = document.getElementById("snapshotsList");
+  const snapshotRoomLabelEl = document.getElementById("snapshotRoomLabel");
+  const newRoomNameEl = document.getElementById("newRoomName");
+  const newRoomIdEl = document.getElementById("newRoomId");
+  const snapshotLabelInputEl = document.getElementById("snapshotLabelInput");
+
+  const toolEl = document.getElementById("tool");
+  const colorEl = document.getElementById("color");
+  const sizeEl = document.getElementById("size");
+  const feetPerSqEl = document.getElementById("feetPerSq");
+  const snapEl = document.getElementById("snap");
+  const gridEl = document.getElementById("grid");
+  const showGridEl = document.getElementById("showGrid");
+
+  function log(line) {
+    logEl.textContent += line + "\n";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function apiUrl(path, includeGm = false) {
+    const url = new URL(path, window.location.origin);
+    if (includeGm) {
+      const gm = gmKeyEl.value.trim();
+      if (gm) url.searchParams.set("gm_key", gm);
+    }
+    return url.toString();
+  }
+
+  async function apiGet(path, includeGm = false) {
+    const res = await fetch(apiUrl(path, includeGm));
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  async function apiPost(path, body = {}, includeGm = false) {
+    const res = await fetch(apiUrl(path, includeGm), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  let ws = null;
+  let heartbeatTimer = null;
+  const players = new Set();
+
+  const state = {
+    room_id: null,
+    gm_id: null,
+    allow_players_move: false,
+    allow_all_move: false,
+    lockdown: false,
+    background_url: null,
+    layer_visibility: { grid: true, drawings: true, shapes: true, tokens: true },
+    draw_order: { strokes: [], shapes: [] },
+    version: 0,
+    tokens: new Map(),
+    strokes: new Map(),
+    shapes: new Map(),
+  };
+
+  function myId() { return cidEl.value.trim(); }
+  function isGM() { return state.gm_id && myId() === state.gm_id; }
+
+  const cam = { x: 80, y: 60, z: 1 };
+  const ui = { gridSize: 50, snap: true, showGrid: true, feetPerSq: 5 };
+
+  let draggingTokenId = null;
+  let selectedTokenId = null;
+  let dragOffset = { x: 0, y: 0 };
+  let isPanning = false;
+  let isShiftDown = false;
+  let panStart = { sx: 0, sy: 0, camX: 0, camY: 0 };
+  let pointerCaptured = false;
+
+  let activeStroke = null;
+  let activeShapePreview = null;
+  let activeRuler = null;
+  let erasingActive = false;
+  let lastEraseWorld = null;
+
+  let lastMoveSentAt = 0;
+  const MOVE_SEND_INTERVAL_MS = 33;
+  let lastEraseSentAt = 0;
+  const ERASE_SEND_INTERVAL_MS = 40;
+
+  let bgImage = null;
+  let bgImageUrl = null;
+  let bgImageStatus = "idle";
+  const bgCache = new Map();
+
+  function setBackgroundUrl(url) {
+    const next = url || null;
+    if (next === bgImageUrl) return;
+    bgImageUrl = next;
+    if (!next) {
+      bgImage = null;
+      bgImageStatus = "idle";
+      requestRender();
+      return;
+    }
+    if (bgCache.has(next)) {
+      bgImage = bgCache.get(next);
+      bgImageStatus = "ready";
+      requestRender();
+      return;
+    }
+    bgImageStatus = "loading";
+    bgImage = null;
+    const img = new Image();
+    img.onload = () => {
+      if (bgImageUrl === next) {
+        bgImage = img;
+        bgCache.set(next, img);
+        bgImageStatus = "ready";
+        requestRender();
+      }
+    };
+    img.onerror = () => {
+      bgImageStatus = "error";
+      log("BG failed to load");
+      requestRender();
+    };
+    img.src = next;
+  }
+
+  function refreshGmUI() {
+    const gm = isGM();
+
+    allowPlayersMoveEl.disabled = !gm;
+    allowAllMoveEl.disabled = !gm;
+    lockdownEl.disabled = !gm;
+    bgUrlEl.disabled = !gm;
+    document.getElementById("setBg").disabled = !gm;
+    document.getElementById("undo").disabled = !gm;
+    document.getElementById("redo").disabled = !gm;
+
+    [layerGridEl, layerDrawEl, layerShapesEl, layerTokensEl].forEach((el) => { el.disabled = !gm; });
+
+    allowPlayersMoveEl.checked = !!state.allow_players_move;
+    allowAllMoveEl.checked = !!state.allow_all_move;
+    lockdownEl.checked = !!state.lockdown;
+    layerGridEl.checked = !!state.layer_visibility.grid;
+    layerDrawEl.checked = !!state.layer_visibility.drawings;
+    layerShapesEl.checked = !!state.layer_visibility.shapes;
+    layerTokensEl.checked = !!state.layer_visibility.tokens;
+    bgUrlEl.value = state.background_url || "";
+
+    const arr = Array.from(players).sort();
+    playerListEl.innerHTML = arr.map((id) => {
+      const tag = id === state.gm_id ? " (GM)" : "";
+      return `<div>${id}${tag}</div>`;
+    }).join("") || `<div style="opacity:.7">(none yet)</div>`;
+
+    if (!gm) {
+      tokenListEl.innerHTML = `<div style="opacity:.7">Only GM can edit token ownership/locks.</div>`;
+      strokeListEl.innerHTML = `<div style="opacity:.7">Only GM can lock strokes.</div>`;
+      shapeListEl.innerHTML = `<div style="opacity:.7">Only GM can lock shapes.</div>`;
+      return;
+    }
+
+    const ownerOptions = ["", ...arr];
+    const tokenRows = [];
+    for (const [id, t] of state.tokens) {
+      const opts = ownerOptions.map((o) => {
+        const label = o === "" ? "(unassigned)" : o;
+        const sel = ((t.owner_id || "") === o) ? "selected" : "";
+        return `<option value="${o}" ${sel}>${label}</option>`;
+      }).join("");
+
+      const lockChecked = t.locked ? "checked" : "";
+      tokenRows.push(`
+        <div style="display:flex; gap:8px; align-items:center; margin:6px 0;">
+          <div style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            <span>${t.name || id}</span> <span style="opacity:.6">(${id.slice(0,8)})</span>
+          </div>
+          <select data-token-owner="${id}" style="padding:4px;">${opts}</select>
+          <label style="font-size:12px;"><input type="checkbox" data-token-lock="${id}" ${lockChecked}> lock</label>
+        </div>
+      `);
+    }
+    tokenListEl.innerHTML = tokenRows.join("") || `<div style="opacity:.7">(no tokens)</div>`;
+
+    tokenListEl.querySelectorAll("select[data-token-owner]").forEach((sel) => {
+      sel.onchange = () => send("TOKEN_ASSIGN", { id: sel.getAttribute("data-token-owner"), owner_id: sel.value.trim() || null });
+    });
+    tokenListEl.querySelectorAll("input[data-token-lock]").forEach((chk) => {
+      chk.onchange = () => send("TOKEN_SET_LOCK", { id: chk.getAttribute("data-token-lock"), locked: chk.checked });
+    });
+
+    const strokeRows = [];
+    for (const [id, s] of state.strokes) {
+      const lockChecked = s.locked ? "checked" : "";
+      strokeRows.push(`<div style="display:flex; justify-content:space-between; margin:4px 0;"><span>${id.slice(0, 12)}</span><label style="font-size:12px;"><input type="checkbox" data-stroke-lock="${id}" ${lockChecked}> lock</label></div>`);
+    }
+    strokeListEl.innerHTML = strokeRows.join("") || `<div style="opacity:.7">(no strokes)</div>`;
+    strokeListEl.querySelectorAll("input[data-stroke-lock]").forEach((chk) => {
+      chk.onchange = () => send("STROKE_SET_LOCK", { id: chk.getAttribute("data-stroke-lock"), locked: chk.checked });
+    });
+
+    const shapeRows = [];
+    for (const [id, s] of state.shapes) {
+      const lockChecked = s.locked ? "checked" : "";
+      shapeRows.push(`<div style="display:flex; justify-content:space-between; margin:4px 0;"><span>${s.type} ${id.slice(0, 12)}</span><label style="font-size:12px;"><input type="checkbox" data-shape-lock="${id}" ${lockChecked}> lock</label></div>`);
+    }
+    shapeListEl.innerHTML = shapeRows.join("") || `<div style="opacity:.7">(no shapes)</div>`;
+    shapeListEl.querySelectorAll("input[data-shape-lock]").forEach((chk) => {
+      chk.onchange = () => send("SHAPE_SET_LOCK", { id: chk.getAttribute("data-shape-lock"), locked: chk.checked });
+    });
+  }
+
+  async function refreshRoomsPanel() {
+    try {
+      const data = await apiGet("/api/rooms");
+      const rooms = data.rooms || [];
+      const rows = rooms.map((r) => `
+        <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
+          <button data-open-room="${r.room_id}" style="padding:2px 6px;">Open</button>
+          <code>${r.room_id}</code>
+          <span style="opacity:.9">${r.name}</span>
+          <span style="opacity:.6">${(r.updated_at || "").replace("T", " ").slice(0, 19)}</span>
+        </div>
+      `);
+      roomsListEl.innerHTML = rows.join("") || `<div style="opacity:.7">(no rooms)</div>`;
+      roomsListEl.querySelectorAll("button[data-open-room]").forEach((btn) => {
+        btn.onclick = () => {
+          roomEl.value = btn.getAttribute("data-open-room");
+          snapshotRoomLabelEl.textContent = roomEl.value.trim();
+          refreshSnapshotsPanel();
+        };
+      });
+    } catch (e) {
+      roomsListEl.innerHTML = `<div style="color:#ffb3b3">Rooms load failed</div>`;
+      log(`ROOMS ERROR: ${e.message || e}`);
+    }
+  }
+
+  async function refreshSnapshotsPanel() {
+    const rid = roomEl.value.trim();
+    snapshotRoomLabelEl.textContent = rid || "(none)";
+    if (!rid) {
+      snapshotsListEl.innerHTML = `<div style="opacity:.7">(enter room id)</div>`;
+      return;
+    }
+    try {
+      const data = await apiGet(`/api/rooms/${encodeURIComponent(rid)}/snapshots`);
+      const snaps = data.snapshots || [];
+      const rows = snaps.map((s) => `
+        <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
+          <button data-restore-snap="${s.snapshot_id}" style="padding:2px 6px;">Restore</button>
+          <code>${s.snapshot_id}</code>
+          <span style="opacity:.9">${s.label}</span>
+          <span style="opacity:.6">${(s.created_at || "").replace("T", " ").slice(0, 19)}</span>
+        </div>
+      `);
+      snapshotsListEl.innerHTML = rows.join("") || `<div style="opacity:.7">(no snapshots)</div>`;
+      snapshotsListEl.querySelectorAll("button[data-restore-snap]").forEach((btn) => {
+        btn.onclick = async () => {
+          const sid = btn.getAttribute("data-restore-snap");
+          try {
+            await apiPost(`/api/rooms/${encodeURIComponent(rid)}/restore/${encodeURIComponent(sid)}`, {}, true);
+            log(`RESTORED snapshot ${sid}`);
+            await refreshSnapshotsPanel();
+          } catch (e) {
+            log(`RESTORE ERROR: ${e.message || e}`);
+          }
+        };
+      });
+    } catch (e) {
+      snapshotsListEl.innerHTML = `<div style="color:#ffb3b3">Snapshots load failed</div>`;
+      log(`SNAPSHOTS ERROR: ${e.message || e}`);
+    }
+  }
+
+  function resizeCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+    canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    requestRender();
+  }
+  window.addEventListener("resize", resizeCanvas);
+  resizeCanvas();
+
+  function requestRender() { render(); }
+
+  function screenToWorld(sx, sy) { return { x: (sx - cam.x) / cam.z, y: (sy - cam.y) / cam.z }; }
+  function worldToScreen(wx, wy) { return { x: wx * cam.z + cam.x, y: wy * cam.z + cam.y }; }
+  function snap(v) { return ui.snap ? Math.round(v / ui.gridSize) * ui.gridSize : v; }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function tokenRadiusWorld() { return 22; }
+
+  function hitTestToken(wx, wy) {
+    const r = tokenRadiusWorld();
+    let best = null;
+    let bestD2 = Infinity;
+    for (const [id, t] of state.tokens) {
+      const dx = wx - t.x;
+      const dy = wy - t.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= r * r && d2 < bestD2) { best = id; bestD2 = d2; }
+    }
+    return best;
+  }
+
+  function drawBackground() {
+    if (bgImage) {
+      const a = worldToScreen(0, 0);
+      const b = worldToScreen(bgImage.naturalWidth, bgImage.naturalHeight);
+      const w = b.x - a.x;
+      const h = b.y - a.y;
+      ctx.drawImage(bgImage, a.x, a.y, w, h);
+    }
+
+    if (bgImageStatus === "loading") {
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.45)";
+      ctx.fillRect(12, 12, 140, 28);
+      ctx.fillStyle = "rgba(255,255,255,0.95)";
+      ctx.font = "12px ui-monospace, monospace";
+      ctx.fillText("Loading background...", 20, 30);
+      ctx.restore();
+    } else if (bgImageStatus === "error") {
+      ctx.save();
+      ctx.fillStyle = "rgba(120,0,0,0.55)";
+      ctx.fillRect(12, 12, 180, 28);
+      ctx.fillStyle = "rgba(255,240,240,0.95)";
+      ctx.font = "12px ui-monospace, monospace";
+      ctx.fillText("Background failed to load", 20, 30);
+      ctx.restore();
+    }
+  }
+
+  function drawGrid() {
+    if (!ui.showGrid || !state.layer_visibility.grid) return;
+
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    const gs = ui.gridSize * cam.z;
+    if (gs < 8) return;
+
+    const topLeft = screenToWorld(0, 0);
+    const botRight = screenToWorld(w, h);
+
+    const startX = Math.floor(topLeft.x / ui.gridSize) * ui.gridSize;
+    const endX = Math.ceil(botRight.x / ui.gridSize) * ui.gridSize;
+    const startY = Math.floor(topLeft.y / ui.gridSize) * ui.gridSize;
+    const endY = Math.ceil(botRight.y / ui.gridSize) * ui.gridSize;
+
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+
+    for (let x = startX; x <= endX; x += ui.gridSize) {
+      const sx = worldToScreen(x, 0).x;
+      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, h); ctx.stroke();
+    }
+    for (let y = startY; y <= endY; y += ui.gridSize) {
+      const sy = worldToScreen(0, y).y;
+      ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(w, sy); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawStrokes() {
+    if (!state.layer_visibility.drawings) return;
+    for (const id of state.draw_order.strokes) {
+      const s = state.strokes.get(id);
+      if (!s) continue;
+      if (!s.points || s.points.length < 2) continue;
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = s.color || "#fff";
+      ctx.lineWidth = (s.width || 3) * cam.z;
+      ctx.beginPath();
+      const p0 = worldToScreen(s.points[0].x, s.points[0].y);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < s.points.length; i++) {
+        const pi = worldToScreen(s.points[i].x, s.points[i].y);
+        ctx.lineTo(pi.x, pi.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (activeStroke && activeStroke.points.length >= 2) {
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = activeStroke.color;
+      ctx.lineWidth = activeStroke.width * cam.z;
+      ctx.beginPath();
+      const p0 = worldToScreen(activeStroke.points[0].x, activeStroke.points[0].y);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < activeStroke.points.length; i++) {
+        const pi = worldToScreen(activeStroke.points[i].x, activeStroke.points[i].y);
+        ctx.lineTo(pi.x, pi.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawOneShape(sh, isPreview) {
+    const a = worldToScreen(sh.x1, sh.y1);
+    const b = worldToScreen(sh.x2, sh.y2);
+
+    ctx.save();
+    ctx.strokeStyle = sh.color || "#fff";
+    ctx.lineWidth = (sh.width || 3) * cam.z;
+    if (isPreview) ctx.setLineDash([8, 6]);
+
+    if (sh.type === "line") {
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
+    if (sh.type === "rect") {
+      const left = Math.min(a.x, b.x);
+      const top = Math.min(a.y, b.y);
+      const w = Math.abs(a.x - b.x);
+      const h = Math.abs(a.y - b.y);
+      ctx.strokeRect(left, top, w, h);
+      ctx.restore();
+      return;
+    }
+
+    if (sh.type === "circle") {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const r = Math.sqrt(dx * dx + dy * dy);
+      ctx.beginPath(); ctx.arc(a.x, a.y, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
+    ctx.restore();
+  }
+
+  function drawShapes() {
+    if (!state.layer_visibility.shapes) return;
+    for (const id of state.draw_order.shapes) {
+      const sh = state.shapes.get(id);
+      if (!sh) continue;
+      drawOneShape(sh, false);
+    }
+    if (activeShapePreview) drawOneShape(activeShapePreview, true);
+  }
+
+  function drawTokens() {
+    if (!state.layer_visibility.tokens) return;
+    for (const [id, t] of state.tokens) {
+      const s = worldToScreen(t.x, t.y);
+      const r = tokenRadiusWorld() * cam.z;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = t.color || "#fff";
+      ctx.fill();
+      ctx.lineWidth = Math.max(2, 2 * cam.z);
+      ctx.strokeStyle = (id === selectedTokenId) ? "#00d1ff" : "rgba(255,255,255,0.45)";
+      ctx.stroke();
+
+      if (t.locked) {
+        ctx.strokeStyle = "rgba(255,0,0,0.8)";
+        ctx.lineWidth = Math.max(2, 2 * cam.z);
+        ctx.stroke();
+      }
+
+      const label = (t.name || "Token").slice(0, 8);
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.font = `${Math.max(12, 12 * cam.z)}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, s.x, s.y);
+      ctx.restore();
+    }
+  }
+
+  function drawRuler() {
+    if (!activeRuler) return;
+    const a = worldToScreen(activeRuler.x1, activeRuler.y1);
+    const b = worldToScreen(activeRuler.x2, activeRuler.y2);
+
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.setLineDash([]);
+
+    const dx = activeRuler.x2 - activeRuler.x1;
+    const dy = activeRuler.y2 - activeRuler.y1;
+    const distWorld = Math.sqrt(dx * dx + dy * dy);
+    const squares = distWorld / ui.gridSize;
+    const feet = squares * ui.feetPerSq;
+
+    const midx = (a.x + b.x) / 2;
+    const midy = (a.y + b.y) / 2;
+
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(midx - 90, midy - 14, 180, 28);
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    ctx.font = "12px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${squares.toFixed(2)} sq (${feet.toFixed(1)} ft)`, midx, midy);
+    ctx.restore();
+  }
+
+  function render() {
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#222";
+    ctx.fillRect(0, 0, w, h);
+
+    drawBackground();
+    drawGrid();
+    drawStrokes();
+    drawShapes();
+    drawTokens();
+    drawRuler();
+  }
+
+  function send(type, payload = {}) {
+    if (!ws) { log(`send(${type}) blocked: no ws`); return; }
+    if (ws.readyState !== 1) { log(`send(${type}) blocked: ws not open (${ws.readyState})`); return; }
+    ws.send(JSON.stringify({ type, payload }));
+  }
+
+  function makeId() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return "id-" + Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
+  }
+
+  function applyStateSync(s) {
+    // Cancel local in-progress interactions so authoritative sync wins cleanly.
+    isPanning = false;
+    pointerCaptured = false;
+    draggingTokenId = null;
+    activeStroke = null;
+    activeShapePreview = null;
+    activeRuler = null;
+
+    state.room_id = s.room_id;
+    state.gm_id = s.gm_id;
+    state.allow_players_move = !!s.allow_players_move;
+    state.allow_all_move = !!s.allow_all_move;
+    state.lockdown = !!s.lockdown;
+    state.background_url = s.background_url || null;
+    state.layer_visibility = {
+      grid: s.layer_visibility?.grid ?? true,
+      drawings: s.layer_visibility?.drawings ?? true,
+      shapes: s.layer_visibility?.shapes ?? true,
+      tokens: s.layer_visibility?.tokens ?? true,
+    };
+    state.version = s.version || 0;
+
+    state.tokens.clear();
+    for (const [id, t] of Object.entries(s.tokens || {})) state.tokens.set(id, t);
+    state.strokes.clear();
+    for (const [id, st] of Object.entries(s.strokes || {})) state.strokes.set(id, st);
+    state.shapes.clear();
+    for (const [id, sh] of Object.entries(s.shapes || {})) state.shapes.set(id, sh);
+    state.draw_order = {
+      strokes: Array.isArray(s.draw_order?.strokes) ? s.draw_order.strokes.filter((id) => state.strokes.has(id)) : [],
+      shapes: Array.isArray(s.draw_order?.shapes) ? s.draw_order.shapes.filter((id) => state.shapes.has(id)) : [],
+    };
+    for (const id of state.strokes.keys()) if (!state.draw_order.strokes.includes(id)) state.draw_order.strokes.push(id);
+    for (const id of state.shapes.keys()) if (!state.draw_order.shapes.includes(id)) state.draw_order.shapes.push(id);
+
+    if (selectedTokenId && !state.tokens.has(selectedTokenId)) selectedTokenId = null;
+    setBackgroundUrl(state.background_url);
+    players.add(myId());
+    if (state.gm_id) players.add(state.gm_id);
+    refreshGmUI();
+    requestRender();
+  }
+
+  document.getElementById("connect").onclick = () => {
+    if (ws && ws.readyState === 1) { log("Already connected."); return; }
+
+    const room = encodeURIComponent(roomEl.value.trim());
+    const cid = encodeURIComponent(cidEl.value.trim());
+    const gmKey = gmKeyEl.value.trim();
+    const proto = (location.protocol === "https:") ? "wss" : "ws";
+    const gmParam = gmKey ? `&gm_key=${encodeURIComponent(gmKey)}` : "";
+    const url = `${proto}://${location.host}/ws/${room}?client_id=${cid}${gmParam}`;
+
+    ws = new WebSocket(url);
+    ws.onopen = () => {
+      log(`connected: ${url}`);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = setInterval(() => {
+        if (ws && ws.readyState === 1) send("HEARTBEAT", { ts: Date.now() });
+      }, 10000);
+    };
+    ws.onclose = () => {
+      log("disconnected");
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
+    ws.onerror = () => log("ws error");
+
+    ws.onmessage = (msg) => {
+      const ev = JSON.parse(msg.data);
+
+      if (ev.type === "STATE_SYNC") {
+        applyStateSync(ev.payload);
+        log(`STATE_SYNC v${state.version} gm=${state.gm_id} strokes=${state.strokes.size} shapes=${state.shapes.size}`);
+        return;
+      }
+
+      if (ev.type === "HELLO") {
+        if (typeof ev.payload?.is_gm === "boolean") {
+          log(ev.payload.is_gm ? "You are GM" : `GM is ${state.gm_id || "(unclaimed)"}`);
+        }
+        refreshGmUI();
+        return;
+      }
+
+      if (ev.type === "HEARTBEAT") {
+        return;
+      }
+
+      if (ev.type === "PRESENCE") {
+        players.clear();
+        for (const id of (ev.payload?.clients || [])) players.add(id);
+        if (ev.payload?.gm_id) state.gm_id = ev.payload.gm_id;
+        refreshGmUI();
+        return;
+      }
+
+      if (ev.type === "ROOM_SETTINGS") {
+        if ("allow_players_move" in ev.payload) state.allow_players_move = !!ev.payload.allow_players_move;
+        if ("allow_all_move" in ev.payload) state.allow_all_move = !!ev.payload.allow_all_move;
+        if ("lockdown" in ev.payload) state.lockdown = !!ev.payload.lockdown;
+        if ("background_url" in ev.payload) {
+          state.background_url = ev.payload.background_url || null;
+          setBackgroundUrl(state.background_url);
+        }
+        if ("layer_visibility" in ev.payload && ev.payload.layer_visibility) {
+          state.layer_visibility = { ...state.layer_visibility, ...ev.payload.layer_visibility };
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "TOKEN_CREATE") {
+        const p = ev.payload;
+        if (p?.id) state.tokens.set(p.id, { ...(state.tokens.get(p.id) || {}), ...p });
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "TOKEN_MOVE") {
+        const p = ev.payload;
+        const t = state.tokens.get(p.id);
+        if (t) {
+          t.x = p.x;
+          t.y = p.y;
+          state.tokens.set(p.id, t);
+          requestRender();
+        }
+        if (p.rejected) {
+          if (draggingTokenId === p.id) draggingTokenId = null;
+          log(`MOVE REJECTED for ${p.id}: ${p.reason}`);
+        }
+        return;
+      }
+
+      if (ev.type === "TOKEN_DELETE") {
+        state.tokens.delete(ev.payload.id);
+        if (selectedTokenId === ev.payload.id) selectedTokenId = null;
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "TOKEN_ASSIGN") {
+        const p = ev.payload;
+        const t = state.tokens.get(p.id);
+        if (t) {
+          t.owner_id = p.owner_id ?? null;
+          state.tokens.set(p.id, t);
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "TOKEN_SET_LOCK") {
+        const p = ev.payload;
+        const t = state.tokens.get(p.id);
+        if (t) {
+          t.locked = !!p.locked;
+          state.tokens.set(p.id, t);
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "STROKE_ADD") {
+        const p = ev.payload;
+        if (p?.id) {
+          state.strokes.set(p.id, p);
+          state.draw_order.strokes = state.draw_order.strokes.filter((id) => id !== p.id);
+          state.draw_order.strokes.push(p.id);
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "STROKE_DELETE") {
+        const ids = ev.payload?.ids || [];
+        for (const id of ids) {
+          state.strokes.delete(id);
+          state.draw_order.strokes = state.draw_order.strokes.filter((x) => x !== id);
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "STROKE_SET_LOCK") {
+        const p = ev.payload;
+        const s = state.strokes.get(p.id);
+        if (s) {
+          s.locked = !!p.locked;
+          state.strokes.set(p.id, s);
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "ERASE_AT") {
+        const strokeIds = ev.payload?.stroke_ids || [];
+        const shapeIds = ev.payload?.shape_ids || [];
+        for (const id of strokeIds) {
+          state.strokes.delete(id);
+          state.draw_order.strokes = state.draw_order.strokes.filter((x) => x !== id);
+        }
+        for (const id of shapeIds) {
+          state.shapes.delete(id);
+          state.draw_order.shapes = state.draw_order.shapes.filter((x) => x !== id);
+        }
+        if (strokeIds.length || shapeIds.length) {
+          refreshGmUI();
+          requestRender();
+        }
+        return;
+      }
+
+      if (ev.type === "SHAPE_ADD") {
+        const p = ev.payload;
+        if (p?.id) {
+          state.shapes.set(p.id, p);
+          state.draw_order.shapes = state.draw_order.shapes.filter((id) => id !== p.id);
+          state.draw_order.shapes.push(p.id);
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "SHAPE_DELETE") {
+        const sid = ev.payload?.id;
+        state.shapes.delete(sid);
+        state.draw_order.shapes = state.draw_order.shapes.filter((x) => x !== sid);
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "SHAPE_SET_LOCK") {
+        const p = ev.payload;
+        const s = state.shapes.get(p.id);
+        if (s) {
+          s.locked = !!p.locked;
+          state.shapes.set(p.id, s);
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "ERROR") {
+        log(`ERROR: ${ev.payload.message}`);
+        return;
+      }
+    };
+
+    refreshSnapshotsPanel();
+  };
+
+  document.getElementById("spawn").onclick = () => {
+    if (!ws || ws.readyState !== 1) { log("Spawn blocked: connect first."); return; }
+    const id = makeId();
+    const name = (prompt("Token name?", "Gobbo") || "Token").trim() || "Token";
+    const color = "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0");
+
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    const centerWorld = screenToWorld(w / 2, h / 2);
+
+    const x = snap(centerWorld.x + (Math.random() * 120 - 60));
+    const y = snap(centerWorld.y + (Math.random() * 120 - 60));
+
+    state.tokens.set(id, { id, x, y, name, color, owner_id: null, locked: false });
+    refreshGmUI();
+    requestRender();
+    send("TOKEN_CREATE", { id, x, y, name, color });
+  };
+
+  document.getElementById("undo").onclick = () => send("UNDO", {});
+  document.getElementById("redo").onclick = () => send("REDO", {});
+
+  document.getElementById("gmPanelBtn").onclick = () => {
+    gmPanel.style.display = (gmPanel.style.display === "none") ? "block" : "none";
+    refreshGmUI();
+  };
+  document.getElementById("gmPanelClose").onclick = () => { gmPanel.style.display = "none"; };
+  document.getElementById("roomsPanelBtn").onclick = async () => {
+    roomsPanel.style.display = (roomsPanel.style.display === "none") ? "block" : "none";
+    if (roomsPanel.style.display === "block") {
+      await refreshRoomsPanel();
+      await refreshSnapshotsPanel();
+    }
+  };
+  document.getElementById("roomsPanelClose").onclick = () => { roomsPanel.style.display = "none"; };
+  document.getElementById("refreshRoomsBtn").onclick = () => refreshRoomsPanel();
+  document.getElementById("refreshSnapshotsBtn").onclick = () => refreshSnapshotsPanel();
+  document.getElementById("createRoomBtn").onclick = async () => {
+    const name = newRoomNameEl.value.trim();
+    const roomId = newRoomIdEl.value.trim();
+    try {
+      const created = await apiPost("/api/rooms", { name, room_id: roomId });
+      log(`ROOM CREATED ${created.room_id}`);
+      if (created.room_id) roomEl.value = created.room_id;
+      await refreshRoomsPanel();
+      await refreshSnapshotsPanel();
+    } catch (e) {
+      log(`CREATE ROOM ERROR: ${e.message || e}`);
+    }
+  };
+  document.getElementById("saveSnapshotBtn").onclick = async () => {
+    const rid = roomEl.value.trim();
+    if (!rid) {
+      log("SAVE POINT ERROR: room id required");
+      return;
+    }
+    const label = snapshotLabelInputEl.value.trim();
+    try {
+      const snap = await apiPost(`/api/rooms/${encodeURIComponent(rid)}/snapshots`, { label }, true);
+      log(`SAVE POINT ${snap.snapshot_id}`);
+      await refreshSnapshotsPanel();
+    } catch (e) {
+      log(`SAVE POINT ERROR: ${e.message || e}`);
+    }
+  };
+  roomEl.addEventListener("change", () => {
+    snapshotRoomLabelEl.textContent = roomEl.value.trim();
+    refreshSnapshotsPanel();
+  });
+
+  allowPlayersMoveEl.addEventListener("change", (e) => send("ROOM_SETTINGS", { allow_players_move: e.target.checked }));
+  allowAllMoveEl.addEventListener("change", (e) => send("ROOM_SETTINGS", { allow_all_move: e.target.checked }));
+  lockdownEl.addEventListener("change", (e) => send("ROOM_SETTINGS", { lockdown: e.target.checked }));
+  document.getElementById("setBg").addEventListener("click", () => {
+    send("ROOM_SETTINGS", { background_url: bgUrlEl.value.trim() || null });
+  });
+
+  function sendLayerVisibility() {
+    send("ROOM_SETTINGS", {
+      layer_visibility: {
+        grid: layerGridEl.checked,
+        drawings: layerDrawEl.checked,
+        shapes: layerShapesEl.checked,
+        tokens: layerTokensEl.checked,
+      },
+    });
+  }
+  layerGridEl.addEventListener("change", sendLayerVisibility);
+  layerDrawEl.addEventListener("change", sendLayerVisibility);
+  layerShapesEl.addEventListener("change", sendLayerVisibility);
+  layerTokensEl.addEventListener("change", sendLayerVisibility);
+
+  function refreshUI() {
+    ui.snap = !!snapEl.checked;
+    ui.gridSize = clamp(parseInt(gridEl.value || "50", 10), 10, 300);
+    ui.showGrid = !!showGridEl.checked;
+    ui.feetPerSq = clamp(parseFloat(feetPerSqEl.value || "5"), 1, 100);
+    requestRender();
+  }
+  snapEl.addEventListener("change", refreshUI);
+  showGridEl.addEventListener("change", refreshUI);
+  gridEl.addEventListener("change", refreshUI);
+  feetPerSqEl.addEventListener("change", refreshUI);
+  refreshUI();
+  refreshGmUI();
+  snapshotRoomLabelEl.textContent = roomEl.value.trim();
+
+  function tool() { return toolEl.value; }
+  function brushColor() { return colorEl.value; }
+  function brushSize() { return clamp(parseFloat(sizeEl.value || "3"), 1, 30); }
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Shift") isShiftDown = true;
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedTokenId && isGM()) {
+      send("TOKEN_DELETE", { id: selectedTokenId });
+      e.preventDefault();
+    }
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "Shift") isShiftDown = false;
+  });
+
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    const oldZ = cam.z;
+    const zoomFactor = (e.deltaY < 0) ? 1.12 : 0.89;
+    const newZ = clamp(cam.z * zoomFactor, 0.25, 3);
+
+    const wx = (mx - cam.x) / oldZ;
+    const wy = (my - cam.y) / oldZ;
+    cam.z = newZ;
+    cam.x = mx - wx * newZ;
+    cam.y = my - wy * newZ;
+    requestRender();
+  }, { passive: false });
+
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pointerCaptured = true;
+
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const wpos = screenToWorld(sx, sy);
+
+    if (e.button === 2) {
+      isPanning = true;
+      panStart = { sx: e.clientX, sy: e.clientY, camX: cam.x, camY: cam.y };
+      return;
+    }
+
+    erasingActive = false;
+    lastEraseWorld = null;
+    const t = tool();
+
+    if (t === "move") {
+      const hit = hitTestToken(wpos.x, wpos.y);
+      selectedTokenId = hit;
+      if (hit) {
+        draggingTokenId = hit;
+        const tok = state.tokens.get(hit);
+        dragOffset.x = wpos.x - tok.x;
+        dragOffset.y = wpos.y - tok.y;
+      }
+      requestRender();
+      return;
+    }
+
+    if (t === "pen") {
+      activeStroke = { id: makeId(), points: [{ x: wpos.x, y: wpos.y }], color: brushColor(), width: brushSize(), locked: false, layer: "draw" };
+      requestRender();
+      return;
+    }
+
+    if (t === "eraser") {
+      activeStroke = null;
+      activeShapePreview = null;
+      activeRuler = null;
+      erasingActive = true;
+      lastEraseWorld = null;
+      doEraseAt(wpos.x, wpos.y);
+      return;
+    }
+
+    if (t === "rect" || t === "circle" || t === "line") {
+      activeShapePreview = { id: makeId(), type: t, x1: wpos.x, y1: wpos.y, x2: wpos.x, y2: wpos.y, color: brushColor(), width: brushSize(), fill: false, locked: false, layer: "draw" };
+      requestRender();
+      return;
+    }
+
+    if (t === "ruler") {
+      activeRuler = { x1: wpos.x, y1: wpos.y, x2: wpos.x, y2: wpos.y };
+      requestRender();
+      return;
+    }
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+
+    if (isPanning) {
+      cam.x = panStart.camX + (e.clientX - panStart.sx);
+      cam.y = panStart.camY + (e.clientY - panStart.sy);
+      requestRender();
+      return;
+    }
+
+    const wpos = screenToWorld(sx, sy);
+    const t = tool();
+
+    if (t === "move" && draggingTokenId) {
+      const tok = state.tokens.get(draggingTokenId);
+      if (!tok) return;
+
+      const x = snap(wpos.x - dragOffset.x);
+      const y = snap(wpos.y - dragOffset.y);
+
+      tok.x = x;
+      tok.y = y;
+      state.tokens.set(draggingTokenId, tok);
+      requestRender();
+
+      const now = Date.now();
+      if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
+        lastMoveSentAt = now;
+        send("TOKEN_MOVE", { id: draggingTokenId, x, y, commit: false });
+      }
+      return;
+    }
+
+    if (t === "pen" && activeStroke) {
+      const last = activeStroke.points[activeStroke.points.length - 1];
+      const dx = wpos.x - last.x;
+      const dy = wpos.y - last.y;
+      if (dx * dx + dy * dy >= 2.0) {
+        activeStroke.points.push({ x: wpos.x, y: wpos.y });
+        requestRender();
+      }
+      return;
+    }
+
+    if (t === "eraser" && erasingActive && (e.buttons & 1) === 1) {
+      doEraseAt(wpos.x, wpos.y);
+      return;
+    }
+
+    if ((t === "rect" || t === "circle" || t === "line") && activeShapePreview) {
+      activeShapePreview.x2 = wpos.x;
+      activeShapePreview.y2 = wpos.y;
+      requestRender();
+      return;
+    }
+
+    if (t === "ruler" && activeRuler) {
+      activeRuler.x2 = wpos.x;
+      activeRuler.y2 = wpos.y;
+      requestRender();
+      return;
+    }
+  });
+
+  function doEraseAt(wx, wy) {
+    const r = 14;
+    if (lastEraseWorld) {
+      const dx = wx - lastEraseWorld.x;
+      const dy = wy - lastEraseWorld.y;
+      if (dx * dx + dy * dy < 36) return; // require ~6 world units movement
+    }
+    lastEraseWorld = { x: wx, y: wy };
+    const now = Date.now();
+    if (now - lastEraseSentAt < ERASE_SEND_INTERVAL_MS) return;
+    lastEraseSentAt = now;
+    send("ERASE_AT", { x: wx, y: wy, r, erase_shapes: isShiftDown });
+  }
+
+  function endPointer(e) {
+    isPanning = false;
+    const t = tool();
+    const movedTokenId = draggingTokenId;
+    draggingTokenId = null;
+
+    if (t === "move" && movedTokenId) {
+      const tok = state.tokens.get(movedTokenId);
+      if (tok) {
+        send("TOKEN_MOVE", { id: movedTokenId, x: tok.x, y: tok.y, commit: true });
+      }
+    }
+
+    if (t === "eraser") {
+      erasingActive = false;
+      lastEraseWorld = null;
+    }
+
+    if (t === "pen" && activeStroke) {
+      if (activeStroke.points.length >= 2) {
+        const pts = activeStroke.points;
+        const chunkSize = 12;
+        if (pts.length <= chunkSize) {
+          send("STROKE_ADD", {
+            id: activeStroke.id,
+            points: pts,
+            color: activeStroke.color,
+            width: activeStroke.width,
+            locked: false,
+            layer: "draw",
+          });
+        } else {
+          let idx = 0;
+          for (let i = 0; i < pts.length - 1; i += (chunkSize - 1)) {
+            const chunk = pts.slice(i, i + chunkSize);
+            if (chunk.length < 2) continue;
+            send("STROKE_ADD", {
+              id: `${activeStroke.id}-${idx++}`,
+              points: chunk,
+              color: activeStroke.color,
+              width: activeStroke.width,
+              locked: false,
+              layer: "draw",
+            });
+          }
+        }
+      }
+      activeStroke = null;
+      requestRender();
+    }
+
+    if ((t === "rect" || t === "circle" || t === "line") && activeShapePreview) {
+      const sh = activeShapePreview;
+      const x1 = ui.snap ? snap(sh.x1) : sh.x1;
+      const y1 = ui.snap ? snap(sh.y1) : sh.y1;
+      const x2 = ui.snap ? snap(sh.x2) : sh.x2;
+      const y2 = ui.snap ? snap(sh.y2) : sh.y2;
+
+      send("SHAPE_ADD", {
+        id: sh.id,
+        type: sh.type,
+        x1, y1, x2, y2,
+        color: sh.color,
+        width: sh.width,
+        fill: false,
+        locked: false,
+        layer: "draw",
+      });
+      activeShapePreview = null;
+      requestRender();
+    }
+
+    if (t === "ruler") {
+      activeRuler = null;
+      requestRender();
+    }
+
+    if (pointerCaptured) {
+      try { canvas.releasePointerCapture(e.pointerId); } catch {}
+      pointerCaptured = false;
+    }
+  }
+
+  canvas.addEventListener("pointerup", endPointer);
+  canvas.addEventListener("pointercancel", endPointer);
+</script>
+</body>
+</html>
