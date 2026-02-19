@@ -243,6 +243,16 @@
     return res.json();
   }
 
+  async function apiPatch(path, body = {}, includeGm = false) {
+    const res = await fetch(apiUrl(path, includeGm), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
   let ws = null;
   let heartbeatTimer = null;
   const players = new Set();
@@ -419,6 +429,8 @@
       const rows = rooms.map((r) => `
         <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
           <button data-open-room="${r.room_id}" style="padding:2px 6px;">Open</button>
+          <button data-rename-room="${r.room_id}" style="padding:2px 6px;">Rename</button>
+          <button data-delete-room="${r.room_id}" style="padding:2px 6px; color:#ffb3b3;">Delete</button>
           <code>${r.room_id}</code>
           <span style="opacity:.9">${r.name}</span>
           <span style="opacity:.6">${(r.updated_at || "").replace("T", " ").slice(0, 19)}</span>
@@ -426,10 +438,41 @@
       `);
       roomsListEl.innerHTML = rows.join("") || `<div style="opacity:.7">(no rooms)</div>`;
       roomsListEl.querySelectorAll("button[data-open-room]").forEach((btn) => {
-        btn.onclick = () => {
-          roomEl.value = btn.getAttribute("data-open-room");
-          snapshotRoomLabelEl.textContent = roomEl.value.trim();
-          refreshSnapshotsPanel();
+        btn.onclick = () => switchRoom(btn.getAttribute("data-open-room"));
+      });
+      roomsListEl.querySelectorAll("button[data-rename-room]").forEach((btn) => {
+        btn.onclick = async () => {
+          const rid = btn.getAttribute("data-rename-room");
+          const next = prompt("New room name?", "") || "";
+          const name = next.trim();
+          if (!name) return;
+          try {
+            await apiPatch(`/api/rooms/${encodeURIComponent(rid)}`, { name }, true);
+            log(`ROOM RENAMED ${rid} -> ${name}`);
+            await refreshRoomsPanel();
+          } catch (e) {
+            log(`RENAME ROOM ERROR: ${e.message || e}`);
+          }
+        };
+      });
+      roomsListEl.querySelectorAll("button[data-delete-room]").forEach((btn) => {
+        btn.onclick = async () => {
+          const rid = btn.getAttribute("data-delete-room");
+          if (!confirm(`Delete room '${rid}'? This also deletes snapshots.`)) return;
+          try {
+            const url = apiUrl(`/api/rooms/${encodeURIComponent(rid)}`, true);
+            const res = await fetch(url, { method: "DELETE" });
+            if (!res.ok) throw new Error(await res.text());
+            log(`ROOM DELETED ${rid}`);
+            await refreshRoomsPanel();
+            if (roomEl.value.trim() === rid) {
+              roomEl.value = "";
+              snapshotRoomLabelEl.textContent = "(none)";
+              snapshotsListEl.innerHTML = `<div style="opacity:.7">(room deleted)</div>`;
+            }
+          } catch (e) {
+            log(`DELETE ROOM ERROR: ${e.message || e}`);
+          }
         };
       });
     } catch (e) {
@@ -785,9 +828,30 @@
     requestRender();
   }
 
-  document.getElementById("connect").onclick = () => {
-    if (ws && ws.readyState === 1) { log("Already connected."); return; }
+  function clearLocalRoomView() {
+    state.room_id = null;
+    state.background_url = null;
+    bgImage = null;
+    bgImageUrl = null;
+    bgImageStatus = "idle";
+    state.tokens.clear();
+    state.strokes.clear();
+    state.shapes.clear();
+    state.draw_order = { strokes: [], shapes: [] };
+    selectedTokenId = null;
+    requestRender();
+  }
 
+  function connectWS(force = false) {
+    if (ws && ws.readyState === 1) {
+      if (!force) {
+        log("Already connected.");
+        return;
+      }
+      try { ws.close(); } catch {}
+    }
+
+    clearLocalRoomView();
     const room = encodeURIComponent(roomEl.value.trim());
     const cid = encodeURIComponent(cidEl.value.trim());
     const gmKey = gmKeyEl.value.trim();
@@ -1006,7 +1070,16 @@
     };
 
     refreshSnapshotsPanel();
-  };
+  }
+
+  async function switchRoom(newRoomId) {
+    roomEl.value = newRoomId;
+    snapshotRoomLabelEl.textContent = newRoomId;
+    await refreshSnapshotsPanel();
+    connectWS(true);
+  }
+
+  document.getElementById("connect").onclick = () => connectWS(false);
 
   document.getElementById("spawn").onclick = () => {
     if (!ws || ws.readyState !== 1) { log("Spawn blocked: connect first."); return; }
@@ -1051,7 +1124,7 @@
     try {
       const created = await apiPost("/api/rooms", { name, room_id: roomId });
       log(`ROOM CREATED ${created.room_id}`);
-      if (created.room_id) roomEl.value = created.room_id;
+      if (created.room_id) await switchRoom(created.room_id);
       await refreshRoomsPanel();
       await refreshSnapshotsPanel();
     } catch (e) {

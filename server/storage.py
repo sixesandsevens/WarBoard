@@ -126,3 +126,30 @@ def load_snapshot_state_json(room_id: str, snapshot_id: str) -> Optional[str]:
         if not row or row.room_id != room_id:
             return None
         return row.state_json
+
+
+def update_room_name(room_id: str, name: str) -> bool:
+    with Session(engine) as s:
+        meta = s.get(RoomMetaRow, room_id)
+        if not meta:
+            return False
+        meta.name = name
+        s.commit()
+        return True
+
+
+def delete_room_record(room_id: str) -> bool:
+    with Session(engine) as s:
+        row = s.get(RoomRow, room_id)
+        meta = s.get(RoomMetaRow, room_id)
+        snaps = s.exec(select(SnapshotRow).where(SnapshotRow.room_id == room_id)).all()
+        if not row and not meta and not snaps:
+            return False
+        for snap in snaps:
+            s.delete(snap)
+        if row:
+            s.delete(row)
+        if meta:
+            s.delete(meta)
+        s.commit()
+        return True

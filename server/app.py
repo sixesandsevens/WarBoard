@@ -14,11 +14,14 @@ from .rooms import RoomManager
 from .storage import (
     create_room_record,
     create_snapshot,
+    delete_room_record,
     init_db,
+    load_room_state_json,
     list_rooms,
     list_snapshots,
     load_snapshot_state_json,
     save_room_state_json,
+    update_room_name,
 )
 
 app = FastAPI(title="WarBoard")
@@ -107,6 +110,41 @@ async def create_room(req: Request):
 @app.get("/api/rooms")
 def rooms_list():
     return {"rooms": list_rooms()}
+
+
+@app.patch("/api/rooms/{room_id}")
+async def rename_room(room_id: str, req: Request, gm_key: str | None = None):
+    raw = load_room_state_json(room_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Room not found")
+    state = RoomState.model_validate_json(raw)
+    if not _gm_authorized(state, gm_key):
+        raise HTTPException(status_code=403, detail="GM key required")
+    body = await req.json()
+    name = str(body.get("name", "")).strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    ok = update_room_name(room_id, name)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Room not found")
+    return {"ok": True, "room_id": room_id, "name": name}
+
+
+@app.delete("/api/rooms/{room_id}")
+async def delete_room(room_id: str, gm_key: str | None = None):
+    raw = load_room_state_json(room_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Room not found")
+    state = RoomState.model_validate_json(raw)
+    if not _gm_authorized(state, gm_key):
+        raise HTTPException(status_code=403, detail="GM key required")
+    if await rm.is_room_active(room_id):
+        raise HTTPException(status_code=409, detail="Room has active connections")
+    ok = delete_room_record(room_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Room not found")
+    await rm.drop_room(room_id)
+    return {"ok": True, "room_id": room_id}
 
 
 @app.post("/api/rooms/{room_id}/snapshots")

@@ -55,6 +55,15 @@ class RoomManager:
             self._rooms[room_id] = room
             return room
 
+    async def is_room_active(self, room_id: str) -> bool:
+        async with self._lock:
+            room = self._rooms.get(room_id)
+            return bool(room and room.sockets)
+
+    async def drop_room(self, room_id: str) -> None:
+        async with self._lock:
+            self._rooms.pop(room_id, None)
+
     async def connect(self, room_id: str, ws: WebSocket) -> Room:
         room = await self.get_or_create_room(room_id)
         room.sockets.add(ws)
