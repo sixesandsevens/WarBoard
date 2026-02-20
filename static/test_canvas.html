@@ -93,6 +93,43 @@
     .drawer-panel.active {
       display: block;
     }
+    .ctx {
+      position: fixed;
+      z-index: 2000;
+      min-width: 220px;
+      background: #1f1f1f;
+      color: #eee;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+      padding: 6px;
+      font-family: system-ui, sans-serif;
+      user-select: none;
+    }
+    .ctx.hidden { display: none; }
+    .ctx-title {
+      font-size: 12px;
+      opacity: 0.75;
+      padding: 6px 8px;
+    }
+    .ctx-item {
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1.1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .ctx-item:hover { background: rgba(255,255,255,0.10); }
+    .ctx-item.danger:hover { background: rgba(255,0,0,0.15); }
+    .ctx-sep {
+      height: 1px;
+      margin: 6px 6px;
+      background: rgba(255,255,255,0.10);
+    }
+    .ctx-sub { min-width: 240px; }
   </style>
 </head>
 <body>
@@ -207,6 +244,40 @@
       <button id="tokenMenuBadgeProne" style="display:block; width:100%; text-align:left; margin:2px 0;">Prone</button>
       <button id="tokenMenuBadgeClear" style="display:block; width:100%; text-align:left; margin:2px 0;">Clear badges</button>
       <button id="tokenMenuDelete" style="display:block; width:100%; text-align:left; margin:2px 0; color:#ffb3b3;">Delete</button>
+    </div>
+    <div id="mapCtx" class="ctx hidden" role="menu" aria-label="Map menu">
+      <div class="ctx-title">Map</div>
+      <div class="ctx-item" data-action="spawn_default">➕ Spawn token</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item has-sub" data-sub="bg">🖼 Background ▸</div>
+      <div class="ctx-item has-sub" data-sub="layers">🧅 Layers ▸</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item has-sub" data-sub="clear">🧹 Clear ▸</div>
+      <div class="ctx-item" data-action="save_snapshot">💾 Save snapshot</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="open_tokens">📚 Token Library</div>
+      <div class="ctx-item" data-action="open_rooms">🏠 Rooms</div>
+      <div class="ctx-item" data-action="open_scene">🎛 Scene</div>
+    </div>
+    <div id="mapCtx-bg" class="ctx hidden ctx-sub" role="menu" aria-label="Background menu">
+      <div class="ctx-title">Background</div>
+      <div class="ctx-item" data-action="bg_solid">Solid (default)</div>
+      <div class="ctx-item" data-action="bg_url">Set URL...</div>
+      <div class="ctx-item" data-action="bg_terrain">Terrain</div>
+      <div class="ctx-item" data-action="bg_terrain_regen">Regenerate terrain</div>
+    </div>
+    <div id="mapCtx-layers" class="ctx hidden ctx-sub" role="menu" aria-label="Layers menu">
+      <div class="ctx-title">Layers</div>
+      <div class="ctx-item" data-action="toggle_layer_grid">Toggle Grid</div>
+      <div class="ctx-item" data-action="toggle_layer_drawings">Toggle Drawings</div>
+      <div class="ctx-item" data-action="toggle_layer_shapes">Toggle Shapes</div>
+      <div class="ctx-item" data-action="toggle_layer_tokens">Toggle Tokens</div>
+    </div>
+    <div id="mapCtx-clear" class="ctx hidden ctx-sub" role="menu" aria-label="Clear menu">
+      <div class="ctx-title">Clear</div>
+      <div class="ctx-item danger" data-action="clear_drawings">Clear drawings</div>
+      <div class="ctx-item danger" data-action="clear_shapes">Clear shapes</div>
+      <div class="ctx-item danger" data-action="clear_tokens">Clear tokens</div>
     </div>
     <div id="roomsPanel" style="
       position:absolute; top:10px; left:10px;
@@ -353,6 +424,11 @@
   const drawer = document.getElementById("drawer");
   const drawerToggle = document.getElementById("drawerToggle");
   const drawerClose = document.getElementById("drawerClose");
+  const mapCtx = document.getElementById("mapCtx");
+  const mapCtxBg = document.getElementById("mapCtx-bg");
+  const mapCtxLayers = document.getElementById("mapCtx-layers");
+  const mapCtxClear = document.getElementById("mapCtx-clear");
+  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear];
   const playerListEl = document.getElementById("playerList");
   const tokenListEl = document.getElementById("tokenList");
   const strokeListEl = document.getElementById("strokeList");
@@ -634,6 +710,149 @@
     tokenMenuTokenId = null;
   }
 
+  function hideAllCtx() {
+    for (const m of allCtxMenus) m.classList.add("hidden");
+  }
+
+  function clampMenuToViewport(menuEl, x, y) {
+    const wasHidden = menuEl.classList.contains("hidden");
+    if (wasHidden) menuEl.classList.remove("hidden");
+    const pad = 8;
+    const w = menuEl.offsetWidth;
+    const h = menuEl.offsetHeight;
+    const maxX = window.innerWidth - w - pad;
+    const maxY = window.innerHeight - h - pad;
+    const cx = Math.max(pad, Math.min(x, maxX));
+    const cy = Math.max(pad, Math.min(y, maxY));
+    menuEl.style.left = `${cx}px`;
+    menuEl.style.top = `${cy}px`;
+    if (wasHidden) menuEl.classList.add("hidden");
+  }
+
+  function showMapMenu(x, y) {
+    hideAllCtx();
+    mapCtx.classList.remove("hidden");
+    clampMenuToViewport(mapCtx, x, y);
+  }
+
+  function showSubMenu(subEl, parentRowEl) {
+    const rect = parentRowEl.getBoundingClientRect();
+    const x = rect.right + 6;
+    const y = rect.top;
+    subEl.classList.remove("hidden");
+    clampMenuToViewport(subEl, x, y);
+  }
+
+  function isClickInsideAnyCtxMenu(target) {
+    return allCtxMenus.some((m) => !m.classList.contains("hidden") && m.contains(target));
+  }
+
+  function setLayerVisibility(next) {
+    state.layer_visibility = { ...state.layer_visibility, ...next };
+    layerGridEl.checked = !!state.layer_visibility.grid;
+    layerDrawEl.checked = !!state.layer_visibility.drawings;
+    layerShapesEl.checked = !!state.layer_visibility.shapes;
+    layerTokensEl.checked = !!state.layer_visibility.tokens;
+    send("ROOM_SETTINGS", { layer_visibility: state.layer_visibility });
+    requestRender();
+  }
+
+  function spawnDefaultTokenAt(wx, wy) {
+    if (!isGM()) return;
+    const id = makeId();
+    const name = "Token";
+    const color = "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0");
+    const x = snap(wx);
+    const y = snap(wy);
+    const size_scale = ui.tokenSpawnScale;
+    const token = { id, x, y, name, color, image_url: null, size_scale, owner_id: null, locked: false, badges: [] };
+    state.tokens.set(id, token);
+    refreshGmUI();
+    requestRender();
+    send("TOKEN_CREATE", token);
+  }
+
+  function clearDrawings() {
+    if (!isGM()) return;
+    const ids = Array.from(state.strokes.keys());
+    if (!ids.length) return;
+    send("STROKE_DELETE", { ids });
+  }
+
+  function clearShapes() {
+    if (!isGM()) return;
+    const ids = Array.from(state.shapes.keys());
+    for (const id of ids) send("SHAPE_DELETE", { id });
+  }
+
+  function clearTokens() {
+    if (!isGM()) return;
+    const ids = Array.from(state.tokens.keys());
+    for (const id of ids) send("TOKEN_DELETE", { id });
+  }
+
+  function handleCtxAction(action) {
+    switch (action) {
+      case "spawn_default": {
+        const w = mapCtxWorld || screenToWorld(canvas.getBoundingClientRect().width / 2, canvas.getBoundingClientRect().height / 2);
+        spawnDefaultTokenAt(w.x, w.y);
+        break;
+      }
+      case "bg_solid":
+        if (isGM()) send("ROOM_SETTINGS", { background_mode: "solid", background_url: null });
+        break;
+      case "bg_url":
+        if (isGM()) {
+          const url = prompt("Background image URL:", state.background_url || "");
+          if (url !== null) send("ROOM_SETTINGS", { background_mode: (url.trim() ? "url" : "solid"), background_url: url.trim() || null });
+        }
+        break;
+      case "bg_terrain":
+        if (isGM()) send("ROOM_SETTINGS", { background_mode: "terrain", terrain_style: terrainStyleEl.value });
+        break;
+      case "bg_terrain_regen":
+        if (isGM()) send("ROOM_SETTINGS", { background_mode: "terrain", terrain_seed: randomTerrainSeed(), terrain_style: terrainStyleEl.value });
+        break;
+      case "toggle_layer_grid":
+        setLayerVisibility({ grid: !state.layer_visibility.grid });
+        break;
+      case "toggle_layer_drawings":
+        setLayerVisibility({ drawings: !state.layer_visibility.drawings });
+        break;
+      case "toggle_layer_shapes":
+        setLayerVisibility({ shapes: !state.layer_visibility.shapes });
+        break;
+      case "toggle_layer_tokens":
+        setLayerVisibility({ tokens: !state.layer_visibility.tokens });
+        break;
+      case "clear_drawings":
+        if (confirm("Clear drawings for this room?")) clearDrawings();
+        break;
+      case "clear_shapes":
+        if (confirm("Clear shapes for this room?")) clearShapes();
+        break;
+      case "clear_tokens":
+        if (confirm("Clear all tokens for this room?")) clearTokens();
+        break;
+      case "save_snapshot":
+        if (isGM()) document.getElementById("saveSnapshotBtn").click();
+        break;
+      case "open_tokens":
+        activateDrawerTab("tokens", true);
+        break;
+      case "open_rooms":
+        activateDrawerTab("rooms", true);
+        refreshRoomsPanel();
+        refreshSnapshotsPanel();
+        break;
+      case "open_scene":
+        activateDrawerTab("scene", true);
+        break;
+      default:
+        break;
+    }
+  }
+
   function normalizedBadgeList(input) {
     if (!Array.isArray(input)) return [];
     const out = [];
@@ -892,6 +1111,7 @@
   let dragSpawnWorld = null;
   let dragSpawnOverCanvas = false;
   let tokenMenuTokenId = null;
+  let mapCtxWorld = null;
 
   let bgImage = null;
   let bgImageUrl = null;
@@ -2235,6 +2455,30 @@
     btn.addEventListener("click", () => activateDrawerTab(btn.dataset.tab, true));
   });
   mountDrawerPanels();
+  mapCtx.addEventListener("mousemove", (e) => {
+    const row = e.target.closest(".ctx-item.has-sub");
+    mapCtxBg.classList.add("hidden");
+    mapCtxLayers.classList.add("hidden");
+    mapCtxClear.classList.add("hidden");
+    if (!row) return;
+    const sub = row.dataset.sub;
+    if (sub === "bg") showSubMenu(mapCtxBg, row);
+    if (sub === "layers") showSubMenu(mapCtxLayers, row);
+    if (sub === "clear") showSubMenu(mapCtxClear, row);
+  });
+  for (const m of allCtxMenus) {
+    m.addEventListener("click", (e) => {
+      const item = e.target.closest(".ctx-item");
+      if (!item) return;
+      const action = item.dataset.action;
+      if (!action) return;
+      hideAllCtx();
+      handleCtxAction(action);
+    });
+  }
+  window.addEventListener("mousedown", (e) => {
+    if (!isClickInsideAnyCtxMenu(e.target)) hideAllCtx();
+  });
 
   document.getElementById("gmPanelBtn").onclick = () => {
     activateDrawerTab("players", true);
@@ -2458,6 +2702,7 @@
       drawer.classList.toggle("hidden");
       return;
     }
+    if (e.key === "Escape") hideAllCtx();
     if (e.key === "Escape" && tokenMenuEl.style.display === "block") {
       closeTokenMenu();
       return;
@@ -2512,17 +2757,21 @@
     const wpos = screenToWorld(sx, sy);
     const hit = hitTestToken(wpos.x, wpos.y);
     if (hit && isGM()) {
+      hideAllCtx();
       selectedTokenId = hit;
       openTokenMenu(hit, e.clientX, e.clientY);
       refreshGmUI();
       requestRender();
     } else {
       closeTokenMenu();
+      mapCtxWorld = { x: wpos.x, y: wpos.y };
+      showMapMenu(e.clientX, e.clientY);
     }
   });
 
   canvas.addEventListener("pointerdown", (e) => {
     closeTokenMenu();
+    hideAllCtx();
     canvas.setPointerCapture(e.pointerId);
     pointerCaptured = true;
 
