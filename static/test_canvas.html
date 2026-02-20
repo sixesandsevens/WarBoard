@@ -247,13 +247,13 @@
     </div>
     <div id="mapCtx" class="ctx hidden" role="menu" aria-label="Map menu">
       <div class="ctx-title">Map</div>
-      <div class="ctx-item" data-action="spawn_default">➕ Spawn token</div>
+      <div class="ctx-item" data-action="spawn_default" data-gm="1">➕ Spawn token</div>
       <div class="ctx-sep"></div>
-      <div class="ctx-item has-sub" data-sub="bg">🖼 Background ▸</div>
-      <div class="ctx-item has-sub" data-sub="layers">🧅 Layers ▸</div>
+      <div class="ctx-item has-sub" data-sub="bg" data-gm="1">🖼 Background ▸</div>
+      <div class="ctx-item has-sub" data-sub="layers" data-gm="1">🧅 Layers ▸</div>
       <div class="ctx-sep"></div>
-      <div class="ctx-item has-sub" data-sub="clear">🧹 Clear ▸</div>
-      <div class="ctx-item" data-action="save_snapshot">💾 Save snapshot</div>
+      <div class="ctx-item has-sub" data-sub="clear" data-gm="1">🧹 Clear ▸</div>
+      <div class="ctx-item" data-action="save_snapshot" data-gm="1">💾 Save snapshot</div>
       <div class="ctx-sep"></div>
       <div class="ctx-item" data-action="open_tokens">📚 Token Library</div>
       <div class="ctx-item" data-action="open_rooms">🏠 Rooms</div>
@@ -261,23 +261,23 @@
     </div>
     <div id="mapCtx-bg" class="ctx hidden ctx-sub" role="menu" aria-label="Background menu">
       <div class="ctx-title">Background</div>
-      <div class="ctx-item" data-action="bg_solid">Solid (default)</div>
-      <div class="ctx-item" data-action="bg_url">Set URL...</div>
-      <div class="ctx-item" data-action="bg_terrain">Terrain</div>
-      <div class="ctx-item" data-action="bg_terrain_regen">Regenerate terrain</div>
+      <div class="ctx-item" data-action="bg_solid" data-gm="1">Solid (default)</div>
+      <div class="ctx-item" data-action="bg_url" data-gm="1">Set URL...</div>
+      <div class="ctx-item" data-action="bg_terrain" data-gm="1">Terrain</div>
+      <div class="ctx-item" data-action="bg_terrain_regen" data-gm="1">Regenerate terrain</div>
     </div>
     <div id="mapCtx-layers" class="ctx hidden ctx-sub" role="menu" aria-label="Layers menu">
       <div class="ctx-title">Layers</div>
-      <div class="ctx-item" data-action="toggle_layer_grid">Toggle Grid</div>
-      <div class="ctx-item" data-action="toggle_layer_drawings">Toggle Drawings</div>
-      <div class="ctx-item" data-action="toggle_layer_shapes">Toggle Shapes</div>
-      <div class="ctx-item" data-action="toggle_layer_tokens">Toggle Tokens</div>
+      <div class="ctx-item" data-action="toggle_layer_grid" data-gm="1">Toggle Grid</div>
+      <div class="ctx-item" data-action="toggle_layer_drawings" data-gm="1">Toggle Drawings</div>
+      <div class="ctx-item" data-action="toggle_layer_shapes" data-gm="1">Toggle Shapes</div>
+      <div class="ctx-item" data-action="toggle_layer_tokens" data-gm="1">Toggle Tokens</div>
     </div>
     <div id="mapCtx-clear" class="ctx hidden ctx-sub" role="menu" aria-label="Clear menu">
       <div class="ctx-title">Clear</div>
-      <div class="ctx-item danger" data-action="clear_drawings">Clear drawings</div>
-      <div class="ctx-item danger" data-action="clear_shapes">Clear shapes</div>
-      <div class="ctx-item danger" data-action="clear_tokens">Clear tokens</div>
+      <div class="ctx-item danger" data-action="clear_drawings" data-gm="1">Clear drawings</div>
+      <div class="ctx-item danger" data-action="clear_shapes" data-gm="1">Clear shapes</div>
+      <div class="ctx-item danger" data-action="clear_tokens" data-gm="1">Clear tokens</div>
     </div>
     <div id="roomsPanel" style="
       position:absolute; top:10px; left:10px;
@@ -711,7 +711,31 @@
   }
 
   function hideAllCtx() {
+    if (ctxSubHideTimer) {
+      clearTimeout(ctxSubHideTimer);
+      ctxSubHideTimer = null;
+    }
     for (const m of allCtxMenus) m.classList.add("hidden");
+  }
+
+  function hideCtxSubs() {
+    mapCtxBg.classList.add("hidden");
+    mapCtxLayers.classList.add("hidden");
+    mapCtxClear.classList.add("hidden");
+  }
+
+  function clearCtxSubHideTimer() {
+    if (!ctxSubHideTimer) return;
+    clearTimeout(ctxSubHideTimer);
+    ctxSubHideTimer = null;
+  }
+
+  function scheduleCtxSubHide(delayMs = 120) {
+    clearCtxSubHideTimer();
+    ctxSubHideTimer = setTimeout(() => {
+      hideCtxSubs();
+      ctxSubHideTimer = null;
+    }, delayMs);
   }
 
   function clampMenuToViewport(menuEl, x, y) {
@@ -730,12 +754,22 @@
   }
 
   function showMapMenu(x, y) {
+    const gm = isGM();
+    document.querySelectorAll("#mapCtx [data-gm='1'], #mapCtx-bg [data-gm='1'], #mapCtx-layers [data-gm='1'], #mapCtx-clear [data-gm='1']").forEach((el) => {
+      el.style.display = gm ? "flex" : "none";
+    });
+    if (!gm) {
+      mapCtxBg.classList.add("hidden");
+      mapCtxLayers.classList.add("hidden");
+      mapCtxClear.classList.add("hidden");
+    }
     hideAllCtx();
     mapCtx.classList.remove("hidden");
     clampMenuToViewport(mapCtx, x, y);
   }
 
   function showSubMenu(subEl, parentRowEl) {
+    clearCtxSubHideTimer();
     const rect = parentRowEl.getBoundingClientRect();
     const x = rect.right + 6;
     const y = rect.top;
@@ -814,24 +848,31 @@
         if (isGM()) send("ROOM_SETTINGS", { background_mode: "terrain", terrain_seed: randomTerrainSeed(), terrain_style: terrainStyleEl.value });
         break;
       case "toggle_layer_grid":
+        if (!isGM()) return;
         setLayerVisibility({ grid: !state.layer_visibility.grid });
         break;
       case "toggle_layer_drawings":
+        if (!isGM()) return;
         setLayerVisibility({ drawings: !state.layer_visibility.drawings });
         break;
       case "toggle_layer_shapes":
+        if (!isGM()) return;
         setLayerVisibility({ shapes: !state.layer_visibility.shapes });
         break;
       case "toggle_layer_tokens":
+        if (!isGM()) return;
         setLayerVisibility({ tokens: !state.layer_visibility.tokens });
         break;
       case "clear_drawings":
+        if (!isGM()) return;
         if (confirm("Clear drawings for this room?")) clearDrawings();
         break;
       case "clear_shapes":
+        if (!isGM()) return;
         if (confirm("Clear shapes for this room?")) clearShapes();
         break;
       case "clear_tokens":
+        if (!isGM()) return;
         if (confirm("Clear all tokens for this room?")) clearTokens();
         break;
       case "save_snapshot":
@@ -1112,6 +1153,7 @@
   let dragSpawnOverCanvas = false;
   let tokenMenuTokenId = null;
   let mapCtxWorld = null;
+  let ctxSubHideTimer = null;
 
   let bgImage = null;
   let bgImageUrl = null;
@@ -2457,14 +2499,21 @@
   mountDrawerPanels();
   mapCtx.addEventListener("mousemove", (e) => {
     const row = e.target.closest(".ctx-item.has-sub");
-    mapCtxBg.classList.add("hidden");
-    mapCtxLayers.classList.add("hidden");
-    mapCtxClear.classList.add("hidden");
-    if (!row) return;
+    if (!row) {
+      scheduleCtxSubHide(120);
+      return;
+    }
+    clearCtxSubHideTimer();
+    hideCtxSubs();
     const sub = row.dataset.sub;
     if (sub === "bg") showSubMenu(mapCtxBg, row);
     if (sub === "layers") showSubMenu(mapCtxLayers, row);
     if (sub === "clear") showSubMenu(mapCtxClear, row);
+  });
+  mapCtx.addEventListener("mouseleave", () => scheduleCtxSubHide(120));
+  [mapCtxBg, mapCtxLayers, mapCtxClear].forEach((sub) => {
+    sub.addEventListener("mouseenter", () => clearCtxSubHideTimer());
+    sub.addEventListener("mouseleave", () => scheduleCtxSubHide(120));
   });
   for (const m of allCtxMenus) {
     m.addEventListener("click", (e) => {
@@ -2756,17 +2805,22 @@
     const sy = e.clientY - rect.top;
     const wpos = screenToWorld(sx, sy);
     const hit = hitTestToken(wpos.x, wpos.y);
-    if (hit && isGM()) {
-      hideAllCtx();
-      selectedTokenId = hit;
-      openTokenMenu(hit, e.clientX, e.clientY);
-      refreshGmUI();
-      requestRender();
-    } else {
-      closeTokenMenu();
-      mapCtxWorld = { x: wpos.x, y: wpos.y };
-      showMapMenu(e.clientX, e.clientY);
+    if (hit) {
+      if (isGM()) {
+        hideAllCtx();
+        selectedTokenId = hit;
+        openTokenMenu(hit, e.clientX, e.clientY);
+        refreshGmUI();
+        requestRender();
+      } else {
+        hideAllCtx();
+        closeTokenMenu();
+      }
+      return;
     }
+    closeTokenMenu();
+    mapCtxWorld = { x: wpos.x, y: wpos.y };
+    showMapMenu(e.clientX, e.clientY);
   });
 
   canvas.addEventListener("pointerdown", (e) => {
