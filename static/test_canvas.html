@@ -7,8 +7,23 @@
     body { margin:0; font-family: system-ui, sans-serif; background:#111; color:#eee; }
     #top {
       padding: 10px;
-      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+      position: relative;
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
       background:#0f0f0f; border-bottom:1px solid #222;
+    }
+    .top-left, .top-right {
+      display:flex;
+      align-items:center;
+      gap:8px;
+      min-width: 0;
+    }
+    .top-center {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
     input, select { padding: 6px; }
     button { padding: 6px 10px; cursor:pointer; }
@@ -152,32 +167,161 @@
       border-color: rgba(0,209,255,0.55);
       color: #fff;
     }
+    .top-action-btn {
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      background: rgba(255,255,255,0.03);
+      color: #ddd;
+    }
+    .top-action-btn:hover {
+      background: rgba(255,255,255,0.10);
+    }
+    .top-action-btn.active {
+      background: rgba(0,209,255,0.16);
+      border-color: rgba(0,209,255,0.55);
+      color: #fff;
+    }
+    .tool-activate {
+      animation: toolPulse 120ms ease;
+    }
+    @keyframes toolPulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.06); }
+      100% { transform: scale(1); }
+    }
+    .ui-tooltip {
+      position: fixed;
+      z-index: 3500;
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: rgba(16,16,16,0.96);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #eee;
+      font-size: 12px;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .size-strip {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+      padding: 2px 4px;
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.04);
+      font-size: 12px;
+    }
+    .session-pill{
+      display:inline-flex;
+      gap:8px;
+      align-items:center;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,0.12);
+      background:#151515;
+      cursor:pointer;
+      font-size:13px;
+    }
+    .session-pill.ok{ border-color: rgba(0,255,120,0.25); }
+    .session-pill.bad{ border-color: rgba(255,80,80,0.25); }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 3000;
+    }
+    .modal {
+      position: fixed;
+      top: 70px;
+      left: 12px;
+      width: 320px;
+      background: #1f1f1f;
+      color: #eee;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px;
+      box-shadow: 0 18px 50px rgba(0,0,0,0.55);
+      z-index: 3001;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .modal-title { font-weight: 700; }
+    .modal-close {
+      border: none;
+      background: transparent;
+      color: #bbb;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .modal-body { padding: 12px; }
+    .field { margin-bottom: 10px; }
+    .field label {
+      display: block;
+      font-size: 12px;
+      opacity: 0.8;
+      margin-bottom: 4px;
+    }
+    .field input {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: #141414;
+      color: #eee;
+    }
+    .hint { font-size: 12px; opacity: 0.65; margin-top: 4px; }
+    .modal-actions { display: flex; gap: 8px; margin-top: 12px; }
+    button.primary {
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+    }
+    button.ghost {
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: transparent;
+      color: #ddd;
+      cursor: pointer;
+    }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
   <div id="top">
-    <button id="drawerToggle" class="drawer-toggle">☰</button>
-    <label>Room <input id="room" value="demo"></label>
-    <label>Client ID <input id="cid" value="chris"></label>
-    <label>GM Key <input id="gmKey" placeholder="optional"></label>
-    <button id="connect">Connect</button>
-    <button id="spawn">Spawn Token</button>
-    <span id="sizePresetGroup" class="pill" style="display:flex; gap:4px; align-items:center;">
-      Size
-      <button id="sizePresetS" style="padding:2px 6px;">S</button>
-      <button id="sizePresetM" style="padding:2px 6px;">M</button>
-      <button id="sizePresetL" style="padding:2px 6px;">L</button>
-      <button id="sizePresetH" style="padding:2px 6px;">Huge</button>
-    </span>
-    <div class="tool-strip">
-      <button id="toolBtnMove" class="tool-btn" data-tool="move">🖐 Move</button>
-      <button id="toolBtnPen" class="tool-btn" data-tool="pen">✏️ Pen</button>
-      <button id="toolBtnShape" class="tool-btn" data-tool="shape">⬛ Shape</button>
-      <button id="toolBtnErase" class="tool-btn" data-tool="eraser">🧽 Erase</button>
-      <button id="toolBtnRuler" class="tool-btn" data-tool="ruler">📏 Ruler</button>
+    <div class="top-left">
+      <button id="drawerToggle" class="drawer-toggle">☰</button>
+      <div id="sessionPill" class="session-pill bad">○ Disconnected</div>
     </div>
-    <button id="undo">Undo</button>
-    <button id="redo">Redo</button>
+    <div class="top-center">
+      <div class="tool-strip">
+        <button id="toolBtnMove" class="tool-btn" data-tool="move" data-tip="Move tokens">🖐 Move</button>
+        <button id="toolBtnPen" class="tool-btn" data-tool="pen" data-tip="Draw freehand">✏️ Pen</button>
+        <button id="toolBtnShape" class="tool-btn" data-tool="shape" data-tip="Draw shapes">⬛ Shape</button>
+        <button id="toolBtnErase" class="tool-btn" data-tool="eraser" data-tip="Erase drawings">🧽 Erase</button>
+        <button id="toolBtnRuler" class="tool-btn" data-tool="ruler" data-tip="Measure distance">📏 Ruler</button>
+      </div>
+      <button id="spawn" class="top-action-btn" data-tip="Place new token">Spawn Token</button>
+      <span id="sizePresetGroup" class="size-strip">
+        Size
+        <button id="sizePresetS" class="top-action-btn">S</button>
+        <button id="sizePresetM" class="top-action-btn">M</button>
+        <button id="sizePresetL" class="top-action-btn">L</button>
+        <button id="sizePresetH" class="top-action-btn">Huge</button>
+      </span>
+      <button id="undo" class="top-action-btn" data-tip="Undo last action">Undo</button>
+      <button id="redo" class="top-action-btn" data-tip="Redo last undone action">Redo</button>
+    </div>
+    <label style="display:none;">Room <input id="room" value="demo"></label>
+    <label style="display:none;">Client ID <input id="cid" value="chris"></label>
+    <label style="display:none;">GM Key <input id="gmKey" placeholder="optional"></label>
+    <button id="connect" style="display:none;">Connect</button>
     <button id="gmPanelBtn">GM Panel</button>
     <button id="roomsPanelBtn">Rooms</button>
     <button id="libraryPanelBtn">Token Library</button>
@@ -227,6 +371,32 @@
   </div>
 
   <div id="wrap">
+    <div id="sessionModalBackdrop" class="modal-backdrop hidden"></div>
+    <div id="sessionModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Session">
+      <div class="modal-header">
+        <div class="modal-title">Session</div>
+        <button id="sessionModalClose" class="modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>Room</label>
+          <input id="sessionRoom" type="text" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label>Client ID</label>
+          <input id="sessionClientId" type="text" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label>GM Key (optional)</label>
+          <input id="sessionGmKey" type="password" autocomplete="off" />
+          <div class="hint">Leave blank to join as player.</div>
+        </div>
+        <div class="modal-actions">
+          <button id="sessionConnectBtn" class="primary">Connect</button>
+          <button id="sessionDisconnectBtn" class="ghost hidden">Disconnect</button>
+        </div>
+      </div>
+    </div>
     <div id="drawer" class="drawer hidden">
       <div class="drawer-header">
         <span>WarBoard</span>
@@ -357,6 +527,7 @@
         <div id="toolSizeValue" style="font-size:12px; opacity:.85;">3</div>
       </div>
     </div>
+    <div id="uiTooltip" class="ui-tooltip hidden"></div>
     <div id="roomsPanel" style="
       position:absolute; top:10px; left:10px;
       width:min(460px, calc(100vw - 20px));
@@ -516,6 +687,7 @@
   const toolSizeTitle = document.getElementById("toolSizeTitle");
   const toolSizeSlider = document.getElementById("toolSizeSlider");
   const toolSizeValue = document.getElementById("toolSizeValue");
+  const uiTooltip = document.getElementById("uiTooltip");
   const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, rulerCtx];
   const playerListEl = document.getElementById("playerList");
   const tokenListEl = document.getElementById("tokenList");
@@ -537,6 +709,15 @@
   const toolBtnShape = document.getElementById("toolBtnShape");
   const toolBtnErase = document.getElementById("toolBtnErase");
   const toolBtnRuler = document.getElementById("toolBtnRuler");
+  const sessionPill = document.getElementById("sessionPill");
+  const sessionModal = document.getElementById("sessionModal");
+  const sessionModalBackdrop = document.getElementById("sessionModalBackdrop");
+  const sessionModalClose = document.getElementById("sessionModalClose");
+  const sessionRoomEl = document.getElementById("sessionRoom");
+  const sessionClientEl = document.getElementById("sessionClientId");
+  const sessionGmKeyEl = document.getElementById("sessionGmKey");
+  const sessionConnectBtn = document.getElementById("sessionConnectBtn");
+  const sessionDisconnectBtn = document.getElementById("sessionDisconnectBtn");
   const colorEl = document.getElementById("color");
   const sizeEl = document.getElementById("size");
   const feetPerSqEl = document.getElementById("feetPerSq");
@@ -1216,11 +1397,102 @@
     tokenMenuEl.style.display = "block";
   }
 
+  function openSessionModal() {
+    sessionRoomEl.value = roomEl.value.trim() || "demo";
+    sessionClientEl.value = cidEl.value.trim() || "player";
+    sessionGmKeyEl.value = "";
+    sessionModal.classList.remove("hidden");
+    sessionModalBackdrop.classList.remove("hidden");
+  }
+
+  function closeSessionModal() {
+    sessionModal.classList.add("hidden");
+    sessionModalBackdrop.classList.add("hidden");
+  }
+
+  function updateSessionPill() {
+    const connected = !!(ws && ws.readyState === 1);
+    const roomText = (state.room_id || roomEl.value.trim() || "demo");
+    const cidText = myId() || "player";
+    const role = isGM() ? "GM" : "Player";
+    if (connected) {
+      sessionPill.textContent = `● ${roomText} • ${cidText} (${role})`;
+      sessionPill.classList.add("ok");
+      sessionPill.classList.remove("bad");
+      sessionDisconnectBtn.classList.remove("hidden");
+    } else {
+      sessionPill.textContent = "○ Disconnected";
+      sessionPill.classList.add("bad");
+      sessionPill.classList.remove("ok");
+      sessionDisconnectBtn.classList.add("hidden");
+    }
+  }
+
+  function flashToolActivate(el) {
+    if (!el) return;
+    el.classList.remove("tool-activate");
+    // Reflow so repeated toggles replay animation.
+    void el.offsetWidth;
+    el.classList.add("tool-activate");
+  }
+
+  function hideTooltip() {
+    if (tooltipTimer) {
+      clearTimeout(tooltipTimer);
+      tooltipTimer = null;
+    }
+    uiTooltip.classList.add("hidden");
+  }
+
+  function showTooltipFor(el) {
+    if (!el) return;
+    const text = el.dataset.tip;
+    if (!text) return;
+    hideTooltip();
+    tooltipTimer = setTimeout(() => {
+      uiTooltip.textContent = text;
+      uiTooltip.classList.remove("hidden");
+      const rect = el.getBoundingClientRect();
+      const pad = 8;
+      const tw = uiTooltip.offsetWidth;
+      const th = uiTooltip.offsetHeight;
+      const x = Math.max(pad, Math.min(rect.left + rect.width / 2 - tw / 2, window.innerWidth - tw - pad));
+      const y = Math.max(pad, rect.bottom + 8);
+      uiTooltip.style.left = `${x}px`;
+      uiTooltip.style.top = `${y}px`;
+    }, 300);
+  }
+
+  function updateCanvasCursor() {
+    if (dragSpawn) {
+      canvas.style.cursor = "copy";
+      return;
+    }
+    const t = tool();
+    if (isPanning || (t === "move" && draggingTokenId)) {
+      canvas.style.cursor = "grabbing";
+      return;
+    }
+    if (t === "move") {
+      canvas.style.cursor = "grab";
+      return;
+    }
+    if (t === "pen" || t === "rect" || t === "circle" || t === "line" || t === "ruler") {
+      canvas.style.cursor = "crosshair";
+      return;
+    }
+    if (t === "eraser") {
+      canvas.style.cursor = "not-allowed";
+      return;
+    }
+    canvas.style.cursor = "default";
+  }
+
   function applyTokenSizePreset(scale) {
     ui.tokenSpawnScale = scale;
     for (const [k, btn] of Object.entries(sizePresetButtons)) {
       if (!btn) continue;
-      btn.style.border = Math.abs(parseFloat(k) - scale) < 0.01 ? "1px solid #00d1ff" : "";
+      btn.classList.toggle("active", Math.abs(parseFloat(k) - scale) < 0.01);
     }
     if (selectedTokenId && isGM()) {
       const tok = state.tokens.get(selectedTokenId);
@@ -1340,7 +1612,7 @@
       x: wx,
       y: wy,
       name: packToken.name || "Token",
-      color: "#ffffff",
+      color: packToken.color || "#ffffff",
       image_url: packToken.image_url || null,
       size_scale: clamp(Number(packToken.size_scale ?? ui.tokenSpawnScale), 0.25, 4),
       owner_id: null,
@@ -1414,6 +1686,7 @@
   let ctxSubHideTimer = null;
   let lastShapeTool = "rect";
   let lastCtxClientPos = { x: 24, y: 24 };
+  let tooltipTimer = null;
 
   let bgImage = null;
   let bgImageUrl = null;
@@ -2329,7 +2602,7 @@
     if (!imageDrawn) {
       ctx.beginPath();
       ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = "#888";
+      ctx.fillStyle = dragSpawn.color || "#888";
       ctx.fill();
     }
     ctx.lineWidth = Math.max(2, 2 * cam.z);
@@ -2345,6 +2618,8 @@
   function render() {
     const w = canvas.getBoundingClientRect().width;
     const h = canvas.getBoundingClientRect().height;
+    updateCanvasCursor();
+    document.getElementById("spawn").classList.toggle("active", !!dragSpawn);
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = "#222";
     ctx.fillRect(0, 0, w, h);
@@ -2468,6 +2743,7 @@
     ws = new WebSocket(url);
     ws.onopen = () => {
       log(`connected: ${url}`);
+      updateSessionPill();
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = setInterval(() => {
         if (ws && ws.readyState === 1) send("HEARTBEAT", { ts: Date.now() });
@@ -2475,12 +2751,13 @@
     };
     ws.onclose = () => {
       log("disconnected");
+      updateSessionPill();
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
         heartbeatTimer = null;
       }
     };
-    ws.onerror = () => log("ws error");
+    ws.onerror = () => { log("ws error"); updateSessionPill(); };
 
     ws.onmessage = (msg) => {
       const ev = JSON.parse(msg.data);
@@ -2488,6 +2765,7 @@
       if (ev.type === "STATE_SYNC") {
         applyStateSync(ev.payload);
         log(`STATE_SYNC v${state.version} gm=${state.gm_id} strokes=${state.strokes.size} shapes=${state.shapes.size}`);
+        updateSessionPill();
         return;
       }
 
@@ -2496,6 +2774,7 @@
           log(ev.payload.is_gm ? "You are GM" : `GM is ${state.gm_id || "(unclaimed)"}`);
         }
         refreshGmUI();
+        updateSessionPill();
         return;
       }
 
@@ -2508,6 +2787,7 @@
         for (const id of (ev.payload?.clients || [])) players.add(id);
         if (ev.payload?.gm_id) state.gm_id = ev.payload.gm_id;
         refreshGmUI();
+        updateSessionPill();
         return;
       }
 
@@ -2730,22 +3010,16 @@
 
   document.getElementById("spawn").onclick = () => {
     if (!ws || ws.readyState !== 1) { log("Spawn blocked: connect first."); return; }
-    const id = makeId();
-    const name = (prompt("Token name?", "Gobbo") || "Token").trim() || "Token";
-    const color = "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0");
-
-    const w = canvas.getBoundingClientRect().width;
-    const h = canvas.getBoundingClientRect().height;
-    const centerWorld = screenToWorld(w / 2, h / 2);
-
-    const x = snap(centerWorld.x + (Math.random() * 120 - 60));
-    const y = snap(centerWorld.y + (Math.random() * 120 - 60));
-
-    const size_scale = ui.tokenSpawnScale;
-    state.tokens.set(id, { id, x, y, name, color, image_url: null, size_scale, owner_id: null, locked: false, badges: [] });
-    refreshGmUI();
+    dragSpawn = {
+      name: "Token",
+      color: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
+      image_url: null,
+      size_scale: ui.tokenSpawnScale,
+    };
+    dragSpawnWorld = null;
+    dragSpawnOverCanvas = false;
+    updateCanvasCursor();
     requestRender();
-    send("TOKEN_CREATE", { id, x, y, name, color, image_url: null, size_scale, badges: [] });
   };
 
   document.getElementById("undo").onclick = () => send("UNDO", {});
@@ -2759,8 +3033,40 @@
   mountDrawerPanels();
   [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnErase, toolBtnRuler].forEach((btn) => {
     btn.onclick = () => setTool(btn.dataset.tool);
+    btn.addEventListener("mouseenter", () => showTooltipFor(btn));
+    btn.addEventListener("mouseleave", hideTooltip);
   });
+  [document.getElementById("spawn"), document.getElementById("undo"), document.getElementById("redo")].forEach((btn) => {
+    if (!btn) return;
+    btn.addEventListener("mouseenter", () => showTooltipFor(btn));
+    btn.addEventListener("mouseleave", hideTooltip);
+  });
+  sessionPill.addEventListener("click", openSessionModal);
+  sessionModalClose.addEventListener("click", closeSessionModal);
+  sessionModalBackdrop.addEventListener("click", closeSessionModal);
+  sessionConnectBtn.addEventListener("click", () => {
+    roomEl.value = sessionRoomEl.value.trim() || "demo";
+    cidEl.value = sessionClientEl.value.trim() || "player";
+    gmKeyEl.value = sessionGmKeyEl.value.trim();
+    connectWS(true);
+    closeSessionModal();
+  });
+  sessionDisconnectBtn.addEventListener("click", () => {
+    if (ws && ws.readyState === 1) {
+      try { ws.close(); } catch {}
+    }
+  });
+  [sessionRoomEl, sessionClientEl, sessionGmKeyEl].forEach((inp) => {
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sessionConnectBtn.click();
+      }
+    });
+  });
+  updateSessionPill();
   refreshToolButtons();
+  updateCanvasCursor();
   toolColorPicker.addEventListener("input", () => {
     colorEl.value = toolColorPicker.value;
     refreshToolContextChecks();
@@ -2802,6 +3108,7 @@
   window.addEventListener("mousedown", (e) => {
     if (!isClickInsideAnyCtxMenu(e.target)) hideAllCtx();
     if (!isClickInsideToolPanel(e.target)) hideToolPanels();
+    hideTooltip();
   });
 
   document.getElementById("gmPanelBtn").onclick = () => {
@@ -3024,13 +3331,23 @@
     toolBtnRuler.classList.toggle("active", t === "ruler");
   }
   function setTool(next) {
+    const prev = tool();
     if (next === "shape") {
       toolEl.value = isShapeTool(toolEl.value) ? toolEl.value : lastShapeTool;
     } else {
       toolEl.value = next;
       if (isShapeTool(next)) lastShapeTool = next;
     }
+    const current = tool();
+    if (current !== prev) {
+      if (current === "move") flashToolActivate(toolBtnMove);
+      else if (current === "pen") flashToolActivate(toolBtnPen);
+      else if (isShapeTool(current)) flashToolActivate(toolBtnShape);
+      else if (current === "eraser") flashToolActivate(toolBtnErase);
+      else if (current === "ruler") flashToolActivate(toolBtnRuler);
+    }
     refreshToolButtons();
+    updateCanvasCursor();
   }
   function brushColor() { return colorEl.value; }
   function brushSize() { return clamp(parseFloat(sizeEl.value || "3"), 1, 30); }
@@ -3039,6 +3356,10 @@
     if (e.key === "Shift") isShiftDown = true;
     const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
     const isTyping = tag === "input" || tag === "textarea" || tag === "select" || (e.target && e.target.isContentEditable);
+    if (e.key === "Escape" && !sessionModal.classList.contains("hidden")) {
+      closeSessionModal();
+      return;
+    }
     if (!isTyping) {
       const k = e.key.toLowerCase();
       if (k === "v") { setTool("move"); e.preventDefault(); return; }
@@ -3055,6 +3376,7 @@
     if (e.key === "Escape") {
       hideAllCtx();
       hideToolPanels();
+      hideTooltip();
     }
     if (e.key === "Escape" && tokenMenuEl.style.display === "block") {
       closeTokenMenu();
@@ -3343,7 +3665,7 @@
     const now = Date.now();
     if (now - lastEraseSentAt < ERASE_SEND_INTERVAL_MS) return;
     lastEraseSentAt = now;
-    send("ERASE_AT", { x: wx, y: wy, r, erase_shapes: isShiftDown });
+    send("ERASE_AT", { x: wx, y: wy, r, erase_shapes: true });
   }
 
   function endPointer(e) {
