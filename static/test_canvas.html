@@ -51,6 +51,7 @@
     <button id="redo">Redo</button>
     <button id="gmPanelBtn">GM Panel</button>
     <button id="roomsPanelBtn">Rooms</button>
+    <button id="libraryPanelBtn">Token Library</button>
 
     <label><input type="checkbox" id="allowPlayersMove"> Players move assigned</label>
     <label><input type="checkbox" id="allowAllMove"> Everyone moves everything</label>
@@ -58,6 +59,17 @@
 
     <label>BG URL <input id="bgUrl" placeholder="https://..."></label>
     <button id="setBg">Set BG</button>
+    <label><input type="checkbox" id="terrainBg"> Terrain BG</label>
+    <label>Biome
+      <select id="terrainStyle">
+        <option value="grassland">Grassland</option>
+        <option value="dirt">Dirt/Road</option>
+        <option value="snow">Snow</option>
+        <option value="desert">Desert</option>
+      </select>
+    </label>
+    <button id="regenTerrain">Regenerate Terrain</button>
+    <span id="terrainBadge" class="pill" style="display:none; opacity:.9;"></span>
 
     <label>Tool
       <select id="tool">
@@ -121,6 +133,35 @@
         <button id="refreshSnapshotsBtn">Refresh</button>
       </div>
       <div id="snapshotsList" style="margin-top:8px; font-size:12px;"></div>
+    </div>
+    <div id="libraryPanel" style="
+      position:absolute; top:10px; left:10px;
+      width:min(560px, calc(100vw - 20px));
+      max-height: calc(100vh - 120px);
+      overflow:auto;
+      background: rgba(0,0,0,0.82);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px;
+      display:none;
+      z-index: 3;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <b>Token Library</b>
+        <button id="libraryPanelClose">Close</button>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <label>Pack
+          <select id="packSelect" style="min-width:200px;"></select>
+        </label>
+        <input id="packSearch" placeholder="Search tokens..." style="flex:1; min-width:180px;">
+        <button id="refreshPacksBtn">Refresh</button>
+      </div>
+      <div id="packGrid" style="
+        margin-top:8px;
+        display:grid;
+        grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+        gap:8px;
+      "></div>
     </div>
     <div id="gmPanel" style="
       position:absolute; top:10px; right:10px;
@@ -186,6 +227,10 @@
   const allowAllMoveEl = document.getElementById("allowAllMove");
   const lockdownEl = document.getElementById("lockdown");
   const bgUrlEl = document.getElementById("bgUrl");
+  const terrainBgEl = document.getElementById("terrainBg");
+  const terrainStyleEl = document.getElementById("terrainStyle");
+  const regenTerrainEl = document.getElementById("regenTerrain");
+  const terrainBadgeEl = document.getElementById("terrainBadge");
 
   const layerGridEl = document.getElementById("layerGrid");
   const layerDrawEl = document.getElementById("layerDraw");
@@ -194,6 +239,7 @@
 
   const gmPanel = document.getElementById("gmPanel");
   const roomsPanel = document.getElementById("roomsPanel");
+  const libraryPanel = document.getElementById("libraryPanel");
   const playerListEl = document.getElementById("playerList");
   const tokenListEl = document.getElementById("tokenList");
   const strokeListEl = document.getElementById("strokeList");
@@ -204,6 +250,9 @@
   const newRoomNameEl = document.getElementById("newRoomName");
   const newRoomIdEl = document.getElementById("newRoomId");
   const snapshotLabelInputEl = document.getElementById("snapshotLabelInput");
+  const packSelectEl = document.getElementById("packSelect");
+  const packSearchEl = document.getElementById("packSearch");
+  const packGridEl = document.getElementById("packGrid");
 
   const toolEl = document.getElementById("tool");
   const colorEl = document.getElementById("color");
@@ -253,6 +302,190 @@
     return res.json();
   }
 
+  function tokenImage(url) {
+    if (!url) return null;
+    if (tokenImageCache.has(url)) return tokenImageCache.get(url);
+    const img = new Image();
+    img.decoding = "async";
+    img.loading = "eager";
+    img.onload = () => requestRender();
+    img.onerror = () => requestRender();
+    img.src = url;
+    tokenImageCache.set(url, img);
+    return img;
+  }
+
+  function drawTokenImageClippedCircle(t, s, r) {
+    const img = tokenImage(t.image_url || "");
+    if (!img || !img.complete || img.naturalWidth <= 0 || img.naturalHeight <= 0) return false;
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    const scale = Math.max((2 * r) / iw, (2 * r) / ih);
+    const dw = iw * scale;
+    const dh = ih * scale;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(img, s.x - dw / 2, s.y - dh / 2, dw, dh);
+    ctx.restore();
+    return true;
+  }
+
+  function sanitizePackToken(token, packId) {
+    const id = String(token?.id || "").trim();
+    const name = String(token?.name || id || "Token").trim() || "Token";
+    const file = String(token?.file || "").trim();
+    const tags = Array.isArray(token?.tags) ? token.tags.map((x) => String(x).trim().toLowerCase()).filter(Boolean) : [];
+    if (!id || !file) return null;
+    const safePath = file
+      .replace(/^\/+/, "")
+      .split("/")
+      .map((seg) => encodeURIComponent(seg))
+      .join("/");
+    return {
+      id,
+      name,
+      file,
+      tags,
+      image_url: `/packs/${encodeURIComponent(packId)}/${safePath}`,
+    };
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll("\"", "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  function closeFloatingPanels(except = "") {
+    if (except !== "gm") gmPanel.style.display = "none";
+    if (except !== "rooms") roomsPanel.style.display = "none";
+    if (except !== "library") libraryPanel.style.display = "none";
+  }
+
+  function renderPackGrid() {
+    const q = packState.search.toLowerCase().trim();
+    const rows = packState.tokens.filter((t) => {
+      if (!q) return true;
+      const hay = `${t.name} ${t.tags.join(" ")}`.toLowerCase();
+      return hay.includes(q);
+    });
+
+    if (!rows.length) {
+      packGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">(no tokens match)</div>`;
+      return;
+    }
+
+    packGridEl.innerHTML = rows.map((t, idx) => `
+      <button
+        data-pack-idx="${idx}"
+        style="padding:6px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.03); color:#eee; text-align:center;"
+        title="${escapeHtml(t.name)}">
+        <div style="width:100%; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#1a1a1a; display:flex; align-items:center; justify-content:center;">
+          <img src="${escapeHtml(t.image_url)}" alt="${escapeHtml(t.name)}" style="width:100%; height:100%; object-fit:cover;">
+        </div>
+        <div style="margin-top:6px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(t.name)}</div>
+      </button>
+    `).join("");
+
+    packGridEl.querySelectorAll("button[data-pack-idx]").forEach((btn) => {
+      const idx = Number(btn.getAttribute("data-pack-idx"));
+      const t = rows[idx];
+      if (!t) return;
+
+      btn.onclick = () => spawnPackToken(t);
+      btn.onpointerdown = (e) => {
+        if (e.button !== 0) return;
+        dragSpawn = t;
+        dragSpawnWorld = null;
+        dragSpawnOverCanvas = false;
+        e.preventDefault();
+      };
+    });
+  }
+
+  async function loadPack(packId) {
+    if (!packId) {
+      packState.tokens = [];
+      renderPackGrid();
+      return;
+    }
+    try {
+      const manifest = await apiGet(`/api/packs/${encodeURIComponent(packId)}`);
+      const tokens = [];
+      for (const token of (manifest.tokens || [])) {
+        const normalized = sanitizePackToken(token, packId);
+        if (normalized) tokens.push(normalized);
+      }
+      packState.tokens = tokens;
+      renderPackGrid();
+    } catch (e) {
+      packState.tokens = [];
+      packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Pack load failed</div>`;
+      log(`PACK LOAD ERROR: ${e.message || e}`);
+    }
+  }
+
+  async function refreshPacks() {
+    try {
+      const data = await apiGet("/api/packs");
+      const packs = Array.isArray(data.packs) ? data.packs : [];
+      packState.packs = packs;
+      const existing = new Set(packs.map((p) => p.pack_id));
+      if (!existing.has(packState.selectedPackId)) {
+        packState.selectedPackId = packs[0]?.pack_id || "";
+      }
+      packSelectEl.innerHTML = packs.map((p) => (
+        `<option value="${p.pack_id}">${p.name} (${p.token_count})</option>`
+      )).join("") || `<option value="">(no packs)</option>`;
+      packSelectEl.value = packState.selectedPackId || "";
+      await loadPack(packState.selectedPackId);
+    } catch (e) {
+      packState.packs = [];
+      packState.tokens = [];
+      packSelectEl.innerHTML = `<option value="">(packs unavailable)</option>`;
+      packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Packs load failed</div>`;
+      log(`PACKS ERROR: ${e.message || e}`);
+    }
+  }
+
+  function spawnPackToken(packToken, x = null, y = null) {
+    if (!ws || ws.readyState !== 1) {
+      log("Spawn blocked: connect first.");
+      return;
+    }
+    const id = makeId();
+    let wx = x;
+    let wy = y;
+    if (wx === null || wy === null) {
+      const w = canvas.getBoundingClientRect().width;
+      const h = canvas.getBoundingClientRect().height;
+      const centerWorld = screenToWorld(w / 2, h / 2);
+      wx = snap(centerWorld.x + (Math.random() * 80 - 40));
+      wy = snap(centerWorld.y + (Math.random() * 80 - 40));
+    }
+
+    const token = {
+      id,
+      x: wx,
+      y: wy,
+      name: packToken.name || "Token",
+      color: "#ffffff",
+      image_url: packToken.image_url || null,
+      owner_id: null,
+      locked: false,
+    };
+    state.tokens.set(id, token);
+    refreshGmUI();
+    requestRender();
+    send("TOKEN_CREATE", token);
+  }
+
   let ws = null;
   let heartbeatTimer = null;
   const players = new Set();
@@ -263,13 +496,22 @@
     allow_players_move: false,
     allow_all_move: false,
     lockdown: false,
+    background_mode: "solid",
     background_url: null,
+    terrain_seed: 1,
+    terrain_style: "grassland",
     layer_visibility: { grid: true, drawings: true, shapes: true, tokens: true },
     draw_order: { strokes: [], shapes: [] },
     version: 0,
     tokens: new Map(),
     strokes: new Map(),
     shapes: new Map(),
+  };
+  const packState = {
+    packs: [],
+    selectedPackId: "",
+    tokens: [],
+    search: "",
   };
 
   function myId() { return cidEl.value.trim(); }
@@ -280,6 +522,7 @@
 
   let draggingTokenId = null;
   let selectedTokenId = null;
+  let hoveredTokenId = null;
   let dragOffset = { x: 0, y: 0 };
   let isPanning = false;
   let isShiftDown = false;
@@ -296,11 +539,357 @@
   const MOVE_SEND_INTERVAL_MS = 33;
   let lastEraseSentAt = 0;
   const ERASE_SEND_INTERVAL_MS = 40;
+  let dragSpawn = null;
+  let dragSpawnWorld = null;
+  let dragSpawnOverCanvas = false;
 
   let bgImage = null;
   let bgImageUrl = null;
   let bgImageStatus = "idle";
   const bgCache = new Map();
+  const tokenImageCache = new Map();
+  const TERRAIN_MACRO_TILE = 1024;
+  const TERRAIN_MICRO_TILE = 512;
+  const TERRAIN_BREAKUP_TILE = 1536;
+  const TERRAIN_STYLES = new Set(["grassland", "dirt", "snow", "desert"]);
+  const BIOME_PALETTES = {
+    grassland: {
+      base: "#2f5f2a",
+      speckA: "#3c7034",
+      speckB: "#275227",
+      strokeA: "#3f7a35",
+      strokeB: "#204820",
+      stain: "#bda46a",
+      pebbleA: "#7c7c7c",
+      pebbleB: "#6b635a",
+      shadowShade: [14, 22, 14],
+    },
+    dirt: {
+      base: "#5a4934",
+      speckA: "#6a573f",
+      speckB: "#4a3a2a",
+      strokeA: "#7b6546",
+      strokeB: "#3c2f22",
+      stain: "#9f8458",
+      pebbleA: "#8b7b67",
+      pebbleB: "#665845",
+      shadowShade: [18, 16, 12],
+    },
+    snow: {
+      base: "#d7dde0",
+      speckA: "#e6eef2",
+      speckB: "#c7d1d7",
+      strokeA: "#c8d8e2",
+      strokeB: "#b3c0c8",
+      stain: "#b8c2ca",
+      pebbleA: "#9ca8b3",
+      pebbleB: "#7f8a93",
+      shadowShade: [28, 30, 33],
+    },
+    desert: {
+      base: "#c9ad71",
+      speckA: "#d7bb7c",
+      speckB: "#b99560",
+      strokeA: "#cfb074",
+      strokeB: "#a6844f",
+      stain: "#b58f53",
+      pebbleA: "#8f7550",
+      pebbleB: "#6f5a3d",
+      shadowShade: [24, 20, 12],
+    },
+  };
+  const terrain = {
+    seed: null,
+    gridSize: null,
+    style: null,
+    patternA: null,
+    patternB: null,
+    patternC: null,
+    tileA: null,
+    tileB: null,
+    tileC: null,
+  };
+
+  function normalizeBackgroundMode(mode, bgUrl) {
+    if (mode === "terrain" || mode === "url" || mode === "solid") return mode;
+    return bgUrl ? "url" : "solid";
+  }
+
+  function normalizeTerrainSeed(seed, fallback = 1) {
+    const parsed = Number(seed);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+    return fallback;
+  }
+
+  function normalizeTerrainStyle(style) {
+    return TERRAIN_STYLES.has(style) ? style : "grassland";
+  }
+
+  function randomTerrainSeed() {
+    if (window.crypto && crypto.getRandomValues) {
+      const a = new Uint32Array(1);
+      crypto.getRandomValues(a);
+      return Math.max(1, (a[0] & 0x7fffffff));
+    }
+    return Math.floor(Math.random() * 2_147_483_647) + 1;
+  }
+
+  function terrainScaleFromGrid(gridSize) {
+    return clamp((gridSize || 50) / 50, 0.55, 2.4);
+  }
+
+  function mulberry32(seed) {
+    let s = seed >>> 0;
+    return function () {
+      let t = s += 0x6D2B79F5;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function shadeColor(baseRgb, variance, rnd) {
+    const r = clamp(Math.round(baseRgb[0] + (rnd() - 0.5) * variance), 0, 255);
+    const g = clamp(Math.round(baseRgb[1] + (rnd() - 0.5) * variance), 0, 255);
+    const b = clamp(Math.round(baseRgb[2] + (rnd() - 0.5) * variance), 0, 255);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function colorWithAlpha(color, alpha) {
+    const a = clamp(alpha, 0, 1);
+    if (typeof color !== "string") return `rgba(0,0,0,${a})`;
+    const hex = color.trim();
+    if (hex.startsWith("#")) {
+      const raw = hex.slice(1);
+      const full = raw.length === 3
+        ? raw.split("").map((ch) => ch + ch).join("")
+        : raw;
+      if (full.length === 6) {
+        const r = parseInt(full.slice(0, 2), 16);
+        const g = parseInt(full.slice(2, 4), 16);
+        const b = parseInt(full.slice(4, 6), 16);
+        return `rgba(${r},${g},${b},${a})`;
+      }
+    }
+    return color;
+  }
+
+  function drawCloudShadows(c, rnd, tileSize, intensity = 0.045) {
+    const clouds = 2 + Math.floor(rnd() * 2);
+    for (let i = 0; i < clouds; i++) {
+      const cx = rnd() * tileSize;
+      const cy = rnd() * tileSize;
+      const r = tileSize * (0.33 + rnd() * 0.27);
+      const g = c.createRadialGradient(cx, cy, r * 0.2, cx, cy, r);
+      g.addColorStop(0, `rgba(0,0,0,${intensity})`);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(cx, cy, r, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+
+  function buildTerrainPattern(ctxMain, seed, tileSize = 512, opts = {}) {
+    const mode = opts.mode || "macro";
+    const scale = clamp(opts.scale || 1, 0.55, 2.4);
+    const style = normalizeTerrainStyle(opts.style);
+    const palette = BIOME_PALETTES[style];
+    const off = document.createElement("canvas");
+    off.width = tileSize;
+    off.height = tileSize;
+    const c = off.getContext("2d");
+    const rnd = mulberry32(seed);
+    const clampByte = (v) => Math.max(0, Math.min(255, v));
+
+    c.fillStyle = palette.base;
+    c.fillRect(0, 0, tileSize, tileSize);
+
+    if (mode === "macro" || mode === "macro_soft") {
+      c.globalAlpha = mode === "macro_soft" ? 0.04 : 0.07;
+      const macroSpeckleCount = mode === "macro_soft"
+        ? Math.max(1200, Math.floor(3200 / Math.sqrt(scale)))
+        : Math.max(1600, Math.floor(5200 / Math.sqrt(scale)));
+      for (let i = 0; i < macroSpeckleCount; i++) {
+        const x = rnd() * tileSize;
+        const y = rnd() * tileSize;
+        const szBase = mode === "macro_soft" ? 14 : 8;
+        const szRange = mode === "macro_soft" ? 30 : 24;
+        const sz = (szBase + rnd() * szRange) * scale;
+        c.fillStyle = rnd() < 0.5 ? palette.speckA : palette.speckB;
+        c.fillRect(x, y, sz, sz);
+      }
+
+      const patchCount = mode === "macro_soft"
+        ? Math.max(2, Math.round(3 / Math.sqrt(scale)))
+        : Math.max(2, Math.round(3 / Math.sqrt(scale)));
+      for (let b = 0; b < patchCount; b++) {
+        const cx = rnd() * tileSize;
+        const cy = rnd() * tileSize;
+        const scaleMin = mode === "macro_soft" ? 0.22 : 0.12;
+        const scaleRange = mode === "macro_soft" ? 0.20 : 0.16;
+        const r = tileSize * (scaleMin + rnd() * scaleRange) * scale;
+        const g = c.createRadialGradient(cx, cy, r * 0.15, cx, cy, r);
+        const stainAlpha = mode === "macro_soft" ? 0.05 : 0.08;
+        g.addColorStop(0, colorWithAlpha(palette.stain, stainAlpha));
+        g.addColorStop(1, colorWithAlpha(palette.stain, 0));
+        c.fillStyle = g;
+        c.beginPath();
+        c.arc(cx, cy, r, 0, Math.PI * 2);
+        c.fill();
+
+        c.globalAlpha = mode === "macro_soft" ? 0.03 : 0.045;
+        const edgeCount = Math.max(14, Math.round(36 / Math.sqrt(scale)));
+        for (let k = 0; k < edgeCount; k++) {
+          c.save();
+          c.translate(cx + (rnd() - 0.5) * r * 0.9, cy + (rnd() - 0.5) * r * 0.9);
+          c.rotate(rnd() * Math.PI * 2);
+          c.scale(1 + rnd() * 1.7, 0.6 + rnd() * 0.9);
+          c.fillStyle = palette.stain;
+          c.beginPath();
+          c.arc(0, 0, r * (0.10 + rnd() * 0.20), 0, Math.PI * 2);
+          c.fill();
+          c.restore();
+        }
+      }
+      c.globalAlpha = 1;
+
+      if (mode === "macro") {
+        c.globalAlpha = 0.08;
+        const macroStrokeCount = Math.max(280, Math.round(900 / scale));
+        for (let i = 0; i < macroStrokeCount; i++) {
+          const x = rnd() * tileSize;
+          const y = rnd() * tileSize;
+          const len = (5 + rnd() * 10) * scale;
+          const ang = rnd() * Math.PI * 2;
+          c.strokeStyle = rnd() < 0.45 ? palette.strokeA : palette.strokeB;
+          c.lineWidth = 1;
+          c.beginPath();
+          c.moveTo(x, y);
+          c.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+          c.stroke();
+        }
+        c.globalAlpha = 1;
+      }
+
+      drawCloudShadows(c, rnd, tileSize, mode === "macro_soft" ? 0.035 : 0.05);
+    } else {
+      const img = c.getImageData(0, 0, tileSize, tileSize);
+      const d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const n = (rnd() - 0.5) * 18;
+        d[i + 0] = clampByte(d[i + 0] + n);
+        d[i + 1] = clampByte(d[i + 1] + n);
+        d[i + 2] = clampByte(d[i + 2] + n);
+      }
+      c.putImageData(img, 0, 0);
+
+      c.globalAlpha = 0.14;
+      const microStrokeCount = Math.max(1200, Math.round(2600 / Math.sqrt(scale)));
+      for (let i = 0; i < microStrokeCount; i++) {
+        const x = rnd() * tileSize;
+        const y = rnd() * tileSize;
+        const len = (1.3 + rnd() * 3.4) * Math.sqrt(scale);
+        const ang = rnd() * Math.PI * 2;
+        c.strokeStyle = rnd() < 0.55 ? palette.strokeA : palette.strokeB;
+        c.lineWidth = 1;
+        c.beginPath();
+        c.moveTo(x, y);
+        c.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+        c.stroke();
+      }
+      c.globalAlpha = 1;
+
+      c.globalAlpha = 0.08;
+      const microSpeckleCount = Math.max(1800, Math.round(4200 / Math.sqrt(scale)));
+      for (let i = 0; i < microSpeckleCount; i++) {
+        const x = rnd() * tileSize;
+        const y = rnd() * tileSize;
+        c.fillStyle = shadeColor(palette.shadowShade, 42, rnd);
+        c.fillRect(x, y, 1, 1);
+      }
+      c.globalAlpha = 1;
+
+      const clusterCount = Math.max(10, Math.round(24 / Math.sqrt(scale)));
+      for (let cl = 0; cl < clusterCount; cl++) {
+        const cx = rnd() * tileSize;
+        const cy = rnd() * tileSize;
+        const members = 2 + Math.floor(rnd() * 6);
+        for (let i = 0; i < members; i++) {
+          const x = cx + (rnd() - 0.5) * 24;
+          const y = cy + (rnd() - 0.5) * 24;
+          const r = (0.9 + rnd() * 2.6) * Math.sqrt(scale);
+
+          c.globalAlpha = 0.18;
+          c.fillStyle = "#000";
+          c.beginPath();
+          c.arc(x + 0.8, y + 0.8, r, 0, Math.PI * 2);
+          c.fill();
+
+          c.globalAlpha = 0.55;
+          c.fillStyle = rnd() < 0.5 ? palette.pebbleA : palette.pebbleB;
+          c.beginPath();
+          c.arc(x, y, r, 0, Math.PI * 2);
+          c.fill();
+        }
+      }
+      c.globalAlpha = 1;
+    }
+
+    return { tileCanvas: off, pattern: ctxMain.createPattern(off, "repeat") };
+  }
+
+  function ensureTerrain(seed, style = state.terrain_style) {
+    const nextSeed = normalizeTerrainSeed(seed, 1);
+    const nextStyle = normalizeTerrainStyle(style);
+    const nextGridSize = clamp(Math.round(ui.gridSize || 50), 10, 300);
+    const terrainScale = terrainScaleFromGrid(nextGridSize);
+    if (terrain.seed === nextSeed && terrain.style === nextStyle && terrain.gridSize === nextGridSize && terrain.patternA && terrain.patternB && terrain.patternC) return;
+    const builtA = buildTerrainPattern(ctx, nextSeed, TERRAIN_MACRO_TILE, { mode: "macro", scale: terrainScale, style: nextStyle });
+    const builtB = buildTerrainPattern(ctx, (nextSeed ^ 0x9e3779b9) >>> 0, TERRAIN_MICRO_TILE, { mode: "micro", scale: terrainScale, style: nextStyle });
+    const builtC = buildTerrainPattern(ctx, (nextSeed ^ 0x85ebca6b) >>> 0, TERRAIN_BREAKUP_TILE, { mode: "macro_soft", scale: terrainScale * 1.15, style: nextStyle });
+    terrain.seed = nextSeed;
+    terrain.gridSize = nextGridSize;
+    terrain.style = nextStyle;
+    terrain.patternA = builtA.pattern;
+    terrain.patternB = builtB.pattern;
+    terrain.patternC = builtC.pattern;
+    terrain.tileA = builtA.tileCanvas;
+    terrain.tileB = builtB.tileCanvas;
+    terrain.tileC = builtC.tileCanvas;
+  }
+
+  function drawTerrainBackground() {
+    if (!terrain.patternA || !terrain.patternB || !terrain.patternC) return;
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    const topLeft = screenToWorld(0, 0);
+    const botRight = screenToWorld(w, h);
+
+    ctx.save();
+    ctx.translate(cam.x, cam.y);
+    ctx.scale(cam.z, cam.z);
+    ctx.globalAlpha = 1.0;
+    ctx.fillStyle = terrain.patternA;
+    ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = terrain.patternB;
+    ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = terrain.patternC;
+    ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
+    ctx.globalAlpha = 1.0;
+    ctx.restore();
+
+    // Slight edge darkening improves token/readability over textured terrain.
+    ctx.save();
+    const g = ctx.createRadialGradient(w / 2, h / 2, 100, w / 2, h / 2, Math.max(w, h) * 0.75);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, "rgba(0,0,0,0.22)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
 
   function setBackgroundUrl(url) {
     const next = url || null;
@@ -337,6 +926,26 @@
     img.src = next;
   }
 
+  function applyBackgroundState(mode, url, seed, style) {
+    state.background_url = url || null;
+    state.background_mode = normalizeBackgroundMode(mode, state.background_url);
+    state.terrain_seed = normalizeTerrainSeed(seed, state.terrain_seed || 1);
+    state.terrain_style = normalizeTerrainStyle(style || state.terrain_style);
+    if (state.background_mode === "url") setBackgroundUrl(state.background_url);
+    else setBackgroundUrl(null);
+    if (state.background_mode === "terrain") ensureTerrain(state.terrain_seed, state.terrain_style);
+  }
+
+  function refreshTerrainBadge() {
+    if (!isGM() || state.background_mode !== "terrain") {
+      terrainBadgeEl.style.display = "none";
+      terrainBadgeEl.textContent = "";
+      return;
+    }
+    terrainBadgeEl.textContent = `Terrain: ${state.terrain_style} (seed ${state.terrain_seed})`;
+    terrainBadgeEl.style.display = "inline-block";
+  }
+
   function refreshGmUI() {
     const gm = isGM();
 
@@ -344,7 +953,10 @@
     allowAllMoveEl.disabled = !gm;
     lockdownEl.disabled = !gm;
     bgUrlEl.disabled = !gm;
+    terrainBgEl.disabled = !gm;
+    terrainStyleEl.disabled = !gm;
     document.getElementById("setBg").disabled = !gm;
+    regenTerrainEl.disabled = !gm;
     document.getElementById("undo").disabled = !gm;
     document.getElementById("redo").disabled = !gm;
 
@@ -358,6 +970,9 @@
     layerShapesEl.checked = !!state.layer_visibility.shapes;
     layerTokensEl.checked = !!state.layer_visibility.tokens;
     bgUrlEl.value = state.background_url || "";
+    terrainBgEl.checked = state.background_mode === "terrain";
+    terrainStyleEl.value = state.terrain_style || "grassland";
+    refreshTerrainBadge();
 
     const arr = Array.from(players).sort();
     playerListEl.innerHTML = arr.map((id) => {
@@ -550,8 +1165,21 @@
     return best;
   }
 
+  function updateHoveredToken(wx, wy) {
+    const next = draggingTokenId || hitTestToken(wx, wy);
+    if (next === hoveredTokenId) return;
+    hoveredTokenId = next;
+    requestRender();
+  }
+
   function drawBackground() {
-    if (bgImage) {
+    if (state.background_mode === "terrain") {
+      ensureTerrain(state.terrain_seed, state.terrain_style);
+      drawTerrainBackground();
+      return;
+    }
+
+    if (state.background_mode === "url" && bgImage) {
       const a = worldToScreen(0, 0);
       const b = worldToScreen(bgImage.naturalWidth, bgImage.naturalHeight);
       const w = b.x - a.x;
@@ -559,7 +1187,7 @@
       ctx.drawImage(bgImage, a.x, a.y, w, h);
     }
 
-    if (bgImageStatus === "loading") {
+    if (state.background_mode === "url" && bgImageStatus === "loading") {
       ctx.save();
       ctx.fillStyle = "rgba(0,0,0,0.45)";
       ctx.fillRect(12, 12, 140, 28);
@@ -567,7 +1195,7 @@
       ctx.font = "12px ui-monospace, monospace";
       ctx.fillText("Loading background...", 20, 30);
       ctx.restore();
-    } else if (bgImageStatus === "error") {
+    } else if (state.background_mode === "url" && bgImageStatus === "error") {
       ctx.save();
       ctx.fillStyle = "rgba(120,0,0,0.55)";
       ctx.fillRect(12, 12, 180, 28);
@@ -596,7 +1224,10 @@
 
     ctx.save();
     ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    const gridAlpha = state.background_mode === "terrain"
+      ? 0.18
+      : (state.background_mode === "url" ? 0.35 : 0.25);
+    ctx.strokeStyle = `rgba(255,255,255,${gridAlpha})`;
 
     for (let x = startX; x <= endX; x += ui.gridSize) {
       const sx = worldToScreen(x, 0).x;
@@ -703,10 +1334,13 @@
       const r = tokenRadiusWorld() * cam.z;
 
       ctx.save();
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = t.color || "#fff";
-      ctx.fill();
+      const imageDrawn = drawTokenImageClippedCircle(t, s, r);
+      if (!imageDrawn) {
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = t.color || "#fff";
+        ctx.fill();
+      }
       ctx.lineWidth = Math.max(2, 2 * cam.z);
       ctx.strokeStyle = (id === selectedTokenId) ? "#00d1ff" : "rgba(255,255,255,0.45)";
       ctx.stroke();
@@ -717,12 +1351,15 @@
         ctx.stroke();
       }
 
-      const label = (t.name || "Token").slice(0, 8);
-      ctx.fillStyle = "rgba(0,0,0,0.75)";
-      ctx.font = `${Math.max(12, 12 * cam.z)}px system-ui, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(label, s.x, s.y);
+      const showLabel = id === selectedTokenId || id === hoveredTokenId;
+      if (showLabel) {
+        const label = (t.name || "Token").slice(0, 18);
+        ctx.fillStyle = "rgba(0,0,0,0.75)";
+        ctx.font = `${Math.max(12, 12 * cam.z)}px system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, s.x, s.y);
+      }
       ctx.restore();
     }
   }
@@ -758,6 +1395,29 @@
     ctx.restore();
   }
 
+  function drawDragSpawnGhost() {
+    if (!dragSpawn || !dragSpawnWorld || !dragSpawnOverCanvas) return;
+    const s = worldToScreen(dragSpawnWorld.x, dragSpawnWorld.y);
+    const r = tokenRadiusWorld() * cam.z;
+    ctx.save();
+    ctx.globalAlpha = 0.7;
+    const imageDrawn = drawTokenImageClippedCircle({ image_url: dragSpawn.image_url }, s, r);
+    if (!imageDrawn) {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = "#888";
+      ctx.fill();
+    }
+    ctx.lineWidth = Math.max(2, 2 * cam.z);
+    ctx.setLineDash([7, 5]);
+    ctx.strokeStyle = "rgba(255,255,255,0.95)";
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
   function render() {
     const w = canvas.getBoundingClientRect().width;
     const h = canvas.getBoundingClientRect().height;
@@ -770,6 +1430,7 @@
     drawStrokes();
     drawShapes();
     drawTokens();
+    drawDragSpawnGhost();
     drawRuler();
   }
 
@@ -789,6 +1450,9 @@
     isPanning = false;
     pointerCaptured = false;
     draggingTokenId = null;
+    dragSpawn = null;
+    dragSpawnWorld = null;
+    dragSpawnOverCanvas = false;
     activeStroke = null;
     activeShapePreview = null;
     activeRuler = null;
@@ -798,7 +1462,7 @@
     state.allow_players_move = !!s.allow_players_move;
     state.allow_all_move = !!s.allow_all_move;
     state.lockdown = !!s.lockdown;
-    state.background_url = s.background_url || null;
+    applyBackgroundState(s.background_mode, s.background_url, s.terrain_seed, s.terrain_style);
     state.layer_visibility = {
       grid: s.layer_visibility?.grid ?? true,
       drawings: s.layer_visibility?.drawings ?? true,
@@ -821,7 +1485,7 @@
     for (const id of state.shapes.keys()) if (!state.draw_order.shapes.includes(id)) state.draw_order.shapes.push(id);
 
     if (selectedTokenId && !state.tokens.has(selectedTokenId)) selectedTokenId = null;
-    setBackgroundUrl(state.background_url);
+    if (hoveredTokenId && !state.tokens.has(hoveredTokenId)) hoveredTokenId = null;
     players.add(myId());
     if (state.gm_id) players.add(state.gm_id);
     refreshGmUI();
@@ -830,15 +1494,31 @@
 
   function clearLocalRoomView() {
     state.room_id = null;
+    state.background_mode = "solid";
     state.background_url = null;
+    state.terrain_seed = 1;
+    state.terrain_style = "grassland";
     bgImage = null;
     bgImageUrl = null;
     bgImageStatus = "idle";
+    terrain.seed = null;
+    terrain.gridSize = null;
+    terrain.style = null;
+    terrain.patternA = null;
+    terrain.patternB = null;
+    terrain.patternC = null;
+    terrain.tileA = null;
+    terrain.tileB = null;
+    terrain.tileC = null;
     state.tokens.clear();
     state.strokes.clear();
     state.shapes.clear();
     state.draw_order = { strokes: [], shapes: [] };
     selectedTokenId = null;
+    hoveredTokenId = null;
+    dragSpawn = null;
+    dragSpawnWorld = null;
+    dragSpawnOverCanvas = false;
     requestRender();
   }
 
@@ -909,9 +1589,13 @@
         if ("allow_players_move" in ev.payload) state.allow_players_move = !!ev.payload.allow_players_move;
         if ("allow_all_move" in ev.payload) state.allow_all_move = !!ev.payload.allow_all_move;
         if ("lockdown" in ev.payload) state.lockdown = !!ev.payload.lockdown;
-        if ("background_url" in ev.payload) {
-          state.background_url = ev.payload.background_url || null;
-          setBackgroundUrl(state.background_url);
+        if ("background_mode" in ev.payload || "background_url" in ev.payload || "terrain_seed" in ev.payload || "terrain_style" in ev.payload) {
+          applyBackgroundState(
+            ("background_mode" in ev.payload) ? ev.payload.background_mode : state.background_mode,
+            ("background_url" in ev.payload) ? ev.payload.background_url : state.background_url,
+            ("terrain_seed" in ev.payload) ? ev.payload.terrain_seed : state.terrain_seed,
+            ("terrain_style" in ev.payload) ? ev.payload.terrain_style : state.terrain_style,
+          );
         }
         if ("layer_visibility" in ev.payload && ev.payload.layer_visibility) {
           state.layer_visibility = { ...state.layer_visibility, ...ev.payload.layer_visibility };
@@ -948,6 +1632,7 @@
       if (ev.type === "TOKEN_DELETE") {
         state.tokens.delete(ev.payload.id);
         if (selectedTokenId === ev.payload.id) selectedTokenId = null;
+        if (hoveredTokenId === ev.payload.id) hoveredTokenId = null;
         refreshGmUI();
         requestRender();
         return;
@@ -1094,28 +1779,48 @@
     const x = snap(centerWorld.x + (Math.random() * 120 - 60));
     const y = snap(centerWorld.y + (Math.random() * 120 - 60));
 
-    state.tokens.set(id, { id, x, y, name, color, owner_id: null, locked: false });
+    state.tokens.set(id, { id, x, y, name, color, image_url: null, owner_id: null, locked: false });
     refreshGmUI();
     requestRender();
-    send("TOKEN_CREATE", { id, x, y, name, color });
+    send("TOKEN_CREATE", { id, x, y, name, color, image_url: null });
   };
 
   document.getElementById("undo").onclick = () => send("UNDO", {});
   document.getElementById("redo").onclick = () => send("REDO", {});
 
   document.getElementById("gmPanelBtn").onclick = () => {
-    gmPanel.style.display = (gmPanel.style.display === "none") ? "block" : "none";
+    const nextOpen = gmPanel.style.display === "none";
+    closeFloatingPanels(nextOpen ? "gm" : "");
+    gmPanel.style.display = nextOpen ? "block" : "none";
     refreshGmUI();
   };
   document.getElementById("gmPanelClose").onclick = () => { gmPanel.style.display = "none"; };
   document.getElementById("roomsPanelBtn").onclick = async () => {
-    roomsPanel.style.display = (roomsPanel.style.display === "none") ? "block" : "none";
+    const nextOpen = roomsPanel.style.display === "none";
+    closeFloatingPanels(nextOpen ? "rooms" : "");
+    roomsPanel.style.display = nextOpen ? "block" : "none";
     if (roomsPanel.style.display === "block") {
       await refreshRoomsPanel();
       await refreshSnapshotsPanel();
     }
   };
   document.getElementById("roomsPanelClose").onclick = () => { roomsPanel.style.display = "none"; };
+  document.getElementById("libraryPanelBtn").onclick = async () => {
+    const nextOpen = libraryPanel.style.display === "none";
+    closeFloatingPanels(nextOpen ? "library" : "");
+    libraryPanel.style.display = nextOpen ? "block" : "none";
+    if (nextOpen) await refreshPacks();
+  };
+  document.getElementById("libraryPanelClose").onclick = () => { libraryPanel.style.display = "none"; };
+  document.getElementById("refreshPacksBtn").onclick = () => refreshPacks();
+  packSelectEl.addEventListener("change", async () => {
+    packState.selectedPackId = packSelectEl.value;
+    await loadPack(packState.selectedPackId);
+  });
+  packSearchEl.addEventListener("input", () => {
+    packState.search = packSearchEl.value || "";
+    renderPackGrid();
+  });
   document.getElementById("refreshRoomsBtn").onclick = () => refreshRoomsPanel();
   document.getElementById("refreshSnapshotsBtn").onclick = () => refreshSnapshotsPanel();
   document.getElementById("createRoomBtn").onclick = async () => {
@@ -1155,7 +1860,25 @@
   allowAllMoveEl.addEventListener("change", (e) => send("ROOM_SETTINGS", { allow_all_move: e.target.checked }));
   lockdownEl.addEventListener("change", (e) => send("ROOM_SETTINGS", { lockdown: e.target.checked }));
   document.getElementById("setBg").addEventListener("click", () => {
-    send("ROOM_SETTINGS", { background_url: bgUrlEl.value.trim() || null });
+    const nextUrl = bgUrlEl.value.trim() || null;
+    send("ROOM_SETTINGS", {
+      background_url: nextUrl,
+      background_mode: nextUrl ? "url" : "solid",
+    });
+  });
+  terrainBgEl.addEventListener("change", (e) => {
+    if (e.target.checked) {
+      send("ROOM_SETTINGS", { background_mode: "terrain", terrain_style: terrainStyleEl.value });
+      return;
+    }
+    const nextUrl = (state.background_url || "").trim() || null;
+    send("ROOM_SETTINGS", { background_mode: nextUrl ? "url" : "solid" });
+  });
+  terrainStyleEl.addEventListener("change", () => {
+    send("ROOM_SETTINGS", { background_mode: "terrain", terrain_style: terrainStyleEl.value });
+  });
+  regenTerrainEl.addEventListener("click", () => {
+    send("ROOM_SETTINGS", { background_mode: "terrain", terrain_seed: randomTerrainSeed(), terrain_style: terrainStyleEl.value });
   });
 
   function sendLayerVisibility() {
@@ -1187,6 +1910,7 @@
   refreshUI();
   refreshGmUI();
   snapshotRoomLabelEl.textContent = roomEl.value.trim();
+  refreshPacks();
 
   function tool() { return toolEl.value; }
   function brushColor() { return colorEl.value; }
@@ -1194,6 +1918,13 @@
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "Shift") isShiftDown = true;
+    if (e.key === "Escape" && dragSpawn) {
+      dragSpawn = null;
+      dragSpawnWorld = null;
+      dragSpawnOverCanvas = false;
+      requestRender();
+      return;
+    }
     if ((e.key === "Delete" || e.key === "Backspace") && selectedTokenId && isGM()) {
       send("TOKEN_DELETE", { id: selectedTokenId });
       e.preventDefault();
@@ -1231,6 +1962,13 @@
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
     const wpos = screenToWorld(sx, sy);
+
+    if (dragSpawn && e.button === 0) {
+      dragSpawnWorld = { x: wpos.x, y: wpos.y };
+      dragSpawnOverCanvas = true;
+      requestRender();
+      return;
+    }
 
     if (e.button === 2) {
       isPanning = true;
@@ -1297,6 +2035,13 @@
     }
 
     const wpos = screenToWorld(sx, sy);
+    if (dragSpawn) {
+      dragSpawnWorld = { x: wpos.x, y: wpos.y };
+      dragSpawnOverCanvas = true;
+      requestRender();
+      return;
+    }
+    updateHoveredToken(wpos.x, wpos.y);
     const t = tool();
 
     if (t === "move" && draggingTokenId) {
@@ -1350,6 +2095,44 @@
     }
   });
 
+  canvas.addEventListener("pointerleave", () => {
+    if (dragSpawn) {
+      dragSpawnOverCanvas = false;
+      requestRender();
+      return;
+    }
+    if (hoveredTokenId !== null && !draggingTokenId) {
+      hoveredTokenId = null;
+      requestRender();
+    }
+  });
+
+  window.addEventListener("pointermove", (e) => {
+    if (!dragSpawn) return;
+    const rect = canvas.getBoundingClientRect();
+    const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+    dragSpawnOverCanvas = inside;
+    if (inside) {
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const wpos = screenToWorld(sx, sy);
+      dragSpawnWorld = { x: wpos.x, y: wpos.y };
+    } else {
+      dragSpawnWorld = null;
+    }
+    requestRender();
+  });
+
+  window.addEventListener("pointerup", () => {
+    if (!dragSpawn) return;
+    if (!dragSpawnOverCanvas) {
+      dragSpawn = null;
+      dragSpawnWorld = null;
+      dragSpawnOverCanvas = false;
+      requestRender();
+    }
+  });
+
   function doEraseAt(wx, wy) {
     const r = 14;
     if (lastEraseWorld) {
@@ -1365,6 +2148,21 @@
   }
 
   function endPointer(e) {
+    if (dragSpawn) {
+      if (dragSpawnWorld && dragSpawnOverCanvas) {
+        spawnPackToken(dragSpawn, snap(dragSpawnWorld.x), snap(dragSpawnWorld.y));
+      }
+      dragSpawn = null;
+      dragSpawnWorld = null;
+      dragSpawnOverCanvas = false;
+      if (pointerCaptured) {
+        try { canvas.releasePointerCapture(e.pointerId); } catch {}
+        pointerCaptured = false;
+      }
+      requestRender();
+      return;
+    }
+
     isPanning = false;
     const t = tool();
     const movedTokenId = draggingTokenId;

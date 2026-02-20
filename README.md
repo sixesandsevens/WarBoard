@@ -32,6 +32,29 @@ SQLite storage is controlled by `DATA_DIR`.
 DATA_DIR=/tmp/warboard-data uvicorn server.app:app --reload
 ```
 
+## Token Packs
+
+WarBoard supports filesystem token packs.
+
+- Pack root: `./packs`
+- Built-in pack: `packs/starter`
+- Static token URLs are served at `/packs/<pack_id>/<file>`
+
+Pack manifest format:
+
+```json
+{
+  "pack_id": "starter",
+  "name": "WarBoard Starter Pack",
+  "author": "WarBoard",
+  "license": "CC0-1.0",
+  "version": "1.0.0",
+  "tokens": [
+    {"id":"goblin_green","name":"Goblin","tags":["goblin"],"file":"images/goblin_green.svg"}
+  ]
+}
+```
+
 ## GM Key
 
 - GM claim uses `?gm_key=...` on the WebSocket URL.
@@ -47,3 +70,5 @@ DATA_DIR=/tmp/warboard-data uvicorn server.app:app --reload
 - `POST /api/rooms/{id}/restore/{snapshot_id}`
 - `GET /api/rooms/{id}/export`
 - `POST /api/rooms/{id}/import`
+- `GET /api/packs`
+- `GET /api/packs/{pack_id}`

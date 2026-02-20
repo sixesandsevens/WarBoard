@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from collections import deque
 import asyncio
 import uuid
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -25,9 +27,11 @@ from .storage import (
 )
 
 app = FastAPI(title="WarBoard")
+PACKS_DIR = Path(__file__).resolve().parent.parent / "packs"
 
 # Static test client
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/packs", StaticFiles(directory=str(PACKS_DIR), check_dir=False), name="packs")
 
 rm = RoomManager()
 HEARTBEAT_TIMEOUT_SECONDS = 35.0
@@ -58,6 +62,65 @@ async def _startup() -> None:
 @app.get("/")
 def root():
     return {"ok": True, "service": "warboard", "hint": "Open /static/test.html"}
+
+
+def _safe_pack_id(pack_id: str) -> str:
+    cleaned = "".join(ch for ch in (pack_id or "") if ch.isalnum() or ch in ("-", "_"))
+    return cleaned.strip()
+
+
+def _load_pack_manifest(pack_id: str) -> dict:
+    safe_id = _safe_pack_id(pack_id)
+    if not safe_id:
+        raise HTTPException(status_code=400, detail="Invalid pack id")
+    manifest_path = PACKS_DIR / safe_id / "manifest.json"
+    if not manifest_path.exists() or not manifest_path.is_file():
+        raise HTTPException(status_code=404, detail="Pack not found")
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load manifest: {e}") from e
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=500, detail="Invalid pack manifest structure")
+    if not isinstance(raw.get("tokens"), list):
+        raw["tokens"] = []
+    raw["pack_id"] = str(raw.get("pack_id") or safe_id)
+    return raw
+
+
+@app.get("/api/packs")
+def list_packs_api():
+    if not PACKS_DIR.exists():
+        return {"packs": []}
+
+    packs = []
+    for entry in sorted(PACKS_DIR.iterdir(), key=lambda p: p.name.lower()):
+        if not entry.is_dir():
+            continue
+        manifest_path = entry / "manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            manifest = _load_pack_manifest(entry.name)
+        except HTTPException:
+            continue
+        packs.append(
+            {
+                "pack_id": manifest["pack_id"],
+                "name": str(manifest.get("name") or manifest["pack_id"]),
+                "author": str(manifest.get("author") or ""),
+                "license": str(manifest.get("license") or ""),
+                "version": str(manifest.get("version") or ""),
+                "token_count": len(manifest.get("tokens") or []),
+            }
+        )
+    return {"packs": packs}
+
+
+@app.get("/api/packs/{pack_id}")
+def get_pack_api(pack_id: str):
+    manifest = _load_pack_manifest(pack_id)
+    return manifest
 
 
 @app.get("/api/rooms/{room_id}/export")

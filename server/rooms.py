@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
@@ -49,6 +50,9 @@ class RoomManager:
                     state = RoomState(room_id=room_id)
             else:
                 state = RoomState(room_id=room_id)
+            # Migration compatibility: pre-mode rooms that have a URL should stay URL-backed.
+            if state.background_url and state.background_mode == "solid":
+                state.background_mode = "url"
             self._normalize_order(state)
 
             room = Room(state=state)
@@ -279,6 +283,7 @@ class RoomManager:
                 y=float(p.get("y", 0)),
                 name=p.get("name", "Token"),
                 color=p.get("color", "#ffffff"),
+                image_url=str(p.get("image_url")) if p.get("image_url") else None,
                 owner_id=None,
                 locked=bool(p.get("locked", False)),
             )
@@ -320,6 +325,8 @@ class RoomManager:
                 return WireEvent(type="ERROR", payload={"message": "Only GM can change room settings"})
 
             self._push_history(room)
+            mode_changed_to_terrain = False
+            had_explicit_terrain_seed = "terrain_seed" in p
             if "allow_players_move" in p:
                 room.state.allow_players_move = bool(p["allow_players_move"])
             if "allow_all_move" in p:
@@ -329,6 +336,32 @@ class RoomManager:
             if "background_url" in p:
                 val = p.get("background_url")
                 room.state.background_url = str(val) if val else None
+                if room.state.background_url:
+                    room.state.background_mode = "url"
+                elif room.state.background_mode == "url":
+                    room.state.background_mode = "solid"
+            if "background_mode" in p:
+                mode = p.get("background_mode")
+                if mode in ("solid", "url", "terrain"):
+                    mode_changed_to_terrain = mode == "terrain" and room.state.background_mode != "terrain"
+                    room.state.background_mode = mode
+                else:
+                    return WireEvent(type="ERROR", payload={"message": "Invalid background_mode"})
+            if "terrain_seed" in p:
+                try:
+                    room.state.terrain_seed = int(p.get("terrain_seed"))
+                except (TypeError, ValueError):
+                    return WireEvent(type="ERROR", payload={"message": "Invalid terrain_seed"})
+            if "terrain_style" in p:
+                style = p.get("terrain_style")
+                if style in ("grassland", "dirt", "snow", "desert"):
+                    room.state.terrain_style = style
+                else:
+                    return WireEvent(type="ERROR", payload={"message": "Invalid terrain_style"})
+            if room.state.background_mode == "terrain" and room.state.terrain_seed <= 0:
+                room.state.terrain_seed = random.randint(1, 2_147_483_647)
+            if room.state.background_mode == "terrain" and mode_changed_to_terrain and not had_explicit_terrain_seed:
+                room.state.terrain_seed = random.randint(1, 2_147_483_647)
             if "layer_visibility" in p and isinstance(p["layer_visibility"], dict):
                 for k, v in p["layer_visibility"].items():
                     if k in room.state.layer_visibility:
@@ -341,7 +374,10 @@ class RoomManager:
                     "allow_players_move": room.state.allow_players_move,
                     "allow_all_move": room.state.allow_all_move,
                     "lockdown": room.state.lockdown,
+                    "background_mode": room.state.background_mode,
                     "background_url": room.state.background_url,
+                    "terrain_seed": room.state.terrain_seed,
+                    "terrain_style": room.state.terrain_style,
                     "layer_visibility": room.state.layer_visibility,
                 },
             )

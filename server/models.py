@@ -34,6 +34,7 @@ class Token(BaseModel):
     y: float
     name: str = "Token"
     color: str = "#ffffff"
+    image_url: Optional[str] = None
     owner_id: Optional[str] = None
     locked: bool = False
 
@@ -74,7 +75,10 @@ class RoomState(BaseModel):
     allow_all_move: bool = False
     lockdown: bool = False
     gm_key_hash: Optional[str] = None
+    background_mode: Literal["solid", "url", "terrain"] = "solid"
     background_url: Optional[str] = None
+    terrain_seed: int = 1
+    terrain_style: Literal["grassland", "dirt", "snow", "desert"] = "grassland"
     layer_visibility: Dict[str, bool] = Field(
         default_factory=lambda: {"grid": True, "drawings": True, "shapes": True, "tokens": True}
     )

@@ -14,6 +14,9 @@ data/*.sqlite3
 *.sqlite
 *.sqlite3
 
+# Local token packs
+packs/
+
 # Environment
 .env
 
