@@ -41,10 +41,10 @@
     .drawer-toggle { padding: 6px 10px; font-size: 18px; }
     .drawer {
       position: fixed;
-      top: 0;
+      top: 64px;
       left: 0;
       width: 320px;
-      height: 100%;
+      height: calc(100% - 64px);
       background: #1e1e1e;
       color: #eee;
       box-shadow: 2px 0 10px rgba(0,0,0,0.4);
@@ -130,6 +130,28 @@
       background: rgba(255,255,255,0.10);
     }
     .ctx-sub { min-width: 240px; }
+    .tool-strip {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+      padding: 2px 4px;
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.04);
+    }
+    .tool-btn {
+      padding: 5px 8px;
+      font-size: 13px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.03);
+      color: #ddd;
+    }
+    .tool-btn.active {
+      background: rgba(0,209,255,0.16);
+      border-color: rgba(0,209,255,0.55);
+      color: #fff;
+    }
   </style>
 </head>
 <body>
@@ -147,6 +169,13 @@
       <button id="sizePresetL" style="padding:2px 6px;">L</button>
       <button id="sizePresetH" style="padding:2px 6px;">Huge</button>
     </span>
+    <div class="tool-strip">
+      <button id="toolBtnMove" class="tool-btn" data-tool="move">🖐 Move</button>
+      <button id="toolBtnPen" class="tool-btn" data-tool="pen">✏️ Pen</button>
+      <button id="toolBtnShape" class="tool-btn" data-tool="shape">⬛ Shape</button>
+      <button id="toolBtnErase" class="tool-btn" data-tool="eraser">🧽 Erase</button>
+      <button id="toolBtnRuler" class="tool-btn" data-tool="ruler">📏 Ruler</button>
+    </div>
     <button id="undo">Undo</button>
     <button id="redo">Redo</button>
     <button id="gmPanelBtn">GM Panel</button>
@@ -171,7 +200,7 @@
     <button id="regenTerrain">Regenerate Terrain</button>
     <span id="terrainBadge" class="pill" style="display:none; opacity:.9;"></span>
 
-    <label>Tool
+    <label style="display:none;">Tool
       <select id="tool">
         <option value="move">Move</option>
         <option value="pen">Pen</option>
@@ -183,8 +212,8 @@
       </select>
     </label>
 
-    <label>Color <input id="color" type="color" value="#ffffff"></label>
-    <label>Size <input id="size" type="number" value="3" min="1" max="30" style="width:70px"></label>
+    <label style="display:none;">Color <input id="color" type="color" value="#ffffff"></label>
+    <label style="display:none;">Size <input id="size" type="number" value="3" min="1" max="30" style="width:70px"></label>
     <label>ft/sq <input id="feetPerSq" type="number" value="5" min="1" max="100" style="width:70px"></label>
 
     <label><input type="checkbox" id="snap" checked> Snap</label>
@@ -284,11 +313,13 @@
       <div class="ctx-item" data-action="pen_size_2">Size 2</div>
       <div class="ctx-item" data-action="pen_size_4">Size 4</div>
       <div class="ctx-item" data-action="pen_size_8">Size 8</div>
+      <div class="ctx-item" data-action="pen_size_custom">Custom size...</div>
       <div class="ctx-sep"></div>
       <div class="ctx-item" data-action="pen_color_white">Color White</div>
       <div class="ctx-item" data-action="pen_color_red">Color Red</div>
       <div class="ctx-item" data-action="pen_color_green">Color Green</div>
       <div class="ctx-item" data-action="pen_color_blue">Color Blue</div>
+      <div class="ctx-item" data-action="pen_color_custom">Custom color...</div>
     </div>
     <div id="shapeCtx" class="ctx hidden" role="menu" aria-label="Shape menu">
       <div class="ctx-title">Shape</div>
@@ -299,7 +330,9 @@
       <div class="ctx-item" data-action="shape_size_2">Stroke 2</div>
       <div class="ctx-item" data-action="shape_size_4">Stroke 4</div>
       <div class="ctx-item" data-action="shape_size_8">Stroke 8</div>
+      <div class="ctx-item" data-action="shape_size_custom">Custom size...</div>
       <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="shape_color_custom">Custom color...</div>
       <div class="ctx-item" data-action="shape_toggle_snap">Toggle Snap</div>
     </div>
     <div id="rulerCtx" class="ctx hidden" role="menu" aria-label="Ruler menu">
@@ -310,6 +343,19 @@
       <div class="ctx-sep"></div>
       <div class="ctx-item" data-action="ruler_toggle_snap">Toggle Snap</div>
       <div class="ctx-item" data-action="ruler_clear">Clear ruler</div>
+    </div>
+    <div id="toolColorPanel" class="ctx hidden" role="dialog" aria-label="Tool color">
+      <div id="toolColorTitle" class="ctx-title">Color</div>
+      <div style="padding:8px 10px;">
+        <input id="toolColorPicker" type="color" value="#ffffff" style="width:100%; height:36px; border:none; background:transparent; padding:0;">
+      </div>
+    </div>
+    <div id="toolSizePanel" class="ctx hidden" role="dialog" aria-label="Tool size">
+      <div id="toolSizeTitle" class="ctx-title">Size</div>
+      <div style="padding:8px 10px; display:flex; flex-direction:column; gap:8px;">
+        <input id="toolSizeSlider" type="range" min="1" max="30" step="1" value="3">
+        <div id="toolSizeValue" style="font-size:12px; opacity:.85;">3</div>
+      </div>
     </div>
     <div id="roomsPanel" style="
       position:absolute; top:10px; left:10px;
@@ -463,6 +509,13 @@
   const penCtx = document.getElementById("penCtx");
   const shapeCtx = document.getElementById("shapeCtx");
   const rulerCtx = document.getElementById("rulerCtx");
+  const toolColorPanel = document.getElementById("toolColorPanel");
+  const toolColorTitle = document.getElementById("toolColorTitle");
+  const toolColorPicker = document.getElementById("toolColorPicker");
+  const toolSizePanel = document.getElementById("toolSizePanel");
+  const toolSizeTitle = document.getElementById("toolSizeTitle");
+  const toolSizeSlider = document.getElementById("toolSizeSlider");
+  const toolSizeValue = document.getElementById("toolSizeValue");
   const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, rulerCtx];
   const playerListEl = document.getElementById("playerList");
   const tokenListEl = document.getElementById("tokenList");
@@ -479,6 +532,11 @@
   const packGridEl = document.getElementById("packGrid");
 
   const toolEl = document.getElementById("tool");
+  const toolBtnMove = document.getElementById("toolBtnMove");
+  const toolBtnPen = document.getElementById("toolBtnPen");
+  const toolBtnShape = document.getElementById("toolBtnShape");
+  const toolBtnErase = document.getElementById("toolBtnErase");
+  const toolBtnRuler = document.getElementById("toolBtnRuler");
   const colorEl = document.getElementById("color");
   const sizeEl = document.getElementById("size");
   const feetPerSqEl = document.getElementById("feetPerSq");
@@ -692,17 +750,30 @@
     moveControlTo(sceneLayers, "layerShapes");
     moveControlTo(sceneLayers, "layerTokens");
 
-    const settingsTools = drawerSection(tabSettings, "Tools");
-    moveControlTo(settingsTools, "tool");
+    const settingsTools = drawerSection(tabSettings, "Tool Defaults");
     moveControlTo(settingsTools, "color");
     moveControlTo(settingsTools, "size");
-    moveControlTo(settingsTools, "sizePresetGroup");
 
     const settingsGrid = drawerSection(tabSettings, "Grid & Measure");
     moveControlTo(settingsGrid, "feetPerSq");
     moveControlTo(settingsGrid, "snap");
     moveControlTo(settingsGrid, "grid");
     moveControlTo(settingsGrid, "showGrid");
+
+    const hotkeys = drawerSection(tabSettings, "Hotkey Cheat Sheet");
+    hotkeys.style.fontSize = "12px";
+    hotkeys.style.opacity = "0.9";
+    hotkeys.innerHTML = `
+      <div><b>V</b> Move tool</div>
+      <div><b>P</b> Pen tool</div>
+      <div><b>S</b> Shape tool</div>
+      <div><b>E</b> Eraser tool</div>
+      <div><b>R</b> Ruler tool</div>
+      <div><b>D</b> Toggle Downed badge (GM, selected token)</div>
+      <div><b>Tab</b> Toggle drawer</div>
+      <div><b>Delete/Backspace</b> Delete selected token (GM)</div>
+      <div><b>Esc</b> Close menus / cancel drag spawn</div>
+    `;
   }
 
   function mountDrawerPanels() {
@@ -751,6 +822,36 @@
       ctxSubHideTimer = null;
     }
     for (const m of allCtxMenus) m.classList.add("hidden");
+  }
+
+  function hideToolPanels() {
+    toolColorPanel.classList.add("hidden");
+    toolSizePanel.classList.add("hidden");
+  }
+
+  function showFloatingToolPanel(panelEl, x, y) {
+    hideToolPanels();
+    panelEl.classList.remove("hidden");
+    clampMenuToViewport(panelEl, x, y);
+  }
+
+  function isClickInsideToolPanel(target) {
+    return !toolColorPanel.classList.contains("hidden") && toolColorPanel.contains(target)
+      || !toolSizePanel.classList.contains("hidden") && toolSizePanel.contains(target);
+  }
+
+  function openToolColorPanel(title = "Color") {
+    toolColorTitle.textContent = title;
+    toolColorPicker.value = String(colorEl.value || "#ffffff");
+    showFloatingToolPanel(toolColorPanel, lastCtxClientPos.x + 8, lastCtxClientPos.y + 8);
+  }
+
+  function openToolSizePanel(title = "Size") {
+    const size = clamp(Number(sizeEl.value || "3"), 1, 30);
+    toolSizeTitle.textContent = title;
+    toolSizeSlider.value = String(Math.round(size));
+    toolSizeValue.textContent = String(Math.round(size));
+    showFloatingToolPanel(toolSizePanel, lastCtxClientPos.x + 8, lastCtxClientPos.y + 8);
   }
 
   function hideCtxSubs() {
@@ -838,8 +939,10 @@
   }
 
   function showContextMenu(menuEl, x, y) {
+    lastCtxClientPos = { x, y };
     refreshToolContextChecks();
     hideAllCtx();
+    hideToolPanels();
     menuEl.classList.remove("hidden");
     clampMenuToViewport(menuEl, x, y);
   }
@@ -974,6 +1077,10 @@
       case "pen_size_8":
         sizeEl.value = "8";
         break;
+      case "pen_size_custom": {
+        openToolSizePanel("Pen Size");
+        break;
+      }
       case "pen_color_white":
         colorEl.value = "#ffffff";
         break;
@@ -986,14 +1093,18 @@
       case "pen_color_blue":
         colorEl.value = "#0a84ff";
         break;
+      case "pen_color_custom": {
+        openToolColorPanel("Pen Color");
+        break;
+      }
       case "shape_tool_rect":
-        toolEl.value = "rect";
+        setTool("rect");
         break;
       case "shape_tool_circle":
-        toolEl.value = "circle";
+        setTool("circle");
         break;
       case "shape_tool_line":
-        toolEl.value = "line";
+        setTool("line");
         break;
       case "shape_size_2":
         sizeEl.value = "2";
@@ -1004,6 +1115,14 @@
       case "shape_size_8":
         sizeEl.value = "8";
         break;
+      case "shape_size_custom": {
+        openToolSizePanel("Shape Stroke");
+        break;
+      }
+      case "shape_color_custom": {
+        openToolColorPanel("Shape Color");
+        break;
+      }
       case "shape_toggle_snap":
         snapEl.checked = !snapEl.checked;
         refreshUI();
@@ -1293,6 +1412,8 @@
   let tokenMenuTokenId = null;
   let mapCtxWorld = null;
   let ctxSubHideTimer = null;
+  let lastShapeTool = "rect";
+  let lastCtxClientPos = { x: 24, y: 24 };
 
   let bgImage = null;
   let bgImageUrl = null;
@@ -2636,6 +2757,20 @@
     btn.addEventListener("click", () => activateDrawerTab(btn.dataset.tab, true));
   });
   mountDrawerPanels();
+  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnErase, toolBtnRuler].forEach((btn) => {
+    btn.onclick = () => setTool(btn.dataset.tool);
+  });
+  refreshToolButtons();
+  toolColorPicker.addEventListener("input", () => {
+    colorEl.value = toolColorPicker.value;
+    refreshToolContextChecks();
+  });
+  toolSizeSlider.addEventListener("input", () => {
+    const next = clamp(Number(toolSizeSlider.value || "3"), 1, 30);
+    sizeEl.value = String(Math.round(next));
+    toolSizeValue.textContent = String(Math.round(next));
+    refreshToolContextChecks();
+  });
   mapCtx.addEventListener("mousemove", (e) => {
     const row = e.target.closest(".ctx-item.has-sub");
     if (!row) {
@@ -2666,6 +2801,7 @@
   }
   window.addEventListener("mousedown", (e) => {
     if (!isClickInsideAnyCtxMenu(e.target)) hideAllCtx();
+    if (!isClickInsideToolPanel(e.target)) hideToolPanels();
   });
 
   document.getElementById("gmPanelBtn").onclick = () => {
@@ -2878,6 +3014,24 @@
   refreshPacks();
 
   function tool() { return toolEl.value; }
+  function isShapeTool(v) { return v === "rect" || v === "circle" || v === "line"; }
+  function refreshToolButtons() {
+    const t = tool();
+    toolBtnMove.classList.toggle("active", t === "move");
+    toolBtnPen.classList.toggle("active", t === "pen");
+    toolBtnShape.classList.toggle("active", isShapeTool(t));
+    toolBtnErase.classList.toggle("active", t === "eraser");
+    toolBtnRuler.classList.toggle("active", t === "ruler");
+  }
+  function setTool(next) {
+    if (next === "shape") {
+      toolEl.value = isShapeTool(toolEl.value) ? toolEl.value : lastShapeTool;
+    } else {
+      toolEl.value = next;
+      if (isShapeTool(next)) lastShapeTool = next;
+    }
+    refreshToolButtons();
+  }
   function brushColor() { return colorEl.value; }
   function brushSize() { return clamp(parseFloat(sizeEl.value || "3"), 1, 30); }
 
@@ -2885,12 +3039,23 @@
     if (e.key === "Shift") isShiftDown = true;
     const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
     const isTyping = tag === "input" || tag === "textarea" || tag === "select" || (e.target && e.target.isContentEditable);
+    if (!isTyping) {
+      const k = e.key.toLowerCase();
+      if (k === "v") { setTool("move"); e.preventDefault(); return; }
+      if (k === "p") { setTool("pen"); e.preventDefault(); return; }
+      if (k === "s") { setTool("shape"); e.preventDefault(); return; }
+      if (k === "e") { setTool("eraser"); e.preventDefault(); return; }
+      if (k === "r") { setTool("ruler"); e.preventDefault(); return; }
+    }
     if (e.key === "Tab" && !isTyping) {
       e.preventDefault();
       drawer.classList.toggle("hidden");
       return;
     }
-    if (e.key === "Escape") hideAllCtx();
+    if (e.key === "Escape") {
+      hideAllCtx();
+      hideToolPanels();
+    }
     if (e.key === "Escape" && tokenMenuEl.style.display === "block") {
       closeTokenMenu();
       return;
@@ -2978,6 +3143,7 @@
   canvas.addEventListener("pointerdown", (e) => {
     closeTokenMenu();
     hideAllCtx();
+    hideToolPanels();
     canvas.setPointerCapture(e.pointerId);
     pointerCaptured = true;
 
