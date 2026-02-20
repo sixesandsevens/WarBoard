@@ -279,6 +279,38 @@
       <div class="ctx-item danger" data-action="clear_shapes" data-gm="1">Clear shapes</div>
       <div class="ctx-item danger" data-action="clear_tokens" data-gm="1">Clear tokens</div>
     </div>
+    <div id="penCtx" class="ctx hidden" role="menu" aria-label="Pen menu">
+      <div class="ctx-title">Pen</div>
+      <div class="ctx-item" data-action="pen_size_2">Size 2</div>
+      <div class="ctx-item" data-action="pen_size_4">Size 4</div>
+      <div class="ctx-item" data-action="pen_size_8">Size 8</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="pen_color_white">Color White</div>
+      <div class="ctx-item" data-action="pen_color_red">Color Red</div>
+      <div class="ctx-item" data-action="pen_color_green">Color Green</div>
+      <div class="ctx-item" data-action="pen_color_blue">Color Blue</div>
+    </div>
+    <div id="shapeCtx" class="ctx hidden" role="menu" aria-label="Shape menu">
+      <div class="ctx-title">Shape</div>
+      <div class="ctx-item" data-action="shape_tool_rect">Rect Tool</div>
+      <div class="ctx-item" data-action="shape_tool_circle">Circle Tool</div>
+      <div class="ctx-item" data-action="shape_tool_line">Line Tool</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="shape_size_2">Stroke 2</div>
+      <div class="ctx-item" data-action="shape_size_4">Stroke 4</div>
+      <div class="ctx-item" data-action="shape_size_8">Stroke 8</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="shape_toggle_snap">Toggle Snap</div>
+    </div>
+    <div id="rulerCtx" class="ctx hidden" role="menu" aria-label="Ruler menu">
+      <div class="ctx-title">Ruler</div>
+      <div class="ctx-item" data-action="ruler_feet_5">Set 5 ft/sq</div>
+      <div class="ctx-item" data-action="ruler_feet_10">Set 10 ft/sq</div>
+      <div class="ctx-item" data-action="ruler_feet_15">Set 15 ft/sq</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="ruler_toggle_snap">Toggle Snap</div>
+      <div class="ctx-item" data-action="ruler_clear">Clear ruler</div>
+    </div>
     <div id="roomsPanel" style="
       position:absolute; top:10px; left:10px;
       width:min(460px, calc(100vw - 20px));
@@ -428,7 +460,10 @@
   const mapCtxBg = document.getElementById("mapCtx-bg");
   const mapCtxLayers = document.getElementById("mapCtx-layers");
   const mapCtxClear = document.getElementById("mapCtx-clear");
-  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear];
+  const penCtx = document.getElementById("penCtx");
+  const shapeCtx = document.getElementById("shapeCtx");
+  const rulerCtx = document.getElementById("rulerCtx");
+  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, rulerCtx];
   const playerListEl = document.getElementById("playerList");
   const tokenListEl = document.getElementById("tokenList");
   const strokeListEl = document.getElementById("strokeList");
@@ -763,9 +798,50 @@
       mapCtxLayers.classList.add("hidden");
       mapCtxClear.classList.add("hidden");
     }
+    showContextMenu(mapCtx, x, y);
+  }
+
+  function setCtxChecked(action, checked) {
+    const item = document.querySelector(`.ctx-item[data-action="${action}"]`);
+    if (!item) return;
+    if (!item.dataset.baseLabel) item.dataset.baseLabel = item.textContent.replace(/^✓\s*/, "");
+    item.textContent = `${checked ? "✓ " : ""}${item.dataset.baseLabel}`;
+  }
+
+  function refreshToolContextChecks() {
+    const size = Number(sizeEl.value || "3");
+    const color = String(colorEl.value || "").toLowerCase();
+    const currentTool = tool();
+    const feet = Number(feetPerSqEl.value || "5");
+    const snapOn = !!snapEl.checked;
+
+    setCtxChecked("pen_size_2", size === 2);
+    setCtxChecked("pen_size_4", size === 4);
+    setCtxChecked("pen_size_8", size === 8);
+    setCtxChecked("pen_color_white", color === "#ffffff");
+    setCtxChecked("pen_color_red", color === "#ff3b30");
+    setCtxChecked("pen_color_green", color === "#34c759");
+    setCtxChecked("pen_color_blue", color === "#0a84ff");
+
+    setCtxChecked("shape_tool_rect", currentTool === "rect");
+    setCtxChecked("shape_tool_circle", currentTool === "circle");
+    setCtxChecked("shape_tool_line", currentTool === "line");
+    setCtxChecked("shape_size_2", size === 2);
+    setCtxChecked("shape_size_4", size === 4);
+    setCtxChecked("shape_size_8", size === 8);
+    setCtxChecked("shape_toggle_snap", snapOn);
+
+    setCtxChecked("ruler_feet_5", feet === 5);
+    setCtxChecked("ruler_feet_10", feet === 10);
+    setCtxChecked("ruler_feet_15", feet === 15);
+    setCtxChecked("ruler_toggle_snap", snapOn);
+  }
+
+  function showContextMenu(menuEl, x, y) {
+    refreshToolContextChecks();
     hideAllCtx();
-    mapCtx.classList.remove("hidden");
-    clampMenuToViewport(mapCtx, x, y);
+    menuEl.classList.remove("hidden");
+    clampMenuToViewport(menuEl, x, y);
   }
 
   function showSubMenu(subEl, parentRowEl) {
@@ -888,6 +964,69 @@
         break;
       case "open_scene":
         activateDrawerTab("scene", true);
+        break;
+      case "pen_size_2":
+        sizeEl.value = "2";
+        break;
+      case "pen_size_4":
+        sizeEl.value = "4";
+        break;
+      case "pen_size_8":
+        sizeEl.value = "8";
+        break;
+      case "pen_color_white":
+        colorEl.value = "#ffffff";
+        break;
+      case "pen_color_red":
+        colorEl.value = "#ff3b30";
+        break;
+      case "pen_color_green":
+        colorEl.value = "#34c759";
+        break;
+      case "pen_color_blue":
+        colorEl.value = "#0a84ff";
+        break;
+      case "shape_tool_rect":
+        toolEl.value = "rect";
+        break;
+      case "shape_tool_circle":
+        toolEl.value = "circle";
+        break;
+      case "shape_tool_line":
+        toolEl.value = "line";
+        break;
+      case "shape_size_2":
+        sizeEl.value = "2";
+        break;
+      case "shape_size_4":
+        sizeEl.value = "4";
+        break;
+      case "shape_size_8":
+        sizeEl.value = "8";
+        break;
+      case "shape_toggle_snap":
+        snapEl.checked = !snapEl.checked;
+        refreshUI();
+        break;
+      case "ruler_feet_5":
+        feetPerSqEl.value = "5";
+        refreshUI();
+        break;
+      case "ruler_feet_10":
+        feetPerSqEl.value = "10";
+        refreshUI();
+        break;
+      case "ruler_feet_15":
+        feetPerSqEl.value = "15";
+        refreshUI();
+        break;
+      case "ruler_toggle_snap":
+        snapEl.checked = !snapEl.checked;
+        refreshUI();
+        break;
+      case "ruler_clear":
+        activeRuler = null;
+        requestRender();
         break;
       default:
         break;
@@ -2819,6 +2958,19 @@
       return;
     }
     closeTokenMenu();
+    const t = tool();
+    if (t === "pen") {
+      showContextMenu(penCtx, e.clientX, e.clientY);
+      return;
+    }
+    if (t === "rect" || t === "circle" || t === "line") {
+      showContextMenu(shapeCtx, e.clientX, e.clientY);
+      return;
+    }
+    if (t === "ruler") {
+      showContextMenu(rulerCtx, e.clientX, e.clientY);
+      return;
+    }
     mapCtxWorld = { x: wpos.x, y: wpos.y };
     showMapMenu(e.clientX, e.clientY);
   });
