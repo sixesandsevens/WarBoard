@@ -38,15 +38,78 @@
       z-index: 2;
     }
     .pill { display:inline-block; padding:2px 6px; border-radius:999px; border:1px solid rgba(255,255,255,0.18); }
+    .drawer-toggle { padding: 6px 10px; font-size: 18px; }
+    .drawer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 320px;
+      height: 100%;
+      background: #1e1e1e;
+      color: #eee;
+      box-shadow: 2px 0 10px rgba(0,0,0,0.4);
+      z-index: 999;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(0);
+      transition: transform 0.2s ease;
+    }
+    .drawer.hidden {
+      transform: translateX(-100%);
+      display: block;
+    }
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px;
+      background: #2a2a2a;
+      font-weight: bold;
+    }
+    .drawer-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      border-bottom: 1px solid #444;
+    }
+    .drawer-tabs button {
+      flex: 1;
+      padding: 6px;
+      background: #2a2a2a;
+      border: none;
+      color: #ccc;
+      cursor: pointer;
+    }
+    .drawer-tabs button.active {
+      background: #444;
+      color: white;
+    }
+    .drawer-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    .drawer-panel {
+      display: none;
+    }
+    .drawer-panel.active {
+      display: block;
+    }
   </style>
 </head>
 <body>
   <div id="top">
+    <button id="drawerToggle" class="drawer-toggle">☰</button>
     <label>Room <input id="room" value="demo"></label>
     <label>Client ID <input id="cid" value="chris"></label>
     <label>GM Key <input id="gmKey" placeholder="optional"></label>
     <button id="connect">Connect</button>
     <button id="spawn">Spawn Token</button>
+    <span id="sizePresetGroup" class="pill" style="display:flex; gap:4px; align-items:center;">
+      Size
+      <button id="sizePresetS" style="padding:2px 6px;">S</button>
+      <button id="sizePresetM" style="padding:2px 6px;">M</button>
+      <button id="sizePresetL" style="padding:2px 6px;">L</button>
+      <button id="sizePresetH" style="padding:2px 6px;">Huge</button>
+    </span>
     <button id="undo">Undo</button>
     <button id="redo">Redo</button>
     <button id="gmPanelBtn">GM Panel</button>
@@ -98,7 +161,53 @@
   </div>
 
   <div id="wrap">
+    <div id="drawer" class="drawer hidden">
+      <div class="drawer-header">
+        <span>WarBoard</span>
+        <button id="drawerClose">✕</button>
+      </div>
+
+      <div class="drawer-tabs">
+        <button data-tab="tokens" class="tab-btn active">Tokens</button>
+        <button data-tab="rooms" class="tab-btn">Rooms</button>
+        <button data-tab="scene" class="tab-btn">Scene</button>
+        <button data-tab="players" class="tab-btn">Players</button>
+        <button data-tab="settings" class="tab-btn">Settings</button>
+      </div>
+
+      <div class="drawer-content">
+        <div id="tab-tokens" class="drawer-panel active"></div>
+        <div id="tab-rooms" class="drawer-panel"></div>
+        <div id="tab-scene" class="drawer-panel"></div>
+        <div id="tab-players" class="drawer-panel"></div>
+        <div id="tab-settings" class="drawer-panel"></div>
+      </div>
+    </div>
     <canvas id="c"></canvas>
+    <div id="tokenMenu" style="
+      position:absolute;
+      min-width: 180px;
+      background: rgba(0,0,0,0.92);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 8px;
+      padding: 6px;
+      display:none;
+      z-index: 4;
+    ">
+      <button id="tokenMenuRename" style="display:block; width:100%; text-align:left; margin:2px 0;">Rename</button>
+      <button id="tokenMenuResize" style="display:block; width:100%; text-align:left; margin:2px 0;">Resize</button>
+      <button id="tokenMenuAssign" style="display:block; width:100%; text-align:left; margin:2px 0;">Assign owner</button>
+      <button id="tokenMenuLock" style="display:block; width:100%; text-align:left; margin:2px 0;">Lock / Unlock</button>
+      <div style="height:1px; margin:6px 0; background:rgba(255,255,255,0.12);"></div>
+      <button id="tokenMenuBadgeDowned" style="display:block; width:100%; text-align:left; margin:2px 0;">Downed</button>
+      <button id="tokenMenuBadgePoisoned" style="display:block; width:100%; text-align:left; margin:2px 0;">Poisoned</button>
+      <button id="tokenMenuBadgeStunned" style="display:block; width:100%; text-align:left; margin:2px 0;">Stunned</button>
+      <button id="tokenMenuBadgeBurning" style="display:block; width:100%; text-align:left; margin:2px 0;">Burning</button>
+      <button id="tokenMenuBadgeBleeding" style="display:block; width:100%; text-align:left; margin:2px 0;">Bleeding</button>
+      <button id="tokenMenuBadgeProne" style="display:block; width:100%; text-align:left; margin:2px 0;">Prone</button>
+      <button id="tokenMenuBadgeClear" style="display:block; width:100%; text-align:left; margin:2px 0;">Clear badges</button>
+      <button id="tokenMenuDelete" style="display:block; width:100%; text-align:left; margin:2px 0; color:#ffb3b3;">Delete</button>
+    </div>
     <div id="roomsPanel" style="
       position:absolute; top:10px; left:10px;
       width:min(460px, calc(100vw - 20px));
@@ -240,6 +349,10 @@
   const gmPanel = document.getElementById("gmPanel");
   const roomsPanel = document.getElementById("roomsPanel");
   const libraryPanel = document.getElementById("libraryPanel");
+  const tokenMenuEl = document.getElementById("tokenMenu");
+  const drawer = document.getElementById("drawer");
+  const drawerToggle = document.getElementById("drawerToggle");
+  const drawerClose = document.getElementById("drawerClose");
   const playerListEl = document.getElementById("playerList");
   const tokenListEl = document.getElementById("tokenList");
   const strokeListEl = document.getElementById("strokeList");
@@ -261,6 +374,22 @@
   const snapEl = document.getElementById("snap");
   const gridEl = document.getElementById("grid");
   const showGridEl = document.getElementById("showGrid");
+  const sizePresetButtons = {
+    0.5: document.getElementById("sizePresetS"),
+    1.0: document.getElementById("sizePresetM"),
+    2.0: document.getElementById("sizePresetL"),
+    3.0: document.getElementById("sizePresetH"),
+  };
+  const TOKEN_BADGES = [
+    { id: "downed", label: "Downed", color: "#1f1f1f", glyph: "✖", menuId: "tokenMenuBadgeDowned" },
+    { id: "poisoned", label: "Poisoned", color: "#2f8f2f", glyph: "P", menuId: "tokenMenuBadgePoisoned" },
+    { id: "stunned", label: "Stunned", color: "#d4b000", glyph: "★", menuId: "tokenMenuBadgeStunned" },
+    { id: "burning", label: "Burning", color: "#d46a00", glyph: "F", menuId: "tokenMenuBadgeBurning" },
+    { id: "bleeding", label: "Bleeding", color: "#b00020", glyph: "B", menuId: "tokenMenuBadgeBleeding" },
+    { id: "prone", label: "Prone", color: "#5a5a5a", glyph: "↷", menuId: "tokenMenuBadgeProne" },
+  ];
+  const TOKEN_BADGE_BY_ID = new Map(TOKEN_BADGES.map((b) => [b.id, b]));
+  const TOKEN_BADGE_IDS = new Set(TOKEN_BADGES.map((b) => b.id));
 
   function log(line) {
     logEl.textContent += line + "\n";
@@ -362,10 +491,228 @@
       .replaceAll("'", "&#39;");
   }
 
+  function activateDrawerTab(tab, openDrawer = true) {
+    const tabId = String(tab || "tokens");
+    document.querySelectorAll(".tab-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.tab === tabId);
+    });
+    document.querySelectorAll(".drawer-panel").forEach((p) => {
+      p.classList.toggle("active", p.id === `tab-${tabId}`);
+    });
+    if (openDrawer) drawer.classList.remove("hidden");
+  }
+
+  function normalizePanelForDrawer(panelEl) {
+    if (!panelEl) return;
+    panelEl.style.position = "static";
+    panelEl.style.top = "";
+    panelEl.style.right = "";
+    panelEl.style.left = "";
+    panelEl.style.width = "100%";
+    panelEl.style.maxHeight = "none";
+    panelEl.style.overflow = "visible";
+    panelEl.style.background = "transparent";
+    panelEl.style.border = "none";
+    panelEl.style.padding = "0";
+    panelEl.style.display = "block";
+    panelEl.style.zIndex = "auto";
+  }
+
+  function drawerSection(parent, title) {
+    const section = document.createElement("div");
+    section.style.marginBottom = "12px";
+    const header = document.createElement("div");
+    header.textContent = title;
+    header.style.fontWeight = "bold";
+    header.style.margin = "6px 0";
+    header.style.opacity = "0.95";
+    const body = document.createElement("div");
+    body.style.display = "flex";
+    body.style.flexDirection = "column";
+    body.style.gap = "6px";
+    section.appendChild(header);
+    section.appendChild(body);
+    parent.appendChild(section);
+    return body;
+  }
+
+  function drawerControlNode(id) {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    const node = el.closest("label") || el;
+    if (node.dataset.drawerMoved === "1") return null;
+    node.dataset.drawerMoved = "1";
+    node.style.display = "flex";
+    node.style.alignItems = "center";
+    node.style.gap = "8px";
+    return node;
+  }
+
+  function moveControlTo(body, id) {
+    const node = drawerControlNode(id);
+    if (!node) return;
+    body.appendChild(node);
+  }
+
+  function mountSceneAndSettingsControls() {
+    const tabScene = document.getElementById("tab-scene");
+    const tabSettings = document.getElementById("tab-settings");
+    if (!tabScene || !tabSettings) return;
+
+    tabScene.innerHTML = "";
+    tabSettings.innerHTML = "";
+
+    const scenePerms = drawerSection(tabScene, "Permissions");
+    moveControlTo(scenePerms, "allowPlayersMove");
+    moveControlTo(scenePerms, "allowAllMove");
+    moveControlTo(scenePerms, "lockdown");
+
+    const sceneBackground = drawerSection(tabScene, "Background");
+    moveControlTo(sceneBackground, "bgUrl");
+    moveControlTo(sceneBackground, "setBg");
+    moveControlTo(sceneBackground, "terrainBg");
+    moveControlTo(sceneBackground, "terrainStyle");
+    moveControlTo(sceneBackground, "regenTerrain");
+    moveControlTo(sceneBackground, "terrainBadge");
+
+    const sceneLayers = drawerSection(tabScene, "Layers");
+    moveControlTo(sceneLayers, "layerGrid");
+    moveControlTo(sceneLayers, "layerDraw");
+    moveControlTo(sceneLayers, "layerShapes");
+    moveControlTo(sceneLayers, "layerTokens");
+
+    const settingsTools = drawerSection(tabSettings, "Tools");
+    moveControlTo(settingsTools, "tool");
+    moveControlTo(settingsTools, "color");
+    moveControlTo(settingsTools, "size");
+    moveControlTo(settingsTools, "sizePresetGroup");
+
+    const settingsGrid = drawerSection(tabSettings, "Grid & Measure");
+    moveControlTo(settingsGrid, "feetPerSq");
+    moveControlTo(settingsGrid, "snap");
+    moveControlTo(settingsGrid, "grid");
+    moveControlTo(settingsGrid, "showGrid");
+  }
+
+  function mountDrawerPanels() {
+    const tabTokens = document.getElementById("tab-tokens");
+    const tabRooms = document.getElementById("tab-rooms");
+    const tabPlayers = document.getElementById("tab-players");
+
+    if (libraryPanel && tabTokens && libraryPanel.parentElement !== tabTokens) tabTokens.appendChild(libraryPanel);
+    if (roomsPanel && tabRooms && roomsPanel.parentElement !== tabRooms) tabRooms.appendChild(roomsPanel);
+    if (gmPanel && tabPlayers && gmPanel.parentElement !== tabPlayers) tabPlayers.appendChild(gmPanel);
+
+    normalizePanelForDrawer(libraryPanel);
+    normalizePanelForDrawer(roomsPanel);
+    normalizePanelForDrawer(gmPanel);
+
+    const roomsClose = document.getElementById("roomsPanelClose");
+    const libraryClose = document.getElementById("libraryPanelClose");
+    const gmClose = document.getElementById("gmPanelClose");
+    if (roomsClose) roomsClose.style.display = "none";
+    if (libraryClose) libraryClose.style.display = "none";
+    if (gmClose) gmClose.style.display = "none";
+
+    mountSceneAndSettingsControls();
+
+    const gmBtn = document.getElementById("gmPanelBtn");
+    const roomsBtn = document.getElementById("roomsPanelBtn");
+    const libraryBtn = document.getElementById("libraryPanelBtn");
+    if (gmBtn) gmBtn.style.display = "none";
+    if (roomsBtn) roomsBtn.style.display = "none";
+    if (libraryBtn) libraryBtn.style.display = "none";
+  }
+
   function closeFloatingPanels(except = "") {
-    if (except !== "gm") gmPanel.style.display = "none";
-    if (except !== "rooms") roomsPanel.style.display = "none";
-    if (except !== "library") libraryPanel.style.display = "none";
+    if (except !== "gm" && except !== "rooms" && except !== "library") drawer.classList.add("hidden");
+    if (except !== "token-menu") closeTokenMenu();
+  }
+
+  function closeTokenMenu() {
+    tokenMenuEl.style.display = "none";
+    tokenMenuTokenId = null;
+  }
+
+  function normalizedBadgeList(input) {
+    if (!Array.isArray(input)) return [];
+    const out = [];
+    for (const raw of input) {
+      const id = String(raw || "").trim();
+      if (!TOKEN_BADGE_IDS.has(id)) continue;
+      if (!out.includes(id)) out.push(id);
+    }
+    return out;
+  }
+
+  function tokenBadgesSet(token) {
+    return new Set(normalizedBadgeList(token?.badges));
+  }
+
+  function refreshTokenMenuBadgeButtons() {
+    if (!tokenMenuTokenId) return;
+    const t = state.tokens.get(tokenMenuTokenId);
+    const current = tokenBadgesSet(t);
+    for (const badge of TOKEN_BADGES) {
+      const btn = document.getElementById(badge.menuId);
+      if (!btn) continue;
+      btn.textContent = `${current.has(badge.id) ? "✓ " : ""}${badge.label}`;
+    }
+    const clearBtn = document.getElementById("tokenMenuBadgeClear");
+    if (clearBtn) clearBtn.style.opacity = current.size ? "1" : "0.6";
+  }
+
+  function sendTokenBadgeToggle(tokenId, badgeId, enabled = null) {
+    send("TOKEN_BADGE_TOGGLE", { id: tokenId, badge: badgeId, enabled });
+  }
+
+  function setTokenBadgeLocal(tokenId, badgeId, enabled = null) {
+    const t = state.tokens.get(tokenId);
+    if (!t || !TOKEN_BADGE_IDS.has(badgeId)) return;
+    const next = tokenBadgesSet(t);
+    if (enabled === true) next.add(badgeId);
+    else if (enabled === false) next.delete(badgeId);
+    else if (next.has(badgeId)) next.delete(badgeId);
+    else next.add(badgeId);
+    t.badges = Array.from(next).sort();
+    state.tokens.set(tokenId, t);
+  }
+
+  function openTokenMenu(tokenId, clientX, clientY) {
+    tokenMenuTokenId = tokenId;
+    const t = state.tokens.get(tokenId);
+    const lockBtn = document.getElementById("tokenMenuLock");
+    if (lockBtn) lockBtn.textContent = t?.locked ? "Unlock" : "Lock";
+    refreshTokenMenuBadgeButtons();
+    const wrapRect = document.getElementById("wrap").getBoundingClientRect();
+    tokenMenuEl.style.display = "block";
+    tokenMenuEl.style.visibility = "hidden";
+    const menuRect = tokenMenuEl.getBoundingClientRect();
+    const clientXClamped = Math.min(clientX, window.innerWidth - menuRect.width - 8);
+    const clientYClamped = Math.min(clientY, window.innerHeight - menuRect.height - 8);
+    const x = clamp(clientXClamped - wrapRect.left, 8, Math.max(8, wrapRect.width - menuRect.width - 8));
+    const y = clamp(clientYClamped - wrapRect.top, 8, Math.max(8, wrapRect.height - menuRect.height - 8));
+    tokenMenuEl.style.left = `${x}px`;
+    tokenMenuEl.style.top = `${y}px`;
+    tokenMenuEl.style.visibility = "visible";
+    tokenMenuEl.style.display = "block";
+  }
+
+  function applyTokenSizePreset(scale) {
+    ui.tokenSpawnScale = scale;
+    for (const [k, btn] of Object.entries(sizePresetButtons)) {
+      if (!btn) continue;
+      btn.style.border = Math.abs(parseFloat(k) - scale) < 0.01 ? "1px solid #00d1ff" : "";
+    }
+    if (selectedTokenId && isGM()) {
+      const tok = state.tokens.get(selectedTokenId);
+      if (tok) {
+        tok.size_scale = scale;
+        state.tokens.set(selectedTokenId, tok);
+        send("TOKEN_SET_SIZE", { id: selectedTokenId, size_scale: scale });
+        requestRender();
+      }
+    }
   }
 
   function renderPackGrid() {
@@ -401,7 +748,7 @@
       btn.onclick = () => spawnPackToken(t);
       btn.onpointerdown = (e) => {
         if (e.button !== 0) return;
-        dragSpawn = t;
+        dragSpawn = { ...t, size_scale: ui.tokenSpawnScale };
         dragSpawnWorld = null;
         dragSpawnOverCanvas = false;
         e.preventDefault();
@@ -477,8 +824,10 @@
       name: packToken.name || "Token",
       color: "#ffffff",
       image_url: packToken.image_url || null,
+      size_scale: clamp(Number(packToken.size_scale ?? ui.tokenSpawnScale), 0.25, 4),
       owner_id: null,
       locked: false,
+      badges: [],
     };
     state.tokens.set(id, token);
     refreshGmUI();
@@ -518,7 +867,7 @@
   function isGM() { return state.gm_id && myId() === state.gm_id; }
 
   const cam = { x: 80, y: 60, z: 1 };
-  const ui = { gridSize: 50, snap: true, showGrid: true, feetPerSq: 5 };
+  const ui = { gridSize: 50, snap: true, showGrid: true, feetPerSq: 5, tokenSpawnScale: 1.0 };
 
   let draggingTokenId = null;
   let selectedTokenId = null;
@@ -542,6 +891,7 @@
   let dragSpawn = null;
   let dragSpawnWorld = null;
   let dragSpawnOverCanvas = false;
+  let tokenMenuTokenId = null;
 
   let bgImage = null;
   let bgImageUrl = null;
@@ -1150,13 +1500,16 @@
   function worldToScreen(wx, wy) { return { x: wx * cam.z + cam.x, y: wy * cam.z + cam.y }; }
   function snap(v) { return ui.snap ? Math.round(v / ui.gridSize) * ui.gridSize : v; }
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-  function tokenRadiusWorld() { return 22; }
+  function tokenRadiusWorld(token = null) {
+    const s = clamp(Number(token?.size_scale ?? 1), 0.25, 4);
+    return (ui.gridSize * s) / 2;
+  }
 
   function hitTestToken(wx, wy) {
-    const r = tokenRadiusWorld();
     let best = null;
     let bestD2 = Infinity;
     for (const [id, t] of state.tokens) {
+      const r = tokenRadiusWorld(t);
       const dx = wx - t.x;
       const dy = wy - t.y;
       const d2 = dx * dx + dy * dy;
@@ -1327,11 +1680,58 @@
     if (activeShapePreview) drawOneShape(activeShapePreview, true);
   }
 
+  function drawTokenBadges(t, s, r) {
+    const badges = normalizedBadgeList(t?.badges);
+    if (!badges.length) return;
+    const bubbleR = clamp(r * 0.28, 6, 12);
+    const angles = [-Math.PI / 4, Math.PI / 4, (3 * Math.PI) / 4, (-3 * Math.PI) / 4];
+    const visible = badges.slice(0, 4);
+
+    for (let i = 0; i < visible.length; i++) {
+      const meta = TOKEN_BADGE_BY_ID.get(visible[i]);
+      if (!meta) continue;
+      const a = angles[i];
+      const bx = s.x + Math.cos(a) * (r - bubbleR * 0.2);
+      const by = s.y + Math.sin(a) * (r - bubbleR * 0.2);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(bx, by, bubbleR, 0, Math.PI * 2);
+      ctx.fillStyle = meta.color;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(0,0,0,0.35)";
+      ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.95)";
+      ctx.font = `${Math.max(10, Math.floor(bubbleR * 1.35))}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(meta.glyph, bx, by + 0.5);
+      ctx.restore();
+    }
+
+    if (badges.length > 4) {
+      const extra = badges.length - 4;
+      const bx = s.x + (r - bubbleR * 0.2);
+      const by = s.y;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(bx, by, bubbleR, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.95)";
+      ctx.font = `${Math.max(10, Math.floor(bubbleR * 1.1))}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`+${extra}`, bx, by + 0.5);
+      ctx.restore();
+    }
+  }
+
   function drawTokens() {
     if (!state.layer_visibility.tokens) return;
     for (const [id, t] of state.tokens) {
       const s = worldToScreen(t.x, t.y);
-      const r = tokenRadiusWorld() * cam.z;
+      const r = tokenRadiusWorld(t) * cam.z;
 
       ctx.save();
       const imageDrawn = drawTokenImageClippedCircle(t, s, r);
@@ -1350,6 +1750,8 @@
         ctx.lineWidth = Math.max(2, 2 * cam.z);
         ctx.stroke();
       }
+
+      drawTokenBadges(t, s, r);
 
       const showLabel = id === selectedTokenId || id === hoveredTokenId;
       if (showLabel) {
@@ -1398,7 +1800,7 @@
   function drawDragSpawnGhost() {
     if (!dragSpawn || !dragSpawnWorld || !dragSpawnOverCanvas) return;
     const s = worldToScreen(dragSpawnWorld.x, dragSpawnWorld.y);
-    const r = tokenRadiusWorld() * cam.z;
+    const r = tokenRadiusWorld(dragSpawn) * cam.z;
     ctx.save();
     ctx.globalAlpha = 0.7;
     const imageDrawn = drawTokenImageClippedCircle({ image_url: dragSpawn.image_url }, s, r);
@@ -1472,7 +1874,9 @@
     state.version = s.version || 0;
 
     state.tokens.clear();
-    for (const [id, t] of Object.entries(s.tokens || {})) state.tokens.set(id, t);
+    for (const [id, t] of Object.entries(s.tokens || {})) {
+      state.tokens.set(id, { ...t, badges: normalizedBadgeList(t?.badges) });
+    }
     state.strokes.clear();
     for (const [id, st] of Object.entries(s.strokes || {})) state.strokes.set(id, st);
     state.shapes.clear();
@@ -1607,7 +2011,7 @@
 
       if (ev.type === "TOKEN_CREATE") {
         const p = ev.payload;
-        if (p?.id) state.tokens.set(p.id, { ...(state.tokens.get(p.id) || {}), ...p });
+        if (p?.id) state.tokens.set(p.id, { ...(state.tokens.get(p.id) || {}), ...p, badges: normalizedBadgeList(p?.badges) });
         refreshGmUI();
         requestRender();
         return;
@@ -1650,6 +2054,30 @@
         return;
       }
 
+      if (ev.type === "TOKEN_RENAME") {
+        const p = ev.payload;
+        const t = state.tokens.get(p.id);
+        if (t) {
+          t.name = p.name || t.name;
+          state.tokens.set(p.id, t);
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "TOKEN_SET_SIZE") {
+        const p = ev.payload;
+        const t = state.tokens.get(p.id);
+        if (t) {
+          t.size_scale = clamp(Number(p.size_scale ?? t.size_scale ?? 1), 0.25, 4);
+          state.tokens.set(p.id, t);
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
       if (ev.type === "TOKEN_SET_LOCK") {
         const p = ev.payload;
         const t = state.tokens.get(p.id);
@@ -1658,6 +2086,18 @@
           state.tokens.set(p.id, t);
         }
         refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "TOKEN_BADGE_TOGGLE") {
+        const p = ev.payload;
+        const t = state.tokens.get(p.id);
+        if (t) {
+          t.badges = normalizedBadgeList(p.badges);
+          state.tokens.set(p.id, t);
+        }
+        refreshTokenMenuBadgeButtons();
         requestRender();
         return;
       }
@@ -1779,39 +2219,39 @@
     const x = snap(centerWorld.x + (Math.random() * 120 - 60));
     const y = snap(centerWorld.y + (Math.random() * 120 - 60));
 
-    state.tokens.set(id, { id, x, y, name, color, image_url: null, owner_id: null, locked: false });
+    const size_scale = ui.tokenSpawnScale;
+    state.tokens.set(id, { id, x, y, name, color, image_url: null, size_scale, owner_id: null, locked: false, badges: [] });
     refreshGmUI();
     requestRender();
-    send("TOKEN_CREATE", { id, x, y, name, color, image_url: null });
+    send("TOKEN_CREATE", { id, x, y, name, color, image_url: null, size_scale, badges: [] });
   };
 
   document.getElementById("undo").onclick = () => send("UNDO", {});
   document.getElementById("redo").onclick = () => send("REDO", {});
 
+  drawerToggle.onclick = () => drawer.classList.toggle("hidden");
+  drawerClose.onclick = () => drawer.classList.add("hidden");
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => activateDrawerTab(btn.dataset.tab, true));
+  });
+  mountDrawerPanels();
+
   document.getElementById("gmPanelBtn").onclick = () => {
-    const nextOpen = gmPanel.style.display === "none";
-    closeFloatingPanels(nextOpen ? "gm" : "");
-    gmPanel.style.display = nextOpen ? "block" : "none";
+    activateDrawerTab("players", true);
     refreshGmUI();
   };
-  document.getElementById("gmPanelClose").onclick = () => { gmPanel.style.display = "none"; };
+  document.getElementById("gmPanelClose").onclick = () => { drawer.classList.add("hidden"); };
   document.getElementById("roomsPanelBtn").onclick = async () => {
-    const nextOpen = roomsPanel.style.display === "none";
-    closeFloatingPanels(nextOpen ? "rooms" : "");
-    roomsPanel.style.display = nextOpen ? "block" : "none";
-    if (roomsPanel.style.display === "block") {
-      await refreshRoomsPanel();
-      await refreshSnapshotsPanel();
-    }
+    activateDrawerTab("rooms", true);
+    await refreshRoomsPanel();
+    await refreshSnapshotsPanel();
   };
-  document.getElementById("roomsPanelClose").onclick = () => { roomsPanel.style.display = "none"; };
+  document.getElementById("roomsPanelClose").onclick = () => { drawer.classList.add("hidden"); };
   document.getElementById("libraryPanelBtn").onclick = async () => {
-    const nextOpen = libraryPanel.style.display === "none";
-    closeFloatingPanels(nextOpen ? "library" : "");
-    libraryPanel.style.display = nextOpen ? "block" : "none";
-    if (nextOpen) await refreshPacks();
+    activateDrawerTab("tokens", true);
+    await refreshPacks();
   };
-  document.getElementById("libraryPanelClose").onclick = () => { libraryPanel.style.display = "none"; };
+  document.getElementById("libraryPanelClose").onclick = () => { drawer.classList.add("hidden"); };
   document.getElementById("refreshPacksBtn").onclick = () => refreshPacks();
   packSelectEl.addEventListener("change", async () => {
     packState.selectedPackId = packSelectEl.value;
@@ -1820,6 +2260,99 @@
   packSearchEl.addEventListener("input", () => {
     packState.search = packSearchEl.value || "";
     renderPackGrid();
+  });
+  Object.entries(sizePresetButtons).forEach(([scaleRaw, btn]) => {
+    if (!btn) return;
+    btn.onclick = () => applyTokenSizePreset(parseFloat(scaleRaw));
+  });
+  applyTokenSizePreset(ui.tokenSpawnScale);
+
+  document.getElementById("tokenMenuRename").onclick = () => {
+    if (!tokenMenuTokenId || !isGM()) return;
+    const t = state.tokens.get(tokenMenuTokenId);
+    if (!t) return;
+    const next = (prompt("Rename token", t.name || "Token") || "").trim();
+    if (!next) return;
+    t.name = next;
+    state.tokens.set(tokenMenuTokenId, t);
+    send("TOKEN_RENAME", { id: tokenMenuTokenId, name: next });
+    closeTokenMenu();
+    refreshGmUI();
+    requestRender();
+  };
+  document.getElementById("tokenMenuResize").onclick = () => {
+    if (!tokenMenuTokenId || !isGM()) return;
+    const t = state.tokens.get(tokenMenuTokenId);
+    if (!t) return;
+    const raw = prompt("Size multiplier (0.25 - 4.0)", String(t.size_scale ?? 1));
+    if (raw == null) return;
+    const next = clamp(parseFloat(raw), 0.25, 4);
+    if (!Number.isFinite(next)) return;
+    t.size_scale = next;
+    state.tokens.set(tokenMenuTokenId, t);
+    send("TOKEN_SET_SIZE", { id: tokenMenuTokenId, size_scale: next });
+    closeTokenMenu();
+    refreshGmUI();
+    requestRender();
+  };
+  document.getElementById("tokenMenuAssign").onclick = () => {
+    if (!tokenMenuTokenId || !isGM()) return;
+    const arr = Array.from(players).sort();
+    const t = state.tokens.get(tokenMenuTokenId);
+    if (!t) return;
+    const current = t.owner_id || "";
+    const hint = arr.length ? `Available: ${arr.join(", ")}` : "No connected players";
+    const raw = prompt(`Assign owner client_id (blank for unassigned)\n${hint}`, current);
+    if (raw == null) return;
+    const owner = raw.trim() || null;
+    send("TOKEN_ASSIGN", { id: tokenMenuTokenId, owner_id: owner });
+    closeTokenMenu();
+  };
+  document.getElementById("tokenMenuLock").onclick = () => {
+    if (!tokenMenuTokenId || !isGM()) return;
+    const t = state.tokens.get(tokenMenuTokenId);
+    if (!t) return;
+    const next = !t.locked;
+    t.locked = next;
+    state.tokens.set(tokenMenuTokenId, t);
+    send("TOKEN_SET_LOCK", { id: tokenMenuTokenId, locked: next });
+    closeTokenMenu();
+    refreshGmUI();
+    requestRender();
+  };
+  for (const badge of TOKEN_BADGES) {
+    const btn = document.getElementById(badge.menuId);
+    if (!btn) continue;
+    btn.onclick = () => {
+      if (!tokenMenuTokenId || !isGM()) return;
+      setTokenBadgeLocal(tokenMenuTokenId, badge.id, null);
+      refreshTokenMenuBadgeButtons();
+      requestRender();
+      sendTokenBadgeToggle(tokenMenuTokenId, badge.id, null);
+    };
+  }
+  document.getElementById("tokenMenuBadgeClear").onclick = () => {
+    if (!tokenMenuTokenId || !isGM()) return;
+    const t = state.tokens.get(tokenMenuTokenId);
+    if (!t) return;
+    const ids = normalizedBadgeList(t.badges);
+    if (!ids.length) return;
+    for (const badgeId of ids) {
+      setTokenBadgeLocal(tokenMenuTokenId, badgeId, false);
+      sendTokenBadgeToggle(tokenMenuTokenId, badgeId, false);
+    }
+    refreshTokenMenuBadgeButtons();
+    requestRender();
+  };
+  document.getElementById("tokenMenuDelete").onclick = () => {
+    if (!tokenMenuTokenId || !isGM()) return;
+    send("TOKEN_DELETE", { id: tokenMenuTokenId });
+    closeTokenMenu();
+  };
+  window.addEventListener("pointerdown", (e) => {
+    if (tokenMenuEl.style.display !== "block") return;
+    if (tokenMenuEl.contains(e.target)) return;
+    closeTokenMenu();
   });
   document.getElementById("refreshRoomsBtn").onclick = () => refreshRoomsPanel();
   document.getElementById("refreshSnapshotsBtn").onclick = () => refreshSnapshotsPanel();
@@ -1918,11 +2451,30 @@
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "Shift") isShiftDown = true;
+    const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
+    const isTyping = tag === "input" || tag === "textarea" || tag === "select" || (e.target && e.target.isContentEditable);
+    if (e.key === "Tab" && !isTyping) {
+      e.preventDefault();
+      drawer.classList.toggle("hidden");
+      return;
+    }
+    if (e.key === "Escape" && tokenMenuEl.style.display === "block") {
+      closeTokenMenu();
+      return;
+    }
     if (e.key === "Escape" && dragSpawn) {
       dragSpawn = null;
       dragSpawnWorld = null;
       dragSpawnOverCanvas = false;
       requestRender();
+      return;
+    }
+    if (!isTyping && e.key.toLowerCase() === "d" && selectedTokenId && isGM()) {
+      setTokenBadgeLocal(selectedTokenId, "downed", null);
+      refreshTokenMenuBadgeButtons();
+      requestRender();
+      sendTokenBadgeToggle(selectedTokenId, "downed", null);
+      e.preventDefault();
       return;
     }
     if ((e.key === "Delete" || e.key === "Backspace") && selectedTokenId && isGM()) {
@@ -1952,9 +2504,25 @@
     requestRender();
   }, { passive: false });
 
-  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  canvas.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const wpos = screenToWorld(sx, sy);
+    const hit = hitTestToken(wpos.x, wpos.y);
+    if (hit && isGM()) {
+      selectedTokenId = hit;
+      openTokenMenu(hit, e.clientX, e.clientY);
+      refreshGmUI();
+      requestRender();
+    } else {
+      closeTokenMenu();
+    }
+  });
 
   canvas.addEventListener("pointerdown", (e) => {
+    closeTokenMenu();
     canvas.setPointerCapture(e.pointerId);
     pointerCaptured = true;
 
@@ -1971,6 +2539,16 @@
     }
 
     if (e.button === 2) {
+      if (isGM()) {
+        const hit = hitTestToken(wpos.x, wpos.y);
+        if (hit) {
+          selectedTokenId = hit;
+          openTokenMenu(hit, e.clientX, e.clientY);
+          refreshGmUI();
+          requestRender();
+          return;
+        }
+      }
       isPanning = true;
       panStart = { sx: e.clientX, sy: e.clientY, camX: cam.x, camY: cam.y };
       return;
