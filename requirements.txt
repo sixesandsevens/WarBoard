@@ -1,3 +1,4 @@
 fastapi
 uvicorn[standard]
 sqlmodel
+passlib[argon2,bcrypt]

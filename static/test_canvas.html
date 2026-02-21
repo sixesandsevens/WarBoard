@@ -320,7 +320,6 @@
     </div>
     <label style="display:none;">Room <input id="room" value="demo"></label>
     <label style="display:none;">Client ID <input id="cid" value="chris"></label>
-    <label style="display:none;">GM Key <input id="gmKey" placeholder="optional"></label>
     <button id="connect" style="display:none;">Connect</button>
     <button id="gmPanelBtn">GM Panel</button>
     <button id="roomsPanelBtn">Rooms</button>
@@ -385,11 +384,6 @@
         <div class="field">
           <label>Client ID</label>
           <input id="sessionClientId" type="text" autocomplete="off" />
-        </div>
-        <div class="field">
-          <label>GM Key (optional)</label>
-          <input id="sessionGmKey" type="password" autocomplete="off" />
-          <div class="hint">Leave blank to join as player.</div>
         </div>
         <div class="modal-actions">
           <button id="sessionConnectBtn" class="primary">Connect</button>
@@ -651,7 +645,24 @@
 
   const roomEl = document.getElementById("room");
   const cidEl = document.getElementById("cid");
-  const gmKeyEl = document.getElementById("gmKey");
+  // Auth-backed identity: fill client id from /api/me (server is authoritative anyway)
+  (async () => {
+    try {
+      const me = await fetch("/api/me").then(r => r.json());
+      if (me && me.username) {
+        cidEl.value = me.username;
+        cidEl.disabled = true;
+        cidEl.title = "Logged in as " + me.username;
+      }
+    } catch (e) {}
+  })();
+
+  // If launched from the lobby, auto-fill room from query (?room=xxxx)
+  try {
+    const qp = new URLSearchParams(location.search);
+    const qroom = qp.get("room");
+    if (qroom) roomEl.value = qroom;
+  } catch(e) {}
   const allowPlayersMoveEl = document.getElementById("allowPlayersMove");
   const allowAllMoveEl = document.getElementById("allowAllMove");
   const lockdownEl = document.getElementById("lockdown");
@@ -715,7 +726,6 @@
   const sessionModalClose = document.getElementById("sessionModalClose");
   const sessionRoomEl = document.getElementById("sessionRoom");
   const sessionClientEl = document.getElementById("sessionClientId");
-  const sessionGmKeyEl = document.getElementById("sessionGmKey");
   const sessionConnectBtn = document.getElementById("sessionConnectBtn");
   const sessionDisconnectBtn = document.getElementById("sessionDisconnectBtn");
   const colorEl = document.getElementById("color");
@@ -748,10 +758,6 @@
 
   function apiUrl(path, includeGm = false) {
     const url = new URL(path, window.location.origin);
-    if (includeGm) {
-      const gm = gmKeyEl.value.trim();
-      if (gm) url.searchParams.set("gm_key", gm);
-    }
     return url.toString();
   }
 
@@ -1400,7 +1406,6 @@
   function openSessionModal() {
     sessionRoomEl.value = roomEl.value.trim() || "demo";
     sessionClientEl.value = cidEl.value.trim() || "player";
-    sessionGmKeyEl.value = "";
     sessionModal.classList.remove("hidden");
     sessionModalBackdrop.classList.remove("hidden");
   }
@@ -2184,21 +2189,41 @@
 
   async function refreshRoomsPanel() {
     try {
-      const data = await apiGet("/api/rooms");
+      const data = await apiGet("/api/my/rooms");
       const rooms = data.rooms || [];
       const rows = rooms.map((r) => `
         <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
           <button data-open-room="${r.room_id}" style="padding:2px 6px;">Open</button>
+          <button data-copy-join="${r.room_id}" style="padding:2px 6px;">Copy Join Link</button>
           <button data-rename-room="${r.room_id}" style="padding:2px 6px;">Rename</button>
           <button data-delete-room="${r.room_id}" style="padding:2px 6px; color:#ffb3b3;">Delete</button>
           <code>${r.room_id}</code>
           <span style="opacity:.9">${r.name}</span>
-          <span style="opacity:.6">${(r.updated_at || "").replace("T", " ").slice(0, 19)}</span>
+          <span style="opacity:.7">${r.role === "owner" ? "GM" : "Player"}</span>
+          <span style="opacity:.6">${(r.join_code || "").trim() ? "join " + r.join_code : ""}</span>
+          <span style="opacity:.6">${(r.created_at || "").replace("T", " ").slice(0, 19)}</span>
         </div>
       `);
       roomsListEl.innerHTML = rows.join("") || `<div style="opacity:.7">(no rooms)</div>`;
       roomsListEl.querySelectorAll("button[data-open-room]").forEach((btn) => {
         btn.onclick = () => switchRoom(btn.getAttribute("data-open-room"));
+      });
+      roomsListEl.querySelectorAll("button[data-copy-join]").forEach((btn) => {
+        btn.onclick = async () => {
+          const rid = btn.getAttribute("data-copy-join");
+          const room = rooms.find((x) => x.room_id === rid);
+          if (!room || !room.join_code) {
+            log(`JOIN LINK ERROR: no join code for room ${rid}`);
+            return;
+          }
+          const link = `${location.origin}/join/${room.join_code}`;
+          try {
+            await navigator.clipboard.writeText(link);
+            log(`JOIN LINK COPIED ${room.join_code}`);
+          } catch (e) {
+            log(`JOIN LINK: ${link}`);
+          }
+        };
       });
       roomsListEl.querySelectorAll("button[data-rename-room]").forEach((btn) => {
         btn.onclick = async () => {
@@ -2756,10 +2781,8 @@
     clearLocalRoomView();
     const room = encodeURIComponent(roomEl.value.trim());
     const cid = encodeURIComponent(cidEl.value.trim());
-    const gmKey = gmKeyEl.value.trim();
     const proto = (location.protocol === "https:") ? "wss" : "ws";
-    const gmParam = gmKey ? `&gm_key=${encodeURIComponent(gmKey)}` : "";
-    const url = `${proto}://${location.host}/ws/${room}?client_id=${cid}${gmParam}`;
+    const url = `${proto}://${location.host}/ws/${room}?client_id=${cid}`;
 
     ws = new WebSocket(url);
     ws.onopen = () => {
@@ -2770,8 +2793,12 @@
         if (ws && ws.readyState === 1) send("HEARTBEAT", { ts: Date.now() });
       }, 10000);
     };
-    ws.onclose = () => {
-      log("disconnected");
+    ws.onclose = (ev) => {
+      const reason = (ev && ev.reason) ? ` (${ev.reason})` : "";
+      log(`disconnected (code ${ev.code})${reason}`);
+      if (ev.code === 1008) {
+        log("Connection rejected: login expired or you are not a member of this room.");
+      }
       updateSessionPill();
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
@@ -3068,7 +3095,6 @@
   sessionConnectBtn.addEventListener("click", () => {
     roomEl.value = sessionRoomEl.value.trim() || "demo";
     cidEl.value = sessionClientEl.value.trim() || "player";
-    gmKeyEl.value = sessionGmKeyEl.value.trim();
     connectWS(true);
     closeSessionModal();
   });
@@ -3077,7 +3103,7 @@
       try { ws.close(); } catch {}
     }
   });
-  [sessionRoomEl, sessionClientEl, sessionGmKeyEl].forEach((inp) => {
+  [sessionRoomEl, sessionClientEl].forEach((inp) => {
     inp.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -3088,6 +3114,9 @@
   updateSessionPill();
   refreshToolButtons();
   updateCanvasCursor();
+  if (roomEl.value.trim()) {
+    connectWS(false);
+  }
   toolColorPicker.addEventListener("input", () => {
     colorEl.value = toolColorPicker.value;
     refreshToolContextChecks();

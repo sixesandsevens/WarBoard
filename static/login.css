@@ -1,0 +1,16 @@
+html,body{height:100%}
+body{margin:0;background:#0f1115;color:#eaeef6;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
+.wrap{min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{width:min(420px,92vw);background:#161a22;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:20px 20px 18px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+h1{margin:0 0 6px;font-size:28px;letter-spacing:.5px}
+.sub{margin:0 0 16px;color:rgba(234,238,246,.75)}
+label{display:block;margin:12px 0 6px;color:rgba(234,238,246,.85);font-size:13px}
+input{width:100%;padding:10px 11px;border-radius:10px;border:1px solid rgba(255,255,255,.10);background:#0f1218;color:#eaeef6;outline:none}
+input:focus{border-color:rgba(120,170,255,.55);box-shadow:0 0 0 3px rgba(120,170,255,.12)}
+button{width:100%;margin-top:14px;padding:10px 12px;border-radius:10px;border:0;background:#4c7dff;color:white;font-weight:700;cursor:pointer}
+button:hover{filter:brightness(1.05)}
+.tabs{display:flex;gap:8px;margin:10px 0 6px}
+.tab{flex:1;background:#0f1218;border:1px solid rgba(255,255,255,.10);color:rgba(234,238,246,.85);padding:8px 10px;border-radius:10px;cursor:pointer}
+.tab.active{background:#223156;border-color:rgba(120,170,255,.55);color:#eaeef6}
+.msg{margin-top:12px;min-height:18px;color:#ffb4b4;font-size:13px}
+.fine{margin-top:14px;color:rgba(234,238,246,.55);font-size:12px}

@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>WarBoard – Lobby</title>
+  <style>
+    body{margin:0;background:#0f1115;color:#eaeef6;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
+    .top{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);background:#121622;position:sticky;top:0}
+    .brand{font-weight:800;letter-spacing:.5px}
+    .me{color:rgba(234,238,246,.75);font-size:13px}
+    .wrap{max-width:980px;margin:0 auto;padding:16px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media (max-width:860px){.grid{grid-template-columns:1fr}}
+    .card{background:#161a22;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:14px}
+    h2{margin:0 0 10px;font-size:16px}
+    input,button{font:inherit}
+    input{width:100%;padding:10px 11px;border-radius:10px;border:1px solid rgba(255,255,255,.10);background:#0f1218;color:#eaeef6;outline:none}
+    input:focus{border-color:rgba(120,170,255,.55);box-shadow:0 0 0 3px rgba(120,170,255,.12)}
+    button{padding:10px 12px;border-radius:10px;border:0;background:#4c7dff;color:white;font-weight:700;cursor:pointer}
+    button:hover{filter:brightness(1.05)}
+    .row{display:flex;gap:10px;align-items:center}
+    .row > *{flex:1}
+    .list{display:flex;flex-direction:column;gap:10px}
+    .room{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 10px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:#0f1218}
+    .rname{font-weight:700}
+    .meta{font-size:12px;color:rgba(234,238,246,.65)}
+    .pill{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:12px;padding:4px 8px;border-radius:999px;background:rgba(120,170,255,.14);border:1px solid rgba(120,170,255,.25)}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .ghost{background:#2b354e}
+    a{color:#8fb1ff;text-decoration:none}
+    .small{font-size:12px;color:rgba(234,238,246,.65)}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand">WarBoard</div>
+    <div class="row" style="flex:0;gap:8px;">
+      <div class="me" id="me">…</div>
+      <button class="ghost" id="logoutBtn" style="flex:0;">Logout</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="grid">
+      <div class="card">
+        <h2>Create a new table</h2>
+        <div class="row">
+          <input id="newName" placeholder="Room name (e.g., The Tavern)"/>
+          <button id="createBtn" style="flex:0;">Create</button>
+        </div>
+        <p class="small">You’ll get a join code to share with your players. (No collisions, no drama.)</p>
+      </div>
+
+      <div class="card">
+        <h2>Join with a code</h2>
+        <div class="row">
+          <input id="joinCode" placeholder="WARB-XXXXXX"/>
+          <button id="joinBtn" style="flex:0;">Join</button>
+        </div>
+        <div class="small" id="joinMsg"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;">
+      <h2>Your recent tables</h2>
+      <div class="list" id="rooms"></div>
+      <div class="small" style="margin-top:10px;">Tip: send your DM a join link like <span class="pill">https://warboard.app/join/WARB-ABC123</span></div>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  const meEl = document.getElementById('me');
+  const roomsEl = document.getElementById('rooms');
+  const joinMsg = document.getElementById('joinMsg');
+
+  async function api(url, opts){
+    const res = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+    return data;
+  }
+
+  async function refresh(){
+    const me = await api('/api/me');
+    meEl.textContent = 'Logged in as: ' + me.username;
+
+    const data = await api('/api/my/rooms');
+    roomsEl.innerHTML = '';
+    if(!data.rooms.length){
+      roomsEl.innerHTML = '<div class="small">No rooms yet. Create one or join one.</div>';
+      return;
+    }
+    for(const r of data.rooms){
+      const div = document.createElement('div');
+      div.className='room';
+      const left = document.createElement('div');
+      left.innerHTML = '<div class="rname"></div><div class="meta"></div>';
+      left.querySelector('.rname').textContent = r.name + (r.role==='owner' ? ' (GM)' : '');
+      left.querySelector('.meta').textContent = r.join_code ? ('Join code: ' + r.join_code) : ('Room ID: ' + r.room_id);
+
+      const right = document.createElement('div');
+      right.className='actions';
+      const openBtn = document.createElement('button');
+      openBtn.textContent='Open';
+      openBtn.onclick = ()=> location.href = '/static/test_canvas.html?room=' + encodeURIComponent(r.room_id);
+      right.appendChild(openBtn);
+
+      if(r.join_code){
+        const copyBtn = document.createElement('button');
+        copyBtn.className='ghost';
+        copyBtn.textContent='Copy join link';
+        copyBtn.onclick = async ()=>{
+          const link = location.origin + '/join/' + r.join_code;
+          try{ await navigator.clipboard.writeText(link); copyBtn.textContent='Copied'; setTimeout(()=>copyBtn.textContent='Copy join link', 1000); }
+          catch(e){ alert(link); }
+        };
+        right.appendChild(copyBtn);
+      }
+
+      div.appendChild(left);
+      div.appendChild(right);
+      roomsEl.appendChild(div);
+    }
+  }
+
+  document.getElementById('createBtn').onclick = async ()=>{
+    const name = document.getElementById('newName').value.trim() || 'Untitled Room';
+    const data = await api('/api/rooms', {method:'POST', body: JSON.stringify({name})});
+    location.href = '/static/test_canvas.html?room=' + encodeURIComponent(data.room_id);
+  };
+
+  document.getElementById('joinBtn').onclick = async ()=>{
+    joinMsg.textContent = '';
+    const code = document.getElementById('joinCode').value.trim().toUpperCase();
+    try{
+      const data = await api('/api/join', {method:'POST', body: JSON.stringify({code})});
+      location.href = '/static/test_canvas.html?room=' + encodeURIComponent(data.room_id);
+    }catch(e){
+      joinMsg.textContent = e.message;
+    }
+  };
+
+  document.getElementById('logoutBtn').onclick = async ()=>{
+    await fetch('/api/auth/logout', {method:'POST'});
+    location.href = '/static/login.html';
+  };
+
+  await refresh();
+})();
+</script>
+</body>
+</html>
