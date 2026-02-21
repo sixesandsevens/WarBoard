@@ -2551,10 +2551,31 @@
       const showLabel = id === selectedTokenId || id === hoveredTokenId;
       if (showLabel) {
         const label = (t.name || "Token").slice(0, 18);
-        ctx.fillStyle = "rgba(0,0,0,0.75)";
-        ctx.font = `${Math.max(12, 12 * cam.z)}px system-ui, sans-serif`;
+        const fontSize = Math.max(14, 14 * cam.z);
+        ctx.font = `700 ${fontSize}px system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
+        const metrics = ctx.measureText(label);
+        const textWidth = metrics.width;
+        const textHeight = fontSize;
+        const padX = Math.max(8, 6 * cam.z);
+        const padY = Math.max(4, 3 * cam.z);
+        const boxW = textWidth + padX * 2;
+        const boxH = textHeight + padY * 2;
+        const boxX = s.x - boxW / 2;
+        const boxY = s.y - boxH / 2;
+        const radius = Math.max(8, boxH * 0.35);
+
+        ctx.beginPath();
+        ctx.roundRect(boxX, boxY, boxW, boxH, radius);
+        ctx.fillStyle = "rgba(0,0,0,0.72)";
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(255,255,255,0.32)";
+        ctx.lineWidth = Math.max(1, cam.z * 0.9);
+        ctx.stroke();
+
+        ctx.fillStyle = "#fff";
         ctx.fillText(label, s.x, s.y);
       }
       ctx.restore();
