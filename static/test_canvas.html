@@ -828,13 +828,14 @@
   const TOKEN_BADGE_IDS = new Set(TOKEN_BADGES.map((b) => b.id));
 
   function log(line) {
+    if (!logEl) return;
     logEl.textContent += line + "\n";
     logEl.scrollTop = logEl.scrollHeight;
   }
 
   function setLogCollapsed(collapsed) {
-    logWrapEl.classList.toggle("collapsed", !!collapsed);
-    logToggleEl.textContent = collapsed ? "Maximize" : "Minimize";
+    if (logWrapEl) logWrapEl.classList.toggle("collapsed", !!collapsed);
+    if (logToggleEl) logToggleEl.textContent = collapsed ? "Maximize" : "Minimize";
   }
 
   function apiUrl(path, includeGm = false) {
@@ -3876,11 +3877,25 @@
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => activateDrawerTab(btn.dataset.tab, true));
   });
-  mountDrawerPanels();
+  try {
+    mountDrawerPanels();
+  } catch (e) {
+    console.error("mountDrawerPanels failed", e);
+    log(`UI INIT ERROR: ${e?.message || e}`);
+  }
   [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler].forEach((btn) => {
+    if (!btn) return;
     btn.onclick = () => setTool(btn.dataset.tool);
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
     btn.addEventListener("mouseleave", hideTooltip);
+  });
+  window.addEventListener("error", (e) => {
+    const msg = e?.message || "unknown";
+    log(`JS ERROR: ${msg}`);
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    const msg = e?.reason?.message || String(e?.reason || "unknown");
+    log(`PROMISE ERROR: ${msg}`);
   });
   [document.getElementById("spawn"), document.getElementById("undo"), document.getElementById("redo")].forEach((btn) => {
     if (!btn) return;
@@ -3888,9 +3903,11 @@
     btn.addEventListener("mouseleave", hideTooltip);
   });
   sessionPill.addEventListener("click", openSessionModal);
-  logToggleEl.addEventListener("click", () => {
-    setLogCollapsed(!logWrapEl.classList.contains("collapsed"));
-  });
+  if (logToggleEl && logWrapEl) {
+    logToggleEl.addEventListener("click", () => {
+      setLogCollapsed(!logWrapEl.classList.contains("collapsed"));
+    });
+  }
   sessionModalClose.addEventListener("click", closeSessionModal);
   sessionModalBackdrop.addEventListener("click", closeSessionModal);
   sessionLoginBtn.addEventListener("click", async () => {
