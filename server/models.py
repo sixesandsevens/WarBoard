@@ -26,6 +26,7 @@ EventType = Literal[
     "STROKE_SET_LOCK",
     "ERASE_AT",
     "SHAPE_ADD",
+    "SHAPE_UPDATE",
     "SHAPE_DELETE",
     "SHAPE_SET_LOCK",
     "ERROR",

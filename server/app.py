@@ -618,7 +618,7 @@ async def ws_room(ws: WebSocket, room_id: str):
                 await ws.send_text(WireEvent(type="ERROR", payload={"message": "rate limited"}).model_dump_json())
                 continue
 
-            if event.type in ("TOKEN_MOVE", "ERASE_AT") and not _allow_rate("move" if event.type == "TOKEN_MOVE" else "erase"):
+            if event.type in ("TOKEN_MOVE", "SHAPE_UPDATE", "ERASE_AT") and not _allow_rate("erase" if event.type == "ERASE_AT" else "move"):
                 await ws.send_text(WireEvent(type="ERROR", payload={"message": "rate limited"}).model_dump_json())
                 continue
 

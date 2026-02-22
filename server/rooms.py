@@ -554,6 +554,47 @@ class RoomManager:
             self._mark_dirty(room_id, room)
             return WireEvent(type="SHAPE_ADD", payload=shape.model_dump())
 
+        if t == "SHAPE_UPDATE":
+            sid = p.get("id")
+            shape = room.state.shapes.get(sid)
+            if not shape:
+                return WireEvent(type="ERROR", payload={"message": "Unknown shape", "id": sid})
+            if not self._is_gm(room, user_id, client_id):
+                return WireEvent(type="ERROR", payload={"message": "Only GM can edit shapes"})
+
+            if bool(p.get("commit", False)):
+                self._push_history(room)
+
+            changed = False
+            for key in ("x1", "y1", "x2", "y2"):
+                if key in p:
+                    setattr(shape, key, float(p.get(key)))
+                    changed = True
+
+            if "color" in p:
+                shape.color = str(p.get("color") or shape.color)
+                changed = True
+
+            if shape.type == "text":
+                if "text" in p:
+                    txt = str(p.get("text") or "").strip()
+                    if not txt:
+                        return WireEvent(type="ERROR", payload={"message": "Text is required"})
+                    shape.text = txt
+                    changed = True
+                if "font_size" in p:
+                    try:
+                        fs = float(p.get("font_size"))
+                    except (TypeError, ValueError):
+                        return WireEvent(type="ERROR", payload={"message": "Invalid font size"})
+                    shape.font_size = max(8.0, min(96.0, fs))
+                    changed = True
+
+            if changed:
+                room.state.shapes[sid] = shape
+                self._mark_dirty(room_id, room)
+            return WireEvent(type="SHAPE_UPDATE", payload=shape.model_dump())
+
         if t == "SHAPE_SET_LOCK":
             # GM only
             if not self._is_gm(room, user_id, client_id):

@@ -1837,6 +1837,7 @@
     "STROKE_SET_LOCK",
     "ERASE_AT",
     "SHAPE_ADD",
+    "SHAPE_UPDATE",
     "SHAPE_DELETE",
     "SHAPE_SET_LOCK",
   ]);
@@ -1855,6 +1856,7 @@
     "STROKE_SET_LOCK",
     "ERASE_AT",
     "SHAPE_ADD",
+    "SHAPE_UPDATE",
     "SHAPE_DELETE",
     "SHAPE_SET_LOCK",
   ]);
@@ -1899,9 +1901,12 @@
   const ui = { gridSize: 50, snap: true, showGrid: true, feetPerSq: 5, tokenSpawnScale: 1.0 };
 
   let draggingTokenId = null;
+  let draggingShapeId = null;
   let selectedTokenId = null;
+  let selectedShapeId = null;
   let hoveredTokenId = null;
   let dragOffset = { x: 0, y: 0 };
+  let shapeDragOrigin = null;
   let isPanning = false;
   let isShiftDown = false;
   let panStart = { sx: 0, sy: 0, camX: 0, camY: 0 };
@@ -2572,6 +2577,56 @@
     return best;
   }
 
+  function pointToSegmentDistance(wx, wy, x1, y1, x2, y2) {
+    const vx = x2 - x1;
+    const vy = y2 - y1;
+    const len2 = vx * vx + vy * vy;
+    if (len2 <= 0) return Math.hypot(wx - x1, wy - y1);
+    let t = ((wx - x1) * vx + (wy - y1) * vy) / len2;
+    t = clamp(t, 0, 1);
+    const px = x1 + t * vx;
+    const py = y1 + t * vy;
+    return Math.hypot(wx - px, wy - py);
+  }
+
+  function shapeContainsPoint(sh, wx, wy) {
+    const tol = Math.max(6 / cam.z, (sh.width || 3) * 0.8);
+    if (sh.type === "line") {
+      return pointToSegmentDistance(wx, wy, sh.x1, sh.y1, sh.x2, sh.y2) <= tol;
+    }
+    if (sh.type === "rect") {
+      const minx = Math.min(sh.x1, sh.x2) - tol;
+      const maxx = Math.max(sh.x1, sh.x2) + tol;
+      const miny = Math.min(sh.y1, sh.y2) - tol;
+      const maxy = Math.max(sh.y1, sh.y2) + tol;
+      return wx >= minx && wx <= maxx && wy >= miny && wy <= maxy;
+    }
+    if (sh.type === "circle") {
+      const r = Math.hypot(sh.x2 - sh.x1, sh.y2 - sh.y1);
+      const d = Math.hypot(wx - sh.x1, wy - sh.y1);
+      return d <= r + tol;
+    }
+    if (sh.type === "text") {
+      const fs = clamp(Number(sh.font_size || 20), 8, 96);
+      const txt = String(sh.text || "").trim() || "Text";
+      const w = Math.max(fs, txt.length * fs * 0.6);
+      const h = fs * 1.2;
+      return wx >= sh.x1 - tol && wx <= sh.x1 + w + tol && wy >= sh.y1 - tol && wy <= sh.y1 + h + tol;
+    }
+    return false;
+  }
+
+  function hitTestShape(wx, wy) {
+    const order = state.draw_order?.shapes || [];
+    for (let i = order.length - 1; i >= 0; i--) {
+      const id = order[i];
+      const sh = state.shapes.get(id);
+      if (!sh) continue;
+      if (shapeContainsPoint(sh, wx, wy)) return id;
+    }
+    return null;
+  }
+
   function updateHoveredToken(wx, wy) {
     const next = draggingTokenId || hitTestToken(wx, wy);
     if (next === hoveredTokenId) return;
@@ -2746,6 +2801,27 @@
       const sh = state.shapes.get(id);
       if (!sh) continue;
       drawOneShape(sh, false);
+      if (id === selectedShapeId) {
+        const a = worldToScreen(sh.x1, sh.y1);
+        const b = worldToScreen(sh.x2, sh.y2);
+        ctx.save();
+        ctx.strokeStyle = "#00d1ff";
+        ctx.lineWidth = Math.max(1.5, cam.z);
+        if (sh.type === "text") {
+          const fs = clamp(Number(sh.font_size || 20), 8, 96) * cam.z;
+          const txt = String(sh.text || "").trim() || "Text";
+          const w = Math.max(fs, txt.length * fs * 0.6);
+          const h = fs * 1.2;
+          ctx.strokeRect(a.x - 4, a.y - 4, w + 8, h + 8);
+        } else {
+          const left = Math.min(a.x, b.x) - 4;
+          const top = Math.min(a.y, b.y) - 4;
+          const w = Math.abs(a.x - b.x) + 8;
+          const h = Math.abs(a.y - b.y) + 8;
+          ctx.strokeRect(left, top, w, h);
+        }
+        ctx.restore();
+      }
     }
     if (activeShapePreview) drawOneShape(activeShapePreview, true);
   }
@@ -2984,6 +3060,7 @@
     for (const id of state.shapes.keys()) if (!state.draw_order.shapes.includes(id)) state.draw_order.shapes.push(id);
 
     if (selectedTokenId && !state.tokens.has(selectedTokenId)) selectedTokenId = null;
+    if (selectedShapeId && !state.shapes.has(selectedShapeId)) selectedShapeId = null;
     if (hoveredTokenId && !state.tokens.has(hoveredTokenId)) hoveredTokenId = null;
     players.add(myId());
     if (state.gm_id) players.add(state.gm_id);
@@ -3027,7 +3104,7 @@
   const OFFLINE_HISTORY_LIMIT = 50;
   const OFFLINE_MUTATION_TYPES = new Set([
     "ROOM_SETTINGS", "TOKEN_CREATE", "TOKEN_DELETE", "TOKEN_ASSIGN", "TOKEN_RENAME", "TOKEN_SET_SIZE", "TOKEN_SET_LOCK",
-    "TOKEN_BADGE_TOGGLE", "TOKEN_MOVE", "STROKE_ADD", "STROKE_DELETE", "STROKE_SET_LOCK", "ERASE_AT", "SHAPE_ADD", "SHAPE_DELETE", "SHAPE_SET_LOCK",
+    "TOKEN_BADGE_TOGGLE", "TOKEN_MOVE", "STROKE_ADD", "STROKE_DELETE", "STROKE_SET_LOCK", "ERASE_AT", "SHAPE_ADD", "SHAPE_UPDATE", "SHAPE_DELETE", "SHAPE_SET_LOCK",
   ]);
 
   function saveOfflineStateNow() {
@@ -3286,6 +3363,18 @@
       return;
     }
 
+    if (type === "SHAPE_UPDATE") {
+      const p = payload;
+      if (p?.id) {
+        state.shapes.set(p.id, { ...(state.shapes.get(p.id) || {}), ...p });
+        if (!state.draw_order.shapes.includes(p.id)) state.draw_order.shapes.push(p.id);
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
     if (type === "SHAPE_DELETE") {
       const sid = payload?.id;
       state.shapes.delete(sid);
@@ -3417,7 +3506,10 @@
     state.shapes.clear();
     state.draw_order = { strokes: [], shapes: [] };
     selectedTokenId = null;
+    selectedShapeId = null;
     hoveredTokenId = null;
+    draggingShapeId = null;
+    shapeDragOrigin = null;
     dragSpawn = null;
     dragSpawnWorld = null;
     dragSpawnOverCanvas = false;
@@ -3704,6 +3796,17 @@
           state.shapes.set(p.id, p);
           state.draw_order.shapes = state.draw_order.shapes.filter((id) => id !== p.id);
           state.draw_order.shapes.push(p.id);
+        }
+        refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "SHAPE_UPDATE") {
+        const p = ev.payload;
+        if (p?.id) {
+          state.shapes.set(p.id, { ...(state.shapes.get(p.id) || {}), ...p });
+          if (!state.draw_order.shapes.includes(p.id)) state.draw_order.shapes.push(p.id);
         }
         refreshGmUI();
         requestRender();
@@ -4287,6 +4390,27 @@
       }
       return;
     }
+    const shapeHit = hitTestShape(wpos.x, wpos.y);
+    if (shapeHit) {
+      selectedShapeId = shapeHit;
+      selectedTokenId = null;
+      const sh = state.shapes.get(shapeHit);
+      if (sh && isGM()) {
+        if (sh.type === "text") {
+          const nextText = prompt("Edit text:", String(sh.text || ""));
+          if (nextText !== null) {
+            const trimmed = nextText.trim();
+            if (trimmed) send("SHAPE_UPDATE", { id: shapeHit, text: trimmed, commit: true });
+          }
+        }
+        const nextColor = prompt("Shape color (#rrggbb):", String(sh.color || "#ffffff"));
+        if (nextColor !== null && nextColor.trim()) {
+          send("SHAPE_UPDATE", { id: shapeHit, color: nextColor.trim(), commit: true });
+        }
+      }
+      requestRender();
+      return;
+    }
     closeTokenMenu();
     const t = tool();
     if (t === "pen") {
@@ -4346,12 +4470,23 @@
 
     if (t === "move") {
       const hit = hitTestToken(wpos.x, wpos.y);
+      const shapeHit = hit ? null : hitTestShape(wpos.x, wpos.y);
       selectedTokenId = hit;
+      selectedShapeId = shapeHit;
       if (hit) {
         draggingTokenId = hit;
+        draggingShapeId = null;
+        shapeDragOrigin = null;
         const tok = state.tokens.get(hit);
         dragOffset.x = wpos.x - tok.x;
         dragOffset.y = wpos.y - tok.y;
+      } else if (shapeHit && isGM()) {
+        draggingShapeId = shapeHit;
+        draggingTokenId = null;
+        const sh = state.shapes.get(shapeHit);
+        if (sh) {
+          shapeDragOrigin = { wx: wpos.x, wy: wpos.y, x1: sh.x1, y1: sh.y1, x2: sh.x2, y2: sh.y2 };
+        }
       }
       requestRender();
       return;
@@ -4453,6 +4588,29 @@
       if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
         lastMoveSentAt = now;
         send("TOKEN_MOVE", { id: draggingTokenId, x, y, commit: false });
+      }
+      return;
+    }
+
+    if (t === "move" && draggingShapeId && shapeDragOrigin) {
+      const sh = state.shapes.get(draggingShapeId);
+      if (!sh) return;
+      const dx = wpos.x - shapeDragOrigin.wx;
+      const dy = wpos.y - shapeDragOrigin.wy;
+      let x1 = shapeDragOrigin.x1 + dx;
+      let y1 = shapeDragOrigin.y1 + dy;
+      let x2 = shapeDragOrigin.x2 + dx;
+      let y2 = shapeDragOrigin.y2 + dy;
+      if (ui.snap) {
+        x1 = snap(x1); y1 = snap(y1); x2 = snap(x2); y2 = snap(y2);
+      }
+      sh.x1 = x1; sh.y1 = y1; sh.x2 = x2; sh.y2 = y2;
+      state.shapes.set(draggingShapeId, sh);
+      requestRender();
+      const now = Date.now();
+      if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
+        lastMoveSentAt = now;
+        send("SHAPE_UPDATE", { id: draggingShapeId, x1, y1, x2, y2, commit: false });
       }
       return;
     }
@@ -4559,13 +4717,22 @@
     isPanning = false;
     const t = tool();
     const movedTokenId = draggingTokenId;
+    const movedShapeId = draggingShapeId;
     draggingTokenId = null;
+    draggingShapeId = null;
 
     if (t === "move" && movedTokenId) {
       const tok = state.tokens.get(movedTokenId);
       if (tok) {
         send("TOKEN_MOVE", { id: movedTokenId, x: tok.x, y: tok.y, commit: true });
       }
+    }
+    if (t === "move" && movedShapeId) {
+      const sh = state.shapes.get(movedShapeId);
+      if (sh) {
+        send("SHAPE_UPDATE", { id: movedShapeId, x1: sh.x1, y1: sh.y1, x2: sh.x2, y2: sh.y2, commit: true });
+      }
+      shapeDragOrigin = null;
     }
 
     if (t === "eraser") {
