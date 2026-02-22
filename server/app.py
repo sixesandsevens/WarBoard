@@ -103,6 +103,11 @@ def _ws_user(ws: WebSocket):
 
 
 def _cookie_secure(req: Request) -> bool:
+    # Prefer reverse-proxy signal when present (e.g., nginx terminates TLS).
+    forwarded_proto = req.headers.get("x-forwarded-proto", "")
+    if forwarded_proto:
+        proto = forwarded_proto.split(",", 1)[0].strip().lower()
+        return proto == "https"
     # Local dev runs on http://127.0.0.1; secure cookies there break ws:// auth.
     return req.url.scheme == "https"
 
@@ -354,7 +359,8 @@ async def create_room(req: Request):
     for _ in range(20):
         candidate = ensure_unique_join_code()
         try:
-            initial = RoomState(room_id=room_id, gm_id=user.username, gm_user_id=user.user_id)
+            # Persist immutable GM identity; display gm_id is claimed by active WS session.
+            initial = RoomState(room_id=room_id, gm_id=None, gm_user_id=user.user_id)
             create_room_record(room_id=room_id, name=name, state_json=initial.model_dump_json(), owner_user_id=user.user_id, join_code=candidate)
             join_code = candidate
             break
