@@ -258,6 +258,9 @@ class RoomManager:
         t = event.type
         p = event.payload
 
+        if t == "REQ_STATE_SYNC":
+            return WireEvent(type="STATE_SYNC", payload=room.state.model_dump(exclude={"gm_key_hash"}))
+
         if t == "UNDO":
             if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can undo"})

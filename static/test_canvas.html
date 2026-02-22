@@ -1596,6 +1596,29 @@
     scheduleOfflineSave();
   }
 
+  function markInboundChange() {
+    lastInboundChangeTs = Date.now();
+  }
+
+  function ensureStaleWatchdog() {
+    if (staleSyncTimer) return;
+    staleSyncTimer = setInterval(() => {
+      if (!online || !ws || ws.readyState !== WebSocket.OPEN) return;
+      // If no state-changing messages arrive for a while, request an authoritative sync.
+      const age = Date.now() - lastInboundChangeTs;
+      const sinceLastReq = Date.now() - lastResyncRequestTs;
+      if (age > 10000 && sinceLastReq > 10000) {
+        lastResyncRequestTs = Date.now();
+        try {
+          ws.send(JSON.stringify({ type: "REQ_STATE_SYNC", payload: {} }));
+          log("No recent updates detected; requested state sync.");
+        } catch (e) {
+          console.error("REQ_STATE_SYNC send failed", e);
+        }
+      }
+    }, 5000);
+  }
+
   function renderPackGrid() {
     const q = packState.search.toLowerCase().trim();
     const rows = packState.tokens.filter((t) => {
@@ -1715,8 +1738,32 @@
   }
 
   let ws = null;
+  let wsConnectSeq = 0;
+  let appInitialized = false;
   let heartbeatTimer = null;
+  let staleSyncTimer = null;
+  let lastInboundChangeTs = Date.now();
+  let lastResyncRequestTs = 0;
   const players = new Set();
+  const STATE_CHANGE_EVENTS = new Set([
+    "STATE_SYNC",
+    "ROOM_SETTINGS",
+    "TOKEN_CREATE",
+    "TOKEN_MOVE",
+    "TOKEN_DELETE",
+    "TOKEN_ASSIGN",
+    "TOKEN_RENAME",
+    "TOKEN_SET_SIZE",
+    "TOKEN_SET_LOCK",
+    "TOKEN_BADGE_TOGGLE",
+    "STROKE_ADD",
+    "STROKE_DELETE",
+    "STROKE_SET_LOCK",
+    "ERASE_AT",
+    "SHAPE_ADD",
+    "SHAPE_DELETE",
+    "SHAPE_SET_LOCK",
+  ]);
 
   const state = {
     room_id: null,
@@ -3261,7 +3308,12 @@
   }
 
   function connectWS(force = false) {
-    if (ws && ws.readyState === 1) {
+    if (!appInitialized) {
+      log("Connect deferred: app not initialized yet.");
+      return;
+    }
+
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       if (!force) {
         log("Already connected.");
         return;
@@ -3275,18 +3327,24 @@
     const proto = (location.protocol === "https:") ? "wss" : "ws";
     const url = `${proto}://${location.host}/ws/${room}?client_id=${cid}`;
 
-    ws = new WebSocket(url);
-    ws.onopen = () => {
+    const thisWs = new WebSocket(url);
+    const thisSeq = ++wsConnectSeq;
+    ws = thisWs;
+    thisWs.onopen = () => {
+      if (ws !== thisWs || thisSeq !== wsConnectSeq) return;
       online = true;
+      markInboundChange();
       log(`connected: ${url}`);
       updateSessionPill();
       refreshSessionModalAuth();
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = setInterval(() => {
-        if (ws && ws.readyState === 1) send("HEARTBEAT", { ts: Date.now() });
+        if (ws === thisWs && thisWs.readyState === 1) send("HEARTBEAT", { ts: Date.now() });
       }, 10000);
     };
-    ws.onclose = (ev) => {
+    thisWs.onclose = (ev) => {
+      if (ws !== thisWs || thisSeq !== wsConnectSeq) return;
+      ws = null;
       online = false;
       const reason = (ev && ev.reason) ? ` (${ev.reason})` : "";
       log(`disconnected (code ${ev.code})${reason}`);
@@ -3300,10 +3358,24 @@
         heartbeatTimer = null;
       }
     };
-    ws.onerror = () => { log("ws error"); updateSessionPill(); refreshSessionModalAuth(); };
+    thisWs.onerror = () => {
+      if (ws !== thisWs || thisSeq !== wsConnectSeq) return;
+      log("ws error");
+      updateSessionPill();
+      refreshSessionModalAuth();
+    };
 
-    ws.onmessage = (msg) => {
-      const ev = JSON.parse(msg.data);
+    thisWs.onmessage = (msg) => {
+      if (ws !== thisWs || thisSeq !== wsConnectSeq) return;
+      let ev = null;
+      try {
+        ev = JSON.parse(msg.data);
+      } catch (e) {
+        console.error("WS parse failed", e, msg?.data);
+        return;
+      }
+      try {
+      if (STATE_CHANGE_EVENTS.has(ev.type)) markInboundChange();
 
       if (ev.type === "STATE_SYNC") {
         applyStateSync(ev.payload);
@@ -3540,6 +3612,9 @@
         log(`ERROR: ${ev.payload.message}`);
         return;
       }
+      } catch (e) {
+        console.error("WS dispatch failed", ev, e);
+      }
     };
 
     refreshSnapshotsPanel();
@@ -3671,14 +3746,19 @@
   refreshToolButtons();
   updateCanvasCursor();
   (async () => {
-    await loadMe();
-    if (!restoreOfflineState()) {
-      applyStateSync(currentStateSnapshot());
+    try {
+      await loadMe();
+      if (!restoreOfflineState()) {
+        applyStateSync(currentStateSnapshot());
+      }
+      ensureOfflineGm();
+      refreshSessionModalAuth();
+      updateSessionPill();
+      saveOfflineStateNow();
+      ensureStaleWatchdog();
+    } finally {
+      appInitialized = true;
     }
-    ensureOfflineGm();
-    refreshSessionModalAuth();
-    updateSessionPill();
-    saveOfflineStateNow();
   })();
   toolColorPicker.addEventListener("input", () => {
     colorEl.value = toolColorPicker.value;

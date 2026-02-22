@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import time
 import uuid
 from collections import deque
@@ -55,6 +56,7 @@ rm = RoomManager()
 HEARTBEAT_TIMEOUT_SECONDS = 35.0
 SESSION_COOKIE = "warboard_sid"
 PASSWORD_CONTEXT = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
+LOG = logging.getLogger("warboard.ws")
 
 
 def _hash_key(raw: str) -> str:
@@ -591,6 +593,14 @@ async def ws_room(ws: WebSocket, room_id: str):
         while True:
             raw = await asyncio.wait_for(ws.receive_text(), timeout=HEARTBEAT_TIMEOUT_SECONDS)
             event = WireEvent.model_validate_json(raw)
+            LOG.info(
+                "ws_in room=%s client=%s type=%s gm=%s conns=%d",
+                room_id,
+                client_id,
+                event.type,
+                room.state.gm_id or "",
+                len(room.sockets),
+            )
 
             if event.type == "HEARTBEAT":
                 await ws.send_text(WireEvent(type="HEARTBEAT", payload={"ts": time.time()}).model_dump_json())

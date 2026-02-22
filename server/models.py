@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 EventType = Literal[
     "HEARTBEAT",
+    "REQ_STATE_SYNC",
     "HELLO",
     "PRESENCE",
     "STATE_SYNC",
