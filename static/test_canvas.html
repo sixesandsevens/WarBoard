@@ -1153,6 +1153,7 @@
     toolColorPanel.classList.add("hidden");
     toolSizePanel.classList.add("hidden");
     toolTextPanel.classList.add("hidden");
+    textPanelTargetShapeId = null;
   }
 
   function showFloatingToolPanel(panelEl, x, y) {
@@ -1182,7 +1183,12 @@
   }
 
   function openToolTextPanel() {
-    toolTextInput.value = String(ui.textDraft || "");
+    if (textPanelTargetShapeId) {
+      const sh = state.shapes.get(textPanelTargetShapeId);
+      toolTextInput.value = String(sh?.text || ui.textDraft || "");
+    } else {
+      toolTextInput.value = String(ui.textDraft || "");
+    }
     showFloatingToolPanel(toolTextPanel, lastCtxClientPos.x + 8, lastCtxClientPos.y + 8);
     try { toolTextInput.focus(); toolTextInput.select(); } catch {}
   }
@@ -1466,6 +1472,7 @@
         refreshUI();
         break;
       case "text_set_content":
+        textPanelTargetShapeId = (selectedShapeId && state.shapes.get(selectedShapeId)?.type === "text") ? selectedShapeId : null;
         openToolTextPanel();
         break;
       case "text_size_16":
@@ -1490,6 +1497,13 @@
         break;
       }
       case "text_color_custom":
+        if (selectedShapeId && isGM()) {
+          const sh = state.shapes.get(selectedShapeId);
+          if (sh) {
+            send("SHAPE_UPDATE", { id: selectedShapeId, color: String(colorEl.value || "#ffffff"), commit: true });
+            break;
+          }
+        }
         openToolColorPanel("Text Color");
         break;
       case "ruler_feet_5":
@@ -1989,6 +2003,7 @@
   let dragSpawn = null;
   let dragSpawnWorld = null;
   let dragSpawnOverCanvas = false;
+  let textPanelTargetShapeId = null;
   let tokenMenuTokenId = null;
   let mapCtxWorld = null;
   let ctxSubHideTimer = null;
@@ -3954,7 +3969,16 @@
   });
   const applyTextDraft = () => {
     const v = String(toolTextInput?.value || "").trim();
-    ui.textDraft = v || "Text";
+    if (textPanelTargetShapeId && isGM()) {
+      const sh = state.shapes.get(textPanelTargetShapeId);
+      if (sh && sh.type === "text") {
+        const next = v || sh.text || "Text";
+        send("SHAPE_UPDATE", { id: textPanelTargetShapeId, text: next, commit: true });
+      }
+    } else {
+      ui.textDraft = v || "Text";
+    }
+    textPanelTargetShapeId = null;
     refreshToolContextChecks();
   };
   if (toolTextApply) toolTextApply.addEventListener("click", () => {
@@ -4474,6 +4498,33 @@
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
     const wpos = screenToWorld(sx, sy);
+    const t = tool();
+
+    // Tool-first menus: if a tool has its own context menu, always show it.
+    if (t === "text") {
+      selectedTokenId = null;
+      selectedShapeId = hitTestShape(wpos.x, wpos.y);
+      closeTokenMenu();
+      showContextMenu(textCtx, e.clientX, e.clientY);
+      requestRender();
+      return;
+    }
+    if (t === "pen") {
+      closeTokenMenu();
+      showContextMenu(penCtx, e.clientX, e.clientY);
+      return;
+    }
+    if (t === "rect" || t === "circle" || t === "line") {
+      closeTokenMenu();
+      showContextMenu(shapeCtx, e.clientX, e.clientY);
+      return;
+    }
+    if (t === "ruler") {
+      closeTokenMenu();
+      showContextMenu(rulerCtx, e.clientX, e.clientY);
+      return;
+    }
+
     const hit = hitTestToken(wpos.x, wpos.y);
     if (hit) {
       if (isGM()) {
@@ -4492,41 +4543,11 @@
     if (shapeHit) {
       selectedShapeId = shapeHit;
       selectedTokenId = null;
-      const sh = state.shapes.get(shapeHit);
-      if (sh && isGM()) {
-        if (sh.type === "text") {
-          const nextText = prompt("Edit text:", String(sh.text || ""));
-          if (nextText !== null) {
-            const trimmed = nextText.trim();
-            if (trimmed) send("SHAPE_UPDATE", { id: shapeHit, text: trimmed, commit: true });
-          }
-        }
-        const nextColor = prompt("Shape color (#rrggbb):", String(sh.color || "#ffffff"));
-        if (nextColor !== null && nextColor.trim()) {
-          send("SHAPE_UPDATE", { id: shapeHit, color: nextColor.trim(), commit: true });
-        }
-      }
+      // Select shape; no browser prompts from context click.
       requestRender();
       return;
     }
     closeTokenMenu();
-    const t = tool();
-    if (t === "pen") {
-      showContextMenu(penCtx, e.clientX, e.clientY);
-      return;
-    }
-    if (t === "rect" || t === "circle" || t === "line") {
-      showContextMenu(shapeCtx, e.clientX, e.clientY);
-      return;
-    }
-    if (t === "text") {
-      showContextMenu(textCtx, e.clientX, e.clientY);
-      return;
-    }
-    if (t === "ruler") {
-      showContextMenu(rulerCtx, e.clientX, e.clientY);
-      return;
-    }
     mapCtxWorld = { x: wpos.x, y: wpos.y };
     showMapMenu(e.clientX, e.clientY);
   });
