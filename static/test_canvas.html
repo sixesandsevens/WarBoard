@@ -562,6 +562,17 @@
       <div class="ctx-item" data-action="shape_color_custom">Custom color...</div>
       <div class="ctx-item" data-action="shape_toggle_snap">Toggle Snap</div>
     </div>
+    <div id="textCtx" class="ctx hidden" role="menu" aria-label="Text menu">
+      <div class="ctx-title">Text</div>
+      <div class="ctx-item" data-action="text_set_content">Set text...</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="text_size_16">Size 16</div>
+      <div class="ctx-item" data-action="text_size_24">Size 24</div>
+      <div class="ctx-item" data-action="text_size_32">Size 32</div>
+      <div class="ctx-item" data-action="text_size_custom">Custom size...</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="text_color_custom">Text color...</div>
+    </div>
     <div id="rulerCtx" class="ctx hidden" role="menu" aria-label="Ruler menu">
       <div class="ctx-title">Ruler</div>
       <div class="ctx-item" data-action="ruler_feet_5">Set 5 ft/sq</div>
@@ -582,6 +593,15 @@
       <div style="padding:8px 10px; display:flex; flex-direction:column; gap:8px;">
         <input id="toolSizeSlider" type="range" min="1" max="30" step="1" value="3">
         <div id="toolSizeValue" style="font-size:12px; opacity:.85;">3</div>
+      </div>
+    </div>
+    <div id="toolTextPanel" class="ctx hidden" role="dialog" aria-label="Text content">
+      <div class="ctx-title">Text Content</div>
+      <div style="padding:8px 10px; display:flex; flex-direction:column; gap:8px;">
+        <input id="toolTextInput" type="text" maxlength="120" placeholder="Enter label text..." style="padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.18); background:#121212; color:#eee;">
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button id="toolTextApply" class="ghost" type="button">Apply</button>
+        </div>
       </div>
     </div>
     <div id="uiTooltip" class="ui-tooltip hidden"></div>
@@ -753,6 +773,7 @@
   const mapCtxClear = document.getElementById("mapCtx-clear");
   const penCtx = document.getElementById("penCtx");
   const shapeCtx = document.getElementById("shapeCtx");
+  const textCtx = document.getElementById("textCtx");
   const rulerCtx = document.getElementById("rulerCtx");
   const toolColorPanel = document.getElementById("toolColorPanel");
   const toolColorTitle = document.getElementById("toolColorTitle");
@@ -761,8 +782,11 @@
   const toolSizeTitle = document.getElementById("toolSizeTitle");
   const toolSizeSlider = document.getElementById("toolSizeSlider");
   const toolSizeValue = document.getElementById("toolSizeValue");
+  const toolTextPanel = document.getElementById("toolTextPanel");
+  const toolTextInput = document.getElementById("toolTextInput");
+  const toolTextApply = document.getElementById("toolTextApply");
   const uiTooltip = document.getElementById("uiTooltip");
-  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, rulerCtx];
+  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, textCtx, rulerCtx];
   const playerListEl = document.getElementById("playerList");
   const tokenListEl = document.getElementById("tokenList");
   const strokeListEl = document.getElementById("strokeList");
@@ -1128,6 +1152,7 @@
   function hideToolPanels() {
     toolColorPanel.classList.add("hidden");
     toolSizePanel.classList.add("hidden");
+    toolTextPanel.classList.add("hidden");
   }
 
   function showFloatingToolPanel(panelEl, x, y) {
@@ -1138,7 +1163,8 @@
 
   function isClickInsideToolPanel(target) {
     return !toolColorPanel.classList.contains("hidden") && toolColorPanel.contains(target)
-      || !toolSizePanel.classList.contains("hidden") && toolSizePanel.contains(target);
+      || !toolSizePanel.classList.contains("hidden") && toolSizePanel.contains(target)
+      || !toolTextPanel.classList.contains("hidden") && toolTextPanel.contains(target);
   }
 
   function openToolColorPanel(title = "Color") {
@@ -1153,6 +1179,12 @@
     toolSizeSlider.value = String(Math.round(size));
     toolSizeValue.textContent = String(Math.round(size));
     showFloatingToolPanel(toolSizePanel, lastCtxClientPos.x + 8, lastCtxClientPos.y + 8);
+  }
+
+  function openToolTextPanel() {
+    toolTextInput.value = String(ui.textDraft || "");
+    showFloatingToolPanel(toolTextPanel, lastCtxClientPos.x + 8, lastCtxClientPos.y + 8);
+    try { toolTextInput.focus(); toolTextInput.select(); } catch {}
   }
 
   function hideCtxSubs() {
@@ -1232,6 +1264,9 @@
     setCtxChecked("shape_size_4", size === 4);
     setCtxChecked("shape_size_8", size === 8);
     setCtxChecked("shape_toggle_snap", snapOn);
+    setCtxChecked("text_size_16", Number(ui.textFontSize || 24) === 16);
+    setCtxChecked("text_size_24", Number(ui.textFontSize || 24) === 24);
+    setCtxChecked("text_size_32", Number(ui.textFontSize || 24) === 32);
 
     setCtxChecked("ruler_feet_5", feet === 5);
     setCtxChecked("ruler_feet_10", feet === 10);
@@ -1429,6 +1464,33 @@
       case "shape_toggle_snap":
         snapEl.checked = !snapEl.checked;
         refreshUI();
+        break;
+      case "text_set_content":
+        openToolTextPanel();
+        break;
+      case "text_size_16":
+        ui.textFontSize = 16;
+        refreshToolContextChecks();
+        break;
+      case "text_size_24":
+        ui.textFontSize = 24;
+        refreshToolContextChecks();
+        break;
+      case "text_size_32":
+        ui.textFontSize = 32;
+        refreshToolContextChecks();
+        break;
+      case "text_size_custom": {
+        const raw = prompt("Text size (8-96):", String(ui.textFontSize || 24));
+        if (raw == null) break;
+        const n = clamp(Number(raw), 8, 96);
+        if (!Number.isFinite(n)) break;
+        ui.textFontSize = n;
+        refreshToolContextChecks();
+        break;
+      }
+      case "text_color_custom":
+        openToolColorPanel("Text Color");
         break;
       case "ruler_feet_5":
         feetPerSqEl.value = "5";
@@ -1648,6 +1710,7 @@
       }
     }
     scheduleOfflineSave();
+    refreshToolContextChecks();
   }
 
   function markInboundChange() {
@@ -1899,7 +1962,7 @@
   }
 
   const cam = { x: 80, y: 60, z: 1 };
-  const ui = { gridSize: 50, snap: true, showGrid: true, feetPerSq: 5, tokenSpawnScale: 1.0 };
+  const ui = { gridSize: 50, snap: true, showGrid: true, feetPerSq: 5, tokenSpawnScale: 1.0, textDraft: "Text", textFontSize: 24 };
 
   let draggingTokenId = null;
   let draggingShapeId = null;
@@ -3889,6 +3952,24 @@
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
     btn.addEventListener("mouseleave", hideTooltip);
   });
+  const applyTextDraft = () => {
+    const v = String(toolTextInput?.value || "").trim();
+    ui.textDraft = v || "Text";
+    refreshToolContextChecks();
+  };
+  if (toolTextApply) toolTextApply.addEventListener("click", () => {
+    applyTextDraft();
+    hideToolPanels();
+  });
+  if (toolTextInput) {
+    toolTextInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        applyTextDraft();
+        hideToolPanels();
+      }
+    });
+  }
   window.addEventListener("error", (e) => {
     const msg = e?.message || "unknown";
     log(`JS ERROR: ${msg}`);
@@ -4438,6 +4519,10 @@
       showContextMenu(shapeCtx, e.clientX, e.clientY);
       return;
     }
+    if (t === "text") {
+      showContextMenu(textCtx, e.clientX, e.clientY);
+      return;
+    }
     if (t === "ruler") {
       showContextMenu(rulerCtx, e.clientX, e.clientY);
       return;
@@ -4532,13 +4617,7 @@
     }
 
     if (t === "text") {
-      if (pointerCaptured) {
-        try { canvas.releasePointerCapture(e.pointerId); } catch {}
-        pointerCaptured = false;
-      }
-      const raw = prompt("Text label:", "");
-      if (raw == null) return;
-      const text = raw.trim();
+      const text = String(ui.textDraft || "").trim();
       if (!text) return;
       const x = ui.snap ? snap(wpos.x) : wpos.x;
       const y = ui.snap ? snap(wpos.y) : wpos.y;
@@ -4550,7 +4629,7 @@
         x2: x,
         y2: y,
         text,
-        font_size: clamp(Number(sizeEl.value || "3") * 6, 10, 48),
+        font_size: clamp(Number(ui.textFontSize || 24), 8, 96),
         color: brushColor(),
         width: 1,
         fill: false,
