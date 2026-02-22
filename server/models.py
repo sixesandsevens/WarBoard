@@ -61,13 +61,15 @@ class Stroke(BaseModel):
 
 class Shape(BaseModel):
     id: str
-    type: Literal["rect", "circle", "line"]
+    type: Literal["rect", "circle", "line", "text"]
     x1: float
     y1: float
     x2: float
     y2: float
     color: str = "#ffffff"
     width: float = 3.0
+    text: Optional[str] = None
+    font_size: float = 20.0
     fill: bool = False
     locked: bool = False
     layer: Literal["map", "draw", "notes"] = "draw"

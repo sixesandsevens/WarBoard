@@ -33,14 +33,40 @@
     #log {
       position:absolute; left:10px; bottom:10px;
       width:min(560px, calc(100vw - 20px));
-      max-height: 180px; overflow:auto;
+      max-height: 200px;
       background: rgba(0,0,0,0.6);
       border: 1px solid rgba(255,255,255,0.12);
-      padding: 8px;
+      display: flex;
+      flex-direction: column;
       font-family: ui-monospace, monospace;
       font-size: 12px;
-      white-space: pre-wrap;
       z-index: 2;
+    }
+    #logHeader {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding: 6px 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.10);
+      font-size: 11px;
+      opacity: 0.9;
+      user-select: none;
+    }
+    #logText {
+      padding: 8px;
+      overflow: auto;
+      white-space: pre-wrap;
+      max-height: 150px;
+    }
+    #log.collapsed #logText { display: none; }
+    #log.collapsed { max-height: none; width: 230px; }
+    #logToggle {
+      padding: 2px 8px;
+      font-size: 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.06);
+      color: #ddd;
     }
     #hint {
       position:absolute; right:10px; bottom:10px;
@@ -225,6 +251,14 @@
     }
     .session-pill.ok{ border-color: rgba(0,255,120,0.25); }
     .session-pill.bad{ border-color: rgba(255,80,80,0.25); }
+    .session-resync {
+      font-size: 11px;
+      opacity: 0.85;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.06);
+    }
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -299,12 +333,14 @@
     <div class="top-left">
       <button id="drawerToggle" class="drawer-toggle">☰</button>
       <div id="sessionPill" class="session-pill bad">○ Disconnected</div>
+      <div id="sessionResyncBadge" class="session-resync hidden">Resyncing...</div>
     </div>
     <div class="top-center">
       <div class="tool-strip">
         <button id="toolBtnMove" class="tool-btn" data-tool="move" data-tip="Move tokens">🖐 Move</button>
         <button id="toolBtnPen" class="tool-btn" data-tool="pen" data-tip="Draw freehand">✏️ Pen</button>
         <button id="toolBtnShape" class="tool-btn" data-tool="shape" data-tip="Draw shapes">⬛ Shape</button>
+        <button id="toolBtnText" class="tool-btn" data-tool="text" data-tip="Place text label">🔤 Text</button>
         <button id="toolBtnErase" class="tool-btn" data-tool="eraser" data-tip="Erase drawings">🧽 Erase</button>
         <button id="toolBtnRuler" class="tool-btn" data-tool="ruler" data-tip="Measure distance">📏 Ruler</button>
       </div>
@@ -352,6 +388,7 @@
         <option value="rect">Rect</option>
         <option value="circle">Circle</option>
         <option value="line">Line</option>
+        <option value="text">Text</option>
         <option value="ruler">Ruler</option>
       </select>
     </label>
@@ -652,7 +689,13 @@
       </div>
     </div>
 
-    <div id="log"></div>
+    <div id="log">
+      <div id="logHeader">
+        <span>Activity Log</span>
+        <button id="logToggle" type="button">Minimize</button>
+      </div>
+      <div id="logText"></div>
+    </div>
     <div id="hint">
       <div><span class="pill">Left-drag</span> act with tool</div>
       <div><span class="pill">Right-drag</span> pan</div>
@@ -667,7 +710,9 @@
 <script>
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
-  const logEl = document.getElementById("log");
+  const logEl = document.getElementById("logText");
+  const logWrapEl = document.getElementById("log");
+  const logToggleEl = document.getElementById("logToggle");
 
   const roomEl = document.getElementById("room");
   const cidEl = document.getElementById("cid");
@@ -736,9 +781,11 @@
   const toolBtnMove = document.getElementById("toolBtnMove");
   const toolBtnPen = document.getElementById("toolBtnPen");
   const toolBtnShape = document.getElementById("toolBtnShape");
+  const toolBtnText = document.getElementById("toolBtnText");
   const toolBtnErase = document.getElementById("toolBtnErase");
   const toolBtnRuler = document.getElementById("toolBtnRuler");
   const sessionPill = document.getElementById("sessionPill");
+  const sessionResyncBadge = document.getElementById("sessionResyncBadge");
   const sessionModal = document.getElementById("sessionModal");
   const sessionModalBackdrop = document.getElementById("sessionModalBackdrop");
   const sessionModalClose = document.getElementById("sessionModalClose");
@@ -783,6 +830,11 @@
   function log(line) {
     logEl.textContent += line + "\n";
     logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function setLogCollapsed(collapsed) {
+    logWrapEl.classList.toggle("collapsed", !!collapsed);
+    logToggleEl.textContent = collapsed ? "Maximize" : "Minimize";
   }
 
   function apiUrl(path, includeGm = false) {
@@ -1014,6 +1066,7 @@
       <div><b>V</b> Move tool</div>
       <div><b>P</b> Pen tool</div>
       <div><b>S</b> Shape tool</div>
+      <div><b>T</b> Text tool</div>
       <div><b>E</b> Eraser tool</div>
       <div><b>R</b> Ruler tool</div>
       <div><b>D</b> Toggle Downed badge (GM, selected token)</div>
@@ -1565,7 +1618,7 @@
       canvas.style.cursor = "grab";
       return;
     }
-    if (t === "pen" || t === "rect" || t === "circle" || t === "line" || t === "ruler") {
+    if (t === "pen" || t === "rect" || t === "circle" || t === "line" || t === "text" || t === "ruler") {
       canvas.style.cursor = "crosshair";
       return;
     }
@@ -1600,19 +1653,40 @@
     lastInboundChangeTs = Date.now();
   }
 
+  function showResyncBadge() {
+    if (!sessionResyncBadge) return;
+    sessionResyncBadge.classList.remove("hidden");
+    if (resyncBadgeTimer) clearTimeout(resyncBadgeTimer);
+    resyncBadgeTimer = setTimeout(() => {
+      hideResyncBadge();
+    }, 2000);
+  }
+
+  function hideResyncBadge() {
+    if (!sessionResyncBadge) return;
+    sessionResyncBadge.classList.add("hidden");
+    if (resyncBadgeTimer) {
+      clearTimeout(resyncBadgeTimer);
+      resyncBadgeTimer = null;
+    }
+  }
+
   function ensureStaleWatchdog() {
     if (staleSyncTimer) return;
     staleSyncTimer = setInterval(() => {
       if (!online || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!seenInboundMutationSinceConnect) return;
       // If no state-changing messages arrive for a while, request an authoritative sync.
       const age = Date.now() - lastInboundChangeTs;
       const sinceLastReq = Date.now() - lastResyncRequestTs;
       if (age > 10000 && sinceLastReq > 10000) {
         lastResyncRequestTs = Date.now();
         try {
+          showResyncBadge();
           ws.send(JSON.stringify({ type: "REQ_STATE_SYNC", payload: {} }));
           log("No recent updates detected; requested state sync.");
         } catch (e) {
+          hideResyncBadge();
           console.error("REQ_STATE_SYNC send failed", e);
         }
       }
@@ -1744,9 +1818,29 @@
   let staleSyncTimer = null;
   let lastInboundChangeTs = Date.now();
   let lastResyncRequestTs = 0;
+  let resyncBadgeTimer = null;
+  let seenInboundMutationSinceConnect = false;
   const players = new Set();
   const STATE_CHANGE_EVENTS = new Set([
     "STATE_SYNC",
+    "ROOM_SETTINGS",
+    "TOKEN_CREATE",
+    "TOKEN_MOVE",
+    "TOKEN_DELETE",
+    "TOKEN_ASSIGN",
+    "TOKEN_RENAME",
+    "TOKEN_SET_SIZE",
+    "TOKEN_SET_LOCK",
+    "TOKEN_BADGE_TOGGLE",
+    "STROKE_ADD",
+    "STROKE_DELETE",
+    "STROKE_SET_LOCK",
+    "ERASE_AT",
+    "SHAPE_ADD",
+    "SHAPE_DELETE",
+    "SHAPE_SET_LOCK",
+  ]);
+  const WATCHDOG_MUTATION_EVENTS = new Set([
     "ROOM_SETTINGS",
     "TOKEN_CREATE",
     "TOKEN_MOVE",
@@ -2627,6 +2721,22 @@
       return;
     }
 
+    if (sh.type === "text") {
+      const fontSize = clamp(Number(sh.font_size || 20), 8, 96) * cam.z;
+      const text = String(sh.text || "").trim() || (isPreview ? "Text" : "");
+      if (!text) {
+        ctx.restore();
+        return;
+      }
+      ctx.font = `${fontSize}px ui-monospace, monospace`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillStyle = sh.color || "#fff";
+      ctx.fillText(text, a.x, a.y);
+      ctx.restore();
+      return;
+    }
+
     ctx.restore();
   }
 
@@ -3029,6 +3139,13 @@
       const dist = Math.hypot(cx - ox, cy - oy);
       return dist <= rad + r;
     }
+    if (shape.type === "text") {
+      const ox = Number(shape.x1 || 0);
+      const oy = Number(shape.y1 || 0);
+      const fontSize = clamp(Number(shape.font_size || 20), 8, 96);
+      const dist = Math.hypot(cx - ox, cy - oy);
+      return dist <= r + Math.max(8, fontSize * 0.6);
+    }
     return false;
   }
 
@@ -3333,7 +3450,9 @@
     thisWs.onopen = () => {
       if (ws !== thisWs || thisSeq !== wsConnectSeq) return;
       online = true;
+      hideResyncBadge();
       markInboundChange();
+      seenInboundMutationSinceConnect = false;
       log(`connected: ${url}`);
       updateSessionPill();
       refreshSessionModalAuth();
@@ -3346,6 +3465,8 @@
       if (ws !== thisWs || thisSeq !== wsConnectSeq) return;
       ws = null;
       online = false;
+      hideResyncBadge();
+      seenInboundMutationSinceConnect = false;
       const reason = (ev && ev.reason) ? ` (${ev.reason})` : "";
       log(`disconnected (code ${ev.code})${reason}`);
       if (ev.code === 1008) {
@@ -3376,8 +3497,10 @@
       }
       try {
       if (STATE_CHANGE_EVENTS.has(ev.type)) markInboundChange();
+      if (WATCHDOG_MUTATION_EVENTS.has(ev.type)) seenInboundMutationSinceConnect = true;
 
       if (ev.type === "STATE_SYNC") {
+        hideResyncBadge();
         applyStateSync(ev.payload);
         log(`STATE_SYNC v${state.version} gm=${state.gm_id} strokes=${state.strokes.size} shapes=${state.shapes.size}`);
         updateSessionPill();
@@ -3651,7 +3774,7 @@
     btn.addEventListener("click", () => activateDrawerTab(btn.dataset.tab, true));
   });
   mountDrawerPanels();
-  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnErase, toolBtnRuler].forEach((btn) => {
+  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler].forEach((btn) => {
     btn.onclick = () => setTool(btn.dataset.tool);
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
     btn.addEventListener("mouseleave", hideTooltip);
@@ -3662,6 +3785,9 @@
     btn.addEventListener("mouseleave", hideTooltip);
   });
   sessionPill.addEventListener("click", openSessionModal);
+  logToggleEl.addEventListener("click", () => {
+    setLogCollapsed(!logWrapEl.classList.contains("collapsed"));
+  });
   sessionModalClose.addEventListener("click", closeSessionModal);
   sessionModalBackdrop.addEventListener("click", closeSessionModal);
   sessionLoginBtn.addEventListener("click", async () => {
@@ -3743,6 +3869,7 @@
     });
   });
   updateSessionPill();
+  setLogCollapsed(false);
   refreshToolButtons();
   updateCanvasCursor();
   (async () => {
@@ -4037,6 +4164,7 @@
     toolBtnMove.classList.toggle("active", t === "move");
     toolBtnPen.classList.toggle("active", t === "pen");
     toolBtnShape.classList.toggle("active", isShapeTool(t));
+    toolBtnText.classList.toggle("active", t === "text");
     toolBtnErase.classList.toggle("active", t === "eraser");
     toolBtnRuler.classList.toggle("active", t === "ruler");
   }
@@ -4053,6 +4181,7 @@
       if (current === "move") flashToolActivate(toolBtnMove);
       else if (current === "pen") flashToolActivate(toolBtnPen);
       else if (isShapeTool(current)) flashToolActivate(toolBtnShape);
+      else if (current === "text") flashToolActivate(toolBtnText);
       else if (current === "eraser") flashToolActivate(toolBtnErase);
       else if (current === "ruler") flashToolActivate(toolBtnRuler);
     }
@@ -4076,6 +4205,7 @@
       if (k === "v") { setTool("move"); e.preventDefault(); return; }
       if (k === "p") { setTool("pen"); e.preventDefault(); return; }
       if (k === "s") { setTool("shape"); e.preventDefault(); return; }
+      if (k === "t") { setTool("text"); e.preventDefault(); return; }
       if (k === "e") { setTool("eraser"); e.preventDefault(); return; }
       if (k === "r") { setTool("ruler"); e.preventDefault(); return; }
     }
@@ -4246,6 +4376,35 @@
     if (t === "rect" || t === "circle" || t === "line") {
       activeShapePreview = { id: makeId(), type: t, x1: wpos.x, y1: wpos.y, x2: wpos.x, y2: wpos.y, color: brushColor(), width: brushSize(), fill: false, locked: false, layer: "draw" };
       requestRender();
+      return;
+    }
+
+    if (t === "text") {
+      if (pointerCaptured) {
+        try { canvas.releasePointerCapture(e.pointerId); } catch {}
+        pointerCaptured = false;
+      }
+      const raw = prompt("Text label:", "");
+      if (raw == null) return;
+      const text = raw.trim();
+      if (!text) return;
+      const x = ui.snap ? snap(wpos.x) : wpos.x;
+      const y = ui.snap ? snap(wpos.y) : wpos.y;
+      send("SHAPE_ADD", {
+        id: makeId(),
+        type: "text",
+        x1: x,
+        y1: y,
+        x2: x,
+        y2: y,
+        text,
+        font_size: clamp(Number(sizeEl.value || "3") * 6, 10, 48),
+        color: brushColor(),
+        width: 1,
+        fill: false,
+        locked: false,
+        layer: "draw",
+      });
       return;
     }
 

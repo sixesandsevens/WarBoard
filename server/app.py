@@ -573,16 +573,24 @@ async def ws_room(ws: WebSocket, room_id: str):
 
     move_times: deque[float] = deque()
     erase_times: deque[float] = deque()
+    req_sync_times: deque[float] = deque()
 
     def _allow_rate(kind: str) -> bool:
         now = time.time()
         if kind == "move":
             q = move_times
             limit = 60
+            window = 1.0
         else:
-            q = erase_times
-            limit = 30
-        while q and now - q[0] > 1.0:
+            if kind == "erase":
+                q = erase_times
+                limit = 30
+                window = 1.0
+            else:
+                q = req_sync_times
+                limit = 6
+                window = 30.0
+        while q and now - q[0] > window:
             q.popleft()
         if len(q) >= limit:
             return False
@@ -593,17 +601,21 @@ async def ws_room(ws: WebSocket, room_id: str):
         while True:
             raw = await asyncio.wait_for(ws.receive_text(), timeout=HEARTBEAT_TIMEOUT_SECONDS)
             event = WireEvent.model_validate_json(raw)
-            LOG.info(
-                "ws_in room=%s client=%s type=%s gm=%s conns=%d",
-                room_id,
-                client_id,
-                event.type,
-                room.state.gm_id or "",
-                len(room.sockets),
-            )
+            log_msg = "ws_in room=%s client=%s type=%s gm=%s conns=%d"
+            log_args = (room_id, client_id, event.type, room.state.gm_id or "", len(room.sockets))
+            if event.type == "HEARTBEAT":
+                LOG.debug(log_msg, *log_args)
+            elif event.type == "TOKEN_MOVE" and not bool(event.payload.get("commit", False)):
+                LOG.debug(log_msg, *log_args)
+            else:
+                LOG.info(log_msg, *log_args)
 
             if event.type == "HEARTBEAT":
                 await ws.send_text(WireEvent(type="HEARTBEAT", payload={"ts": time.time()}).model_dump_json())
+                continue
+
+            if event.type == "REQ_STATE_SYNC" and not _allow_rate("sync"):
+                await ws.send_text(WireEvent(type="ERROR", payload={"message": "rate limited"}).model_dump_json())
                 continue
 
             if event.type in ("TOKEN_MOVE", "ERASE_AT") and not _allow_rate("move" if event.type == "TOKEN_MOVE" else "erase"):

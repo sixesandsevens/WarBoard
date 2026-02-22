@@ -224,6 +224,10 @@ class RoomManager:
             radius = math.hypot(shape.x2 - shape.x1, shape.y2 - shape.y1)
             dist = math.hypot(cx - shape.x1, cy - shape.y1)
             return dist <= radius + r
+        if shape.type == "text":
+            # Text is point-anchored; use loose hit radius for eraser.
+            dist = math.hypot(cx - shape.x1, cy - shape.y1)
+            return dist <= r + max(8.0, float(shape.font_size) * 0.6)
 
         return False
 
@@ -516,11 +520,18 @@ class RoomManager:
         if t == "SHAPE_ADD":
             sid = p.get("id")
             stype = p.get("type")
-            if stype not in ("rect", "circle", "line"):
+            if stype not in ("rect", "circle", "line", "text"):
                 return WireEvent(type="ERROR", payload={"message": "Invalid shape type"})
             layer = p.get("layer", "draw")
             if layer not in ("map", "draw", "notes"):
                 layer = "draw"
+            text_val = None
+            font_size = float(p.get("font_size", 20.0))
+            if stype == "text":
+                text_val = str(p.get("text", "")).strip()
+                if not text_val:
+                    return WireEvent(type="ERROR", payload={"message": "Text is required"})
+                font_size = max(8.0, min(96.0, font_size))
 
             shape = Shape(
                 id=sid,
@@ -531,6 +542,8 @@ class RoomManager:
                 y2=float(p.get("y2", 0)),
                 color=p.get("color", "#ffffff"),
                 width=float(p.get("width", 3.0)),
+                text=text_val,
+                font_size=font_size,
                 fill=bool(p.get("fill", False)),
                 locked=bool(p.get("locked", False)),
                 layer=layer,
