@@ -21,7 +21,7 @@ def db_url() -> str:
     return f"sqlite:///{os.path.join(data_dir, 'warboard.db')}"
 
 
-engine = create_engine(db_url(), connect_args={"check_same_thread": False})
+engine = create_engine(db_url(), connect_args={"check_same_thread": False, "timeout": 3.0})
 
 
 # --- Core room persistence ----------------------------------------------------
@@ -77,7 +77,7 @@ def _sqlite_conn() -> sqlite3.Connection:
     url = str(engine.url)
     assert url.startswith("sqlite:///")
     path = url.replace("sqlite:///", "", 1)
-    return sqlite3.connect(path)
+    return sqlite3.connect(path, timeout=3.0)
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, col: str) -> bool:
@@ -96,6 +96,9 @@ def init_db() -> None:
     # Add columns to existing RoomMetaRow table if upgrading from earlier versions.
     try:
         conn = _sqlite_conn()
+        # Harden SQLite behavior for concurrent web requests.
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=3000;")
         conn.execute("PRAGMA foreign_keys=OFF;")
         # RoomMetaRow table name defaults to "roommetarow"
         table = "roommetarow"

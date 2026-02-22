@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from passlib.context import CryptContext
 
@@ -85,6 +85,25 @@ def _load_pack_manifest(pack_id: str) -> dict:
     return raw
 
 
+def _pack_manifest_path(pack_id: str) -> Path:
+    safe_id = _safe_pack_id(pack_id)
+    if not safe_id:
+        raise HTTPException(status_code=400, detail="Invalid pack id")
+    manifest_path = PACKS_DIR / safe_id / "manifest.json"
+    if not manifest_path.exists() or not manifest_path.is_file():
+        raise HTTPException(status_code=404, detail="Pack not found")
+    return manifest_path
+
+
+def _pack_cache_headers() -> dict:
+    return {"Cache-Control": "public, max-age=3600"}
+
+
+def _manifest_etag(manifest_path: Path) -> str:
+    st = manifest_path.stat()
+    return f'W/"{int(st.st_mtime)}-{st.st_size}"'
+
+
 def _get_user_from_request(req: Request):
     sid = req.cookies.get(SESSION_COOKIE, "")
     return get_user_by_sid(sid)
@@ -155,7 +174,7 @@ async def auth_gate(request: Request, call_next):
         return await call_next(request)
 
     # Public board + minimal unauth static for offline single-session mode.
-    if path == "/" or path == "/static/test_canvas.html" or path.startswith("/static/login") or path.startswith("/static/auth/") or path.startswith("/packs/"):
+    if path in ("/", "/favicon.ico") or path == "/static/test_canvas.html" or path.startswith("/static/canvas/") or path.startswith("/static/login") or path.startswith("/static/auth/") or path.startswith("/packs/"):
         return await call_next(request)
 
     # Public pack metadata for token library in offline mode.
@@ -172,7 +191,11 @@ async def auth_gate(request: Request, call_next):
             nxt = f"{nxt}?{request.url.query}"
         return RedirectResponse(url=f"/static/login.html?next={nxt}", status_code=302)
 
-    return await call_next(request)
+    resp = await call_next(request)
+    # Large pack/static payloads should be cacheable in browsers/CDNs.
+    if path.startswith("/packs/") and "cache-control" not in resp.headers:
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
 
 
 # ----------------------------- Pages ------------------------------------------
@@ -181,6 +204,11 @@ async def auth_gate(request: Request, call_next):
 def root(req: Request):
     # Offline-first landing: board loads immediately without auth.
     return FileResponse(str(STATIC_DIR / "test_canvas.html"))
+
+
+@app.head("/")
+def root_head() -> Response:
+    return Response(status_code=200)
 
 
 @app.get("/app")
@@ -291,7 +319,7 @@ def logout(req: Request):
 @app.get("/api/packs")
 def list_packs_api(req: Request):
     if not PACKS_DIR.exists():
-        return {"packs": []}
+        return JSONResponse({"packs": []}, headers=_pack_cache_headers())
 
     packs = []
     for entry in sorted(PACKS_DIR.iterdir(), key=lambda p: p.name.lower()):
@@ -314,12 +342,17 @@ def list_packs_api(req: Request):
                 "token_count": len(manifest.get("tokens") or []),
             }
         )
-    return {"packs": packs}
+    return JSONResponse({"packs": packs}, headers=_pack_cache_headers())
 
 
 @app.get("/api/packs/{pack_id}")
 def get_pack_api(pack_id: str, req: Request):
-    return _load_pack_manifest(pack_id)
+    manifest_path = _pack_manifest_path(pack_id)
+    etag = _manifest_etag(manifest_path)
+    if req.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={**_pack_cache_headers(), "ETag": etag})
+    manifest = _load_pack_manifest(pack_id)
+    return JSONResponse(manifest, headers={**_pack_cache_headers(), "ETag": etag})
 
 
 # ----------------------------- Rooms API --------------------------------------
