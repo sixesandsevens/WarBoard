@@ -76,6 +76,7 @@ class RoomState(BaseModel):
     room_id: str
     version: int = 0
     gm_id: Optional[str] = None
+    gm_user_id: Optional[int] = None
     allow_players_move: bool = False
     allow_all_move: bool = False
     lockdown: bool = False

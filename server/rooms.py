@@ -227,9 +227,15 @@ class RoomManager:
 
         return False
 
-    def can_move_token(self, room: Room, client_id: str, token: Token) -> bool:
+    def _is_gm(self, room: Room, user_id: Optional[int], client_id: str) -> bool:
+        if room.state.gm_user_id is not None and user_id is not None:
+            return room.state.gm_user_id == user_id
+        # Legacy fallback for old room states.
+        return bool(room.state.gm_id and client_id == room.state.gm_id)
+
+    def can_move_token(self, room: Room, user_id: Optional[int], client_id: str, token: Token) -> bool:
         # GM can move anything.
-        if room.state.gm_id and client_id == room.state.gm_id:
+        if self._is_gm(room, user_id, client_id):
             return True
 
         if room.state.lockdown:
@@ -248,12 +254,12 @@ class RoomManager:
 
         return False
 
-    async def apply_event(self, room_id: str, room: Room, event: WireEvent, client_id: str) -> WireEvent:
+    async def apply_event(self, room_id: str, room: Room, event: WireEvent, client_id: str, user_id: Optional[int] = None) -> WireEvent:
         t = event.type
         p = event.payload
 
         if t == "UNDO":
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can undo"})
             if not room.history:
                 return WireEvent(type="ERROR", payload={"message": "Nothing to undo"})
@@ -265,7 +271,7 @@ class RoomManager:
             return WireEvent(type="STATE_SYNC", payload=room.state.model_dump(exclude={"gm_key_hash"}))
 
         if t == "REDO":
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can redo"})
             if not room.future:
                 return WireEvent(type="ERROR", payload={"message": "Nothing to redo"})
@@ -306,7 +312,7 @@ class RoomManager:
             if not token:
                 return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
 
-            if not self.can_move_token(room, client_id, token):
+            if not self.can_move_token(room, user_id, client_id, token):
                 # Send authoritative position so clients can snap back from optimistic moves.
                 return WireEvent(
                     type="TOKEN_MOVE",
@@ -330,7 +336,7 @@ class RoomManager:
 
         if t == "ROOM_SETTINGS":
             # GM-only
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can change room settings"})
 
             self._push_history(room)
@@ -434,7 +440,7 @@ class RoomManager:
         if t == "STROKE_DELETE":
             if room.state.lockdown:
                 return WireEvent(type="ERROR", payload={"message": "Lockdown is enabled"})
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can delete strokes"})
             ids = p.get("ids")
             if not isinstance(ids, list):
@@ -451,7 +457,7 @@ class RoomManager:
             return WireEvent(type="STROKE_DELETE", payload={"ids": existing})
 
         if t == "STROKE_SET_LOCK":
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can lock strokes"})
             sid = p.get("id")
             stroke = room.state.strokes.get(sid)
@@ -467,7 +473,7 @@ class RoomManager:
             if room.state.lockdown:
                 return WireEvent(type="ERROR", payload={"message": "Lockdown is enabled"})
             # Erasing is destructive, so GM-only for now.
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can erase"})
 
             cx = float(p.get("x", 0))
@@ -534,7 +540,7 @@ class RoomManager:
 
         if t == "SHAPE_SET_LOCK":
             # GM only
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can lock shapes"})
             sid = p.get("id")
             shape = room.state.shapes.get(sid)
@@ -548,7 +554,7 @@ class RoomManager:
 
         if t == "SHAPE_DELETE":
             # GM only
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can delete shapes"})
             sid = p.get("id")
             if sid in room.state.shapes:
@@ -567,7 +573,7 @@ class RoomManager:
                 return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
 
             # only GM deletes (for now)
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can delete tokens", "id": token_id})
 
             self._push_history(room)
@@ -583,7 +589,7 @@ class RoomManager:
             if not token:
                 return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
 
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can assign tokens", "id": token_id})
 
             self._push_history(room)
@@ -597,7 +603,7 @@ class RoomManager:
             token = room.state.tokens.get(token_id)
             if not token:
                 return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can rename tokens", "id": token_id})
             name = str(p.get("name", "")).strip() or "Token"
             self._push_history(room)
@@ -611,7 +617,7 @@ class RoomManager:
             token = room.state.tokens.get(token_id)
             if not token:
                 return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can resize tokens", "id": token_id})
             try:
                 size_scale = float(p.get("size_scale", token.size_scale))
@@ -625,7 +631,7 @@ class RoomManager:
             return WireEvent(type="TOKEN_SET_SIZE", payload={"id": token_id, "size_scale": size_scale})
 
         if t == "TOKEN_SET_LOCK":
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can lock tokens"})
             token_id = p.get("id")
             token = room.state.tokens.get(token_id)
@@ -643,7 +649,7 @@ class RoomManager:
             token = room.state.tokens.get(token_id)
             if not token:
                 return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-            if not (room.state.gm_id and client_id == room.state.gm_id):
+            if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can edit token badges", "id": token_id})
             if badge not in VALID_TOKEN_BADGES:
                 return WireEvent(type="ERROR", payload={"message": "Invalid badge", "badge": badge})

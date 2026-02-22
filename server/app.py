@@ -37,6 +37,7 @@ from .storage import (
     room_id_from_join_code,
     save_room_state_json,
     touch_membership,
+    update_user_last_room,
     update_user_password_hash,
     update_room_name,
 )
@@ -148,8 +149,12 @@ async def auth_gate(request: Request, call_next):
     if path.startswith("/api/auth/") or path.startswith("/.well-known/acme-challenge/"):
         return await call_next(request)
 
-    # Allow login page & minimal assets (you can expand this list later).
-    if path in ("/static/login.html", "/static/login.css", "/static/login.js"):
+    # Root handles auth/no-auth redirect logic itself.
+    if path == "/":
+        return await call_next(request)
+
+    # Allow login page and auth-static assets.
+    if path.startswith("/static/login") or path.startswith("/static/auth/"):
         return await call_next(request)
 
     user = _get_user_from_request(request)
@@ -168,7 +173,12 @@ async def auth_gate(request: Request, call_next):
 # ----------------------------- Pages ------------------------------------------
 
 @app.get("/")
-def root():
+def root(req: Request):
+    user = _get_user_from_request(req)
+    if not user:
+        return RedirectResponse(url="/static/login.html?next=/", status_code=302)
+    if user.user_id is not None and user.last_room_id and is_member(user.user_id, user.last_room_id):
+        return RedirectResponse(url=f"/static/test_canvas.html?room={user.last_room_id}", status_code=302)
     return RedirectResponse(url="/app", status_code=302)
 
 
@@ -181,11 +191,14 @@ def app_dashboard(req: Request):
 @app.get("/join/{code}")
 def join_link(code: str, req: Request):
     user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
     room_id = room_id_from_join_code(code)
     if not room_id:
         raise HTTPException(status_code=404, detail="Invalid join code")
     add_membership(user.user_id, room_id, role="player")
     touch_membership(user.user_id, room_id)
+    update_user_last_room(user.user_id, room_id)
     return RedirectResponse(url=f"/static/test_canvas.html?room={room_id}", status_code=302)
 
 
@@ -194,7 +207,7 @@ def join_link(code: str, req: Request):
 @app.get("/api/me")
 def me(req: Request):
     user = _require_user(req)
-    return {"user_id": user.user_id, "username": user.username}
+    return {"user_id": user.user_id, "username": user.username, "last_room_id": user.last_room_id}
 
 
 @app.post("/api/auth/register")
@@ -329,6 +342,8 @@ def my_rooms(req: Request):
 @app.post("/api/rooms")
 async def create_room(req: Request):
     user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
     body = await req.json()
     name = str(body.get("name", "")).strip() or "Untitled Room"
     room_id = uuid.uuid4().hex[:8]
@@ -339,7 +354,7 @@ async def create_room(req: Request):
     for _ in range(20):
         candidate = ensure_unique_join_code()
         try:
-            initial = RoomState(room_id=room_id, gm_id=user.username)
+            initial = RoomState(room_id=room_id, gm_id=user.username, gm_user_id=user.user_id)
             create_room_record(room_id=room_id, name=name, state_json=initial.model_dump_json(), owner_user_id=user.user_id, join_code=candidate)
             join_code = candidate
             break
@@ -350,6 +365,7 @@ async def create_room(req: Request):
         raise HTTPException(status_code=500, detail="Failed to create room")
 
     add_membership(user.user_id, room_id, role="owner")
+    update_user_last_room(user.user_id, room_id)
     return {"room_id": room_id, "name": name, "join_code": join_code}
 
 
@@ -365,6 +381,8 @@ def ensure_unique_join_code() -> str:
 @app.post("/api/join")
 async def join_room(req: Request):
     user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
     body = await req.json()
     code = str(body.get("code") or "").strip().upper()
     room_id = room_id_from_join_code(code)
@@ -372,6 +390,7 @@ async def join_room(req: Request):
         raise HTTPException(status_code=404, detail="Invalid join code")
     add_membership(user.user_id, room_id, role="player")
     touch_membership(user.user_id, room_id)
+    update_user_last_room(user.user_id, room_id)
     return {"room_id": room_id}
 
 
@@ -456,6 +475,9 @@ async def ws_room(ws: WebSocket, room_id: str):
     if not user:
         await ws.close(code=1008)
         return
+    if user.user_id is None:
+        await ws.close(code=1008)
+        return
 
     # membership guard
     if not is_member(user.user_id, room_id):
@@ -467,6 +489,7 @@ async def ws_room(ws: WebSocket, room_id: str):
 
     client_id = user.username  # authoritative identity
     touch_membership(user.user_id, room_id)
+    update_user_last_room(user.user_id, room_id)
 
     room = await rm.connect(room_id, ws)
     rm.attach_client(room, ws, client_id)
@@ -474,16 +497,19 @@ async def ws_room(ws: WebSocket, room_id: str):
     # Owner automatically becomes GM for this room, otherwise fall back to GM key model.
     gm_claimed = False
     if _is_owner(user.user_id, room_id):
-        if room.state.gm_id != client_id:
+        if room.state.gm_user_id != user.user_id or room.state.gm_id != client_id:
             room.state.gm_id = client_id
+            room.state.gm_user_id = user.user_id
             gm_claimed = True
     else:
         if room.state.gm_key_hash is None and gm_key:
             room.state.gm_key_hash = _hash_key(gm_key)
             room.state.gm_id = client_id
+            room.state.gm_user_id = user.user_id
             gm_claimed = True
         elif room.state.gm_key_hash and gm_key and _hash_key(gm_key) == room.state.gm_key_hash:
             room.state.gm_id = client_id
+            room.state.gm_user_id = user.user_id
             gm_claimed = True
 
     if gm_claimed:
@@ -496,7 +522,7 @@ async def ws_room(ws: WebSocket, room_id: str):
             payload={
                 "client_id": client_id,
                 "room_id": room_id,
-                "is_gm": room.state.gm_id == client_id,
+                "is_gm": room.state.gm_user_id == user.user_id or room.state.gm_id == client_id,
                 "gm_key_set": bool(room.state.gm_key_hash),
                 "username": user.username,
             },
@@ -541,7 +567,7 @@ async def ws_room(ws: WebSocket, room_id: str):
                 await ws.send_text(WireEvent(type="ERROR", payload={"message": "rate limited"}).model_dump_json())
                 continue
 
-            out = await rm.apply_event(room_id, room, event, client_id)
+            out = await rm.apply_event(room_id, room, event, client_id, user.user_id)
             if out.type == "ERROR":
                 await ws.send_text(out.model_dump_json())
             else:

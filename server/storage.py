@@ -55,6 +55,7 @@ class UserRow(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     password_hash: str
     created_at: str
+    last_room_id: Optional[str] = Field(default=None, index=True)
 
 
 class SessionRow(SQLModel, table=True):
@@ -104,6 +105,11 @@ def init_db() -> None:
             if not _column_exists(conn, table, "join_code"):
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN join_code TEXT;")
                 conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS ix_roommetarow_join_code ON {table}(join_code);")
+        user_table = "userrow"
+        if _table_exists(conn, user_table):
+            if not _column_exists(conn, user_table, "last_room_id"):
+                conn.execute(f"ALTER TABLE {user_table} ADD COLUMN last_room_id TEXT;")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS ix_userrow_last_room_id ON {user_table}(last_room_id);")
         conn.commit()
     except Exception:
         # If anything goes sideways here, we don't want startup to fail; the app
@@ -245,6 +251,17 @@ def update_user_password_hash(user_id: int, password_hash: str) -> bool:
         if not user:
             return False
         user.password_hash = password_hash
+        s.add(user)
+        s.commit()
+        return True
+
+
+def update_user_last_room(user_id: int, room_id: Optional[str]) -> bool:
+    with Session(engine) as s:
+        user = s.get(UserRow, user_id)
+        if not user:
+            return False
+        user.last_room_id = room_id
         s.add(user)
         s.commit()
         return True
