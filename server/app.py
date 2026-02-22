@@ -154,12 +154,12 @@ async def auth_gate(request: Request, call_next):
     if path.startswith("/api/auth/") or path.startswith("/.well-known/acme-challenge/"):
         return await call_next(request)
 
-    # Root handles auth/no-auth redirect logic itself.
-    if path == "/":
+    # Public board + minimal unauth static for offline single-session mode.
+    if path == "/" or path == "/static/test_canvas.html" or path.startswith("/static/login") or path.startswith("/static/auth/") or path.startswith("/packs/"):
         return await call_next(request)
 
-    # Allow login page and auth-static assets.
-    if path.startswith("/static/login") or path.startswith("/static/auth/"):
+    # Public pack metadata for token library in offline mode.
+    if path == "/api/packs" or path.startswith("/api/packs/"):
         return await call_next(request)
 
     user = _get_user_from_request(request)
@@ -179,12 +179,8 @@ async def auth_gate(request: Request, call_next):
 
 @app.get("/")
 def root(req: Request):
-    user = _get_user_from_request(req)
-    if not user:
-        return RedirectResponse(url="/static/login.html?next=/", status_code=302)
-    if user.user_id is not None and user.last_room_id and is_member(user.user_id, user.last_room_id):
-        return RedirectResponse(url=f"/static/test_canvas.html?room={user.last_room_id}", status_code=302)
-    return RedirectResponse(url="/app", status_code=302)
+    # Offline-first landing: board loads immediately without auth.
+    return FileResponse(str(STATIC_DIR / "test_canvas.html"))
 
 
 @app.get("/app")
@@ -294,7 +290,6 @@ def logout(req: Request):
 
 @app.get("/api/packs")
 def list_packs_api(req: Request):
-    _require_user(req)
     if not PACKS_DIR.exists():
         return {"packs": []}
 
@@ -324,7 +319,6 @@ def list_packs_api(req: Request):
 
 @app.get("/api/packs/{pack_id}")
 def get_pack_api(pack_id: str, req: Request):
-    _require_user(req)
     return _load_pack_manifest(pack_id)
 
 

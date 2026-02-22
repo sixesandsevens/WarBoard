@@ -268,6 +268,7 @@
     }
     .field input {
       width: 100%;
+      box-sizing: border-box;
       padding: 8px 10px;
       border-radius: 10px;
       border: 1px solid rgba(255,255,255,0.12);
@@ -373,12 +374,37 @@
     <div id="sessionModalBackdrop" class="modal-backdrop hidden"></div>
     <div id="sessionModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Session">
       <div class="modal-header">
-        <div class="modal-title">Session</div>
+        <div id="sessionModalTitle" class="modal-title">Disconnected - Single Session Mode</div>
         <button id="sessionModalClose" class="modal-close">✕</button>
       </div>
       <div class="modal-body">
+        <div id="sessionStatusText" class="hint" style="margin-bottom:10px;">
+          Everything works locally. Log in to host or join a shared room.
+        </div>
+        <div id="sessionAuthBox">
+          <div class="field">
+            <label>Username</label>
+            <input id="sessionAuthUser" type="text" autocomplete="username" />
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input id="sessionAuthPass" type="password" autocomplete="current-password" />
+          </div>
+          <div class="modal-actions">
+            <button id="sessionLoginBtn" class="primary">Log In</button>
+            <button id="sessionRegisterBtn" class="ghost">Register</button>
+          </div>
+        </div>
+        <div id="sessionAccountBox" class="hidden">
+          <div id="sessionWhoami" class="hint"></div>
+          <div class="modal-actions">
+            <button id="sessionOpenLobbyBtn" class="primary">Open Account Panel</button>
+            <button id="sessionLogoutBtn" class="ghost">Log Out</button>
+          </div>
+        </div>
+        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:12px 0;">
         <div class="field">
-          <label>Room</label>
+          <label>Room (optional online room id)</label>
           <input id="sessionRoom" type="text" autocomplete="off" />
         </div>
         <div class="field">
@@ -386,7 +412,7 @@
           <input id="sessionClientId" type="text" autocomplete="off" />
         </div>
         <div class="modal-actions">
-          <button id="sessionConnectBtn" class="primary">Connect</button>
+          <button id="sessionConnectBtn" class="primary">Connect Room</button>
           <button id="sessionDisconnectBtn" class="ghost hidden">Disconnect</button>
         </div>
       </div>
@@ -645,17 +671,9 @@
 
   const roomEl = document.getElementById("room");
   const cidEl = document.getElementById("cid");
-  // Auth-backed identity: fill client id from /api/me (server is authoritative anyway)
-  (async () => {
-    try {
-      const me = await fetch("/api/me").then(r => r.json());
-      if (me && me.username) {
-        cidEl.value = me.username;
-        cidEl.disabled = true;
-        cidEl.title = "Logged in as " + me.username;
-      }
-    } catch (e) {}
-  })();
+  const OFFLINE_STATE_KEY = "warboard_offline_state_v1";
+  let online = false;
+  let me = null;
 
   // If launched from the lobby, auto-fill room from query (?room=xxxx)
   try {
@@ -724,6 +742,17 @@
   const sessionModal = document.getElementById("sessionModal");
   const sessionModalBackdrop = document.getElementById("sessionModalBackdrop");
   const sessionModalClose = document.getElementById("sessionModalClose");
+  const sessionModalTitleEl = document.getElementById("sessionModalTitle");
+  const sessionStatusTextEl = document.getElementById("sessionStatusText");
+  const sessionAuthBoxEl = document.getElementById("sessionAuthBox");
+  const sessionAccountBoxEl = document.getElementById("sessionAccountBox");
+  const sessionAuthUserEl = document.getElementById("sessionAuthUser");
+  const sessionAuthPassEl = document.getElementById("sessionAuthPass");
+  const sessionLoginBtn = document.getElementById("sessionLoginBtn");
+  const sessionRegisterBtn = document.getElementById("sessionRegisterBtn");
+  const sessionWhoamiEl = document.getElementById("sessionWhoami");
+  const sessionOpenLobbyBtn = document.getElementById("sessionOpenLobbyBtn");
+  const sessionLogoutBtn = document.getElementById("sessionLogoutBtn");
   const sessionRoomEl = document.getElementById("sessionRoom");
   const sessionClientEl = document.getElementById("sessionClientId");
   const sessionConnectBtn = document.getElementById("sessionConnectBtn");
@@ -785,6 +814,37 @@
     });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
+  }
+
+  function setAuthIdentity(user) {
+    me = user && user.username ? user : null;
+    if (me) {
+      cidEl.value = me.username;
+      cidEl.disabled = true;
+      cidEl.title = "Logged in as " + me.username;
+      sessionClientEl.value = me.username;
+      sessionClientEl.disabled = true;
+    } else {
+      cidEl.disabled = false;
+      cidEl.title = "";
+      sessionClientEl.disabled = false;
+    }
+  }
+
+  async function loadMe() {
+    try {
+      const res = await fetch("/api/me");
+      if (!res.ok) {
+        setAuthIdentity(null);
+        return null;
+      }
+      const user = await res.json();
+      setAuthIdentity(user);
+      return user;
+    } catch (e) {
+      setAuthIdentity(null);
+      return null;
+    }
   }
 
   function tokenImage(url) {
@@ -1166,9 +1226,11 @@
     const y = snap(wy);
     const size_scale = ui.tokenSpawnScale;
     const token = { id, x, y, name, color, image_url: null, size_scale, owner_id: null, locked: false, badges: [] };
-    state.tokens.set(id, token);
-    refreshGmUI();
-    requestRender();
+    if (online) {
+      state.tokens.set(id, token);
+      refreshGmUI();
+      requestRender();
+    }
     send("TOKEN_CREATE", token);
   }
 
@@ -1406,6 +1468,7 @@
   function openSessionModal() {
     sessionRoomEl.value = roomEl.value.trim() || "demo";
     sessionClientEl.value = cidEl.value.trim() || "player";
+    refreshSessionModalAuth();
     sessionModal.classList.remove("hidden");
     sessionModalBackdrop.classList.remove("hidden");
   }
@@ -1416,20 +1479,40 @@
   }
 
   function updateSessionPill() {
-    const connected = !!(ws && ws.readyState === 1);
+    const connected = online && !!(ws && ws.readyState === 1);
     const roomText = (state.room_id || roomEl.value.trim() || "demo");
     const cidText = myId() || "player";
     const role = isGM() ? "GM" : "Player";
     if (connected) {
-      sessionPill.textContent = `● ${roomText} • ${cidText} (${role})`;
+      sessionPill.textContent = `● Connected - ${roomText} • ${cidText} (${role})`;
       sessionPill.classList.add("ok");
       sessionPill.classList.remove("bad");
       sessionDisconnectBtn.classList.remove("hidden");
     } else {
-      sessionPill.textContent = "○ Disconnected";
+      sessionPill.textContent = "○ Disconnected - Single Session Mode";
       sessionPill.classList.add("bad");
       sessionPill.classList.remove("ok");
       sessionDisconnectBtn.classList.add("hidden");
+    }
+  }
+
+  function refreshSessionModalAuth() {
+    const connected = online && !!(ws && ws.readyState === 1);
+    if (connected) {
+      sessionModalTitleEl.textContent = `Connected - ${state.room_id || roomEl.value.trim() || "room"}`;
+      sessionStatusTextEl.textContent = isGM() ? "You are GM in this room." : "You are connected as Player.";
+    } else {
+      sessionModalTitleEl.textContent = "Disconnected - Single Session Mode";
+      sessionStatusTextEl.textContent = "Everything works locally. Log in to host or join a shared room.";
+    }
+    if (me && me.username) {
+      sessionAuthBoxEl.classList.add("hidden");
+      sessionAccountBoxEl.classList.remove("hidden");
+      sessionWhoamiEl.textContent = `Signed in as ${me.username}`;
+    } else {
+      sessionAuthBoxEl.classList.remove("hidden");
+      sessionAccountBoxEl.classList.add("hidden");
+      sessionWhoamiEl.textContent = "";
     }
   }
 
@@ -1502,12 +1585,15 @@
     if (selectedTokenId && isGM()) {
       const tok = state.tokens.get(selectedTokenId);
       if (tok) {
-        tok.size_scale = scale;
-        state.tokens.set(selectedTokenId, tok);
+        if (online) {
+          tok.size_scale = scale;
+          state.tokens.set(selectedTokenId, tok);
+        }
         send("TOKEN_SET_SIZE", { id: selectedTokenId, size_scale: scale });
-        requestRender();
+        if (online) requestRender();
       }
     }
+    scheduleOfflineSave();
   }
 
   function renderPackGrid() {
@@ -1597,10 +1683,6 @@
   }
 
   function spawnPackToken(packToken, x = null, y = null) {
-    if (!ws || ws.readyState !== 1) {
-      log("Spawn blocked: connect first.");
-      return;
-    }
     const id = makeId();
     let wx = x;
     let wy = y;
@@ -1624,9 +1706,11 @@
       locked: false,
       badges: [],
     };
-    state.tokens.set(id, token);
-    refreshGmUI();
-    requestRender();
+    if (online) {
+      state.tokens.set(id, token);
+      refreshGmUI();
+      requestRender();
+    }
     send("TOKEN_CREATE", token);
   }
 
@@ -1660,6 +1744,15 @@
 
   function myId() { return cidEl.value.trim(); }
   function isGM() { return state.gm_id && myId() === state.gm_id; }
+  function ensureOfflineGm() {
+    if (online) return;
+    const cid = myId() || "player";
+    if (!state.gm_id) state.gm_id = cid;
+    if (!state.room_id) state.room_id = "offline";
+    players.clear();
+    players.add(cid);
+    refreshGmUI();
+  }
 
   const cam = { x: 80, y: 60, z: 1 };
   const ui = { gridSize: 50, snap: true, showGrid: true, feetPerSq: 5, tokenSpawnScale: 1.0 };
@@ -2680,9 +2773,11 @@
   }
 
   function send(type, payload = {}) {
-    if (!ws) { log(`send(${type}) blocked: no ws`); return; }
-    if (ws.readyState !== 1) { log(`send(${type}) blocked: ws not open (${ws.readyState})`); return; }
-    ws.send(JSON.stringify({ type, payload }));
+    if (online && ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type, payload }));
+      return;
+    }
+    applyLocalEvent(type, payload);
   }
 
   function makeId() {
@@ -2739,6 +2834,402 @@
     requestRender();
   }
 
+  function toPlainObjectMap(m) {
+    const out = {};
+    for (const [k, v] of m.entries()) out[k] = v;
+    return out;
+  }
+
+  function currentStateSnapshot() {
+    return {
+      room_id: state.room_id || "offline",
+      gm_id: state.gm_id || myId() || "player",
+      allow_players_move: !!state.allow_players_move,
+      allow_all_move: !!state.allow_all_move,
+      lockdown: !!state.lockdown,
+      background_mode: state.background_mode || "solid",
+      background_url: state.background_url || null,
+      terrain_seed: Number(state.terrain_seed || 1),
+      terrain_style: state.terrain_style || "grassland",
+      layer_visibility: { ...state.layer_visibility },
+      version: Number(state.version || 0),
+      tokens: toPlainObjectMap(state.tokens),
+      strokes: toPlainObjectMap(state.strokes),
+      shapes: toPlainObjectMap(state.shapes),
+      draw_order: {
+        strokes: [...(state.draw_order?.strokes || [])],
+        shapes: [...(state.draw_order?.shapes || [])],
+      },
+    };
+  }
+
+  let offlineSaveTimer = null;
+  let lastOfflineEraseHistoryAt = 0;
+  const offlineHistory = [];
+  const offlineFuture = [];
+  const OFFLINE_HISTORY_LIMIT = 50;
+  const OFFLINE_MUTATION_TYPES = new Set([
+    "ROOM_SETTINGS", "TOKEN_CREATE", "TOKEN_DELETE", "TOKEN_ASSIGN", "TOKEN_RENAME", "TOKEN_SET_SIZE", "TOKEN_SET_LOCK",
+    "TOKEN_BADGE_TOGGLE", "TOKEN_MOVE", "STROKE_ADD", "STROKE_DELETE", "STROKE_SET_LOCK", "ERASE_AT", "SHAPE_ADD", "SHAPE_DELETE", "SHAPE_SET_LOCK",
+  ]);
+
+  function saveOfflineStateNow() {
+    try {
+      const payload = {
+        state: currentStateSnapshot(),
+        ui: {
+          snap: !!snapEl.checked,
+          showGrid: !!showGridEl.checked,
+          gridSize: String(gridEl.value || "50"),
+          feetPerSq: String(feetPerSqEl.value || "5"),
+          color: String(colorEl.value || "#ffffff"),
+          size: String(sizeEl.value || "3"),
+          tool: String(toolEl.value || "move"),
+          tokenSpawnScale: Number(ui.tokenSpawnScale || 1),
+        },
+      };
+      localStorage.setItem(OFFLINE_STATE_KEY, JSON.stringify(payload));
+    } catch (e) {}
+  }
+
+  function scheduleOfflineSave() {
+    if (online) return;
+    if (offlineSaveTimer) clearTimeout(offlineSaveTimer);
+    offlineSaveTimer = setTimeout(() => {
+      offlineSaveTimer = null;
+      saveOfflineStateNow();
+    }, 1000);
+  }
+
+  function pushOfflineHistory() {
+    try {
+      offlineHistory.push(JSON.stringify(currentStateSnapshot()));
+      if (offlineHistory.length > OFFLINE_HISTORY_LIMIT) offlineHistory.shift();
+      offlineFuture.length = 0;
+    } catch (e) {}
+  }
+
+  function restoreOfflineState() {
+    try {
+      const raw = localStorage.getItem(OFFLINE_STATE_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !parsed.state) return false;
+      applyStateSync(parsed.state);
+      const uiState = parsed.ui || {};
+      snapEl.checked = !!uiState.snap;
+      showGridEl.checked = !!uiState.showGrid;
+      gridEl.value = String(uiState.gridSize || gridEl.value || "50");
+      feetPerSqEl.value = String(uiState.feetPerSq || feetPerSqEl.value || "5");
+      colorEl.value = String(uiState.color || colorEl.value || "#ffffff");
+      sizeEl.value = String(uiState.size || sizeEl.value || "3");
+      if (typeof uiState.tokenSpawnScale === "number") ui.tokenSpawnScale = clamp(uiState.tokenSpawnScale, 0.25, 4);
+      if (uiState.tool) toolEl.value = String(uiState.tool);
+      refreshUI();
+      refreshToolButtons();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function localStrokeHitsCircle(stroke, cx, cy, r) {
+    const rr = r * r;
+    for (const pt of (stroke.points || [])) {
+      const dx = Number(pt.x || 0) - cx;
+      const dy = Number(pt.y || 0) - cy;
+      if (dx * dx + dy * dy <= rr) return true;
+    }
+    return false;
+  }
+
+  function localShapeHitsCircle(shape, cx, cy, r) {
+    const rr = r * r;
+    if (shape.type === "line") {
+      const x1 = Number(shape.x1 || 0);
+      const y1 = Number(shape.y1 || 0);
+      const x2 = Number(shape.x2 || 0);
+      const y2 = Number(shape.y2 || 0);
+      const vx = x2 - x1;
+      const vy = y2 - y1;
+      const segLen2 = vx * vx + vy * vy;
+      if (segLen2 === 0) {
+        const dx = cx - x1;
+        const dy = cy - y1;
+        return dx * dx + dy * dy <= rr;
+      }
+      let t = ((cx - x1) * vx + (cy - y1) * vy) / segLen2;
+      t = Math.max(0, Math.min(1, t));
+      const px = x1 + t * vx;
+      const py = y1 + t * vy;
+      const dx = cx - px;
+      const dy = cy - py;
+      return dx * dx + dy * dy <= rr;
+    }
+    if (shape.type === "rect") {
+      const minx = Math.min(Number(shape.x1 || 0), Number(shape.x2 || 0));
+      const maxx = Math.max(Number(shape.x1 || 0), Number(shape.x2 || 0));
+      const miny = Math.min(Number(shape.y1 || 0), Number(shape.y2 || 0));
+      const maxy = Math.max(Number(shape.y1 || 0), Number(shape.y2 || 0));
+      const dx = Math.max(minx - cx, 0, cx - maxx);
+      const dy = Math.max(miny - cy, 0, cy - maxy);
+      return dx * dx + dy * dy <= rr;
+    }
+    if (shape.type === "circle") {
+      const ox = Number(shape.x1 || 0);
+      const oy = Number(shape.y1 || 0);
+      const rad = Math.hypot(Number(shape.x2 || 0) - ox, Number(shape.y2 || 0) - oy);
+      const dist = Math.hypot(cx - ox, cy - oy);
+      return dist <= rad + r;
+    }
+    return false;
+  }
+
+  function applyLocalEvent(type, payload = {}) {
+    if (type === "UNDO") {
+      if (!offlineHistory.length) return;
+      try {
+        offlineFuture.push(JSON.stringify(currentStateSnapshot()));
+        const prev = offlineHistory.pop();
+        applyStateSync(JSON.parse(prev));
+      } catch (e) {}
+      return;
+    }
+    if (type === "REDO") {
+      if (!offlineFuture.length) return;
+      try {
+        offlineHistory.push(JSON.stringify(currentStateSnapshot()));
+        const next = offlineFuture.pop();
+        applyStateSync(JSON.parse(next));
+      } catch (e) {}
+      return;
+    }
+
+    if (OFFLINE_MUTATION_TYPES.has(type)) {
+      if (type === "ERASE_AT") {
+        const now = Date.now();
+        if (now - lastOfflineEraseHistoryAt > 600) {
+          lastOfflineEraseHistoryAt = now;
+          pushOfflineHistory();
+        }
+      } else if (type !== "TOKEN_MOVE" || !!payload.commit) {
+        pushOfflineHistory();
+      }
+    }
+
+    if (type === "ROOM_SETTINGS") {
+      if ("allow_players_move" in payload) state.allow_players_move = !!payload.allow_players_move;
+      if ("allow_all_move" in payload) state.allow_all_move = !!payload.allow_all_move;
+      if ("lockdown" in payload) state.lockdown = !!payload.lockdown;
+      if ("background_mode" in payload || "background_url" in payload || "terrain_seed" in payload || "terrain_style" in payload) {
+        applyBackgroundState(
+          ("background_mode" in payload) ? payload.background_mode : state.background_mode,
+          ("background_url" in payload) ? payload.background_url : state.background_url,
+          ("terrain_seed" in payload) ? payload.terrain_seed : state.terrain_seed,
+          ("terrain_style" in payload) ? payload.terrain_style : state.terrain_style,
+        );
+      }
+      if ("layer_visibility" in payload && payload.layer_visibility) {
+        state.layer_visibility = { ...state.layer_visibility, ...payload.layer_visibility };
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "TOKEN_DELETE") {
+      state.tokens.delete(payload.id);
+      if (selectedTokenId === payload.id) selectedTokenId = null;
+      if (hoveredTokenId === payload.id) hoveredTokenId = null;
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "TOKEN_MOVE") {
+      const p = payload;
+      const t = state.tokens.get(p.id);
+      if (t) {
+        t.x = Number(p.x ?? t.x);
+        t.y = Number(p.y ?? t.y);
+        state.tokens.set(p.id, t);
+      }
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "TOKEN_ASSIGN") {
+      const t = state.tokens.get(payload.id);
+      if (t) {
+        t.owner_id = payload.owner_id ?? null;
+        state.tokens.set(payload.id, t);
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "TOKEN_BADGE_TOGGLE") {
+      const t = state.tokens.get(payload.id);
+      if (t) {
+        setTokenBadgeLocal(payload.id, payload.badge, payload.enabled ?? null);
+      }
+      refreshTokenMenuBadgeButtons();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "STROKE_ADD") {
+      const p = payload;
+      if (p?.id) {
+        state.strokes.set(p.id, p);
+        state.draw_order.strokes = state.draw_order.strokes.filter((id) => id !== p.id);
+        state.draw_order.strokes.push(p.id);
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "STROKE_DELETE") {
+      const ids = payload?.ids || [];
+      for (const id of ids) {
+        state.strokes.delete(id);
+        state.draw_order.strokes = state.draw_order.strokes.filter((x) => x !== id);
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "SHAPE_ADD") {
+      const p = payload;
+      if (p?.id) {
+        state.shapes.set(p.id, p);
+        state.draw_order.shapes = state.draw_order.shapes.filter((id) => id !== p.id);
+        state.draw_order.shapes.push(p.id);
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "SHAPE_DELETE") {
+      const sid = payload?.id;
+      state.shapes.delete(sid);
+      state.draw_order.shapes = state.draw_order.shapes.filter((x) => x !== sid);
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "ERASE_AT") {
+      const x = Number(payload.x || 0);
+      const y = Number(payload.y || 0);
+      const r = Math.max(1, Number(payload.r || 14));
+      const strokeIds = [];
+      const shapeIds = [];
+      for (const [id, s] of state.strokes.entries()) {
+        if (localStrokeHitsCircle(s, x, y, r)) strokeIds.push(id);
+      }
+      for (const [id, sh] of state.shapes.entries()) {
+        if (localShapeHitsCircle(sh, x, y, r)) shapeIds.push(id);
+      }
+      for (const id of strokeIds) {
+        state.strokes.delete(id);
+        state.draw_order.strokes = state.draw_order.strokes.filter((v) => v !== id);
+      }
+      for (const id of shapeIds) {
+        state.shapes.delete(id);
+        state.draw_order.shapes = state.draw_order.shapes.filter((v) => v !== id);
+      }
+      if (strokeIds.length || shapeIds.length) {
+        refreshGmUI();
+        requestRender();
+        scheduleOfflineSave();
+      }
+      return;
+    }
+
+    if (type === "TOKEN_CREATE") {
+      const p = payload;
+      if (p?.id) state.tokens.set(p.id, { ...(state.tokens.get(p.id) || {}), ...p, badges: normalizedBadgeList(p?.badges) });
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+    if (type === "TOKEN_RENAME") {
+      const p = payload;
+      const t = state.tokens.get(p.id);
+      if (t) {
+        t.name = p.name || t.name;
+        state.tokens.set(p.id, t);
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+    if (type === "TOKEN_SET_SIZE") {
+      const p = payload;
+      const t = state.tokens.get(p.id);
+      if (t) {
+        t.size_scale = clamp(Number(p.size_scale ?? t.size_scale ?? 1), 0.25, 4);
+        state.tokens.set(p.id, t);
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+    if (type === "TOKEN_SET_LOCK") {
+      const p = payload;
+      const t = state.tokens.get(p.id);
+      if (t) {
+        t.locked = !!p.locked;
+        state.tokens.set(p.id, t);
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+    if (type === "STROKE_SET_LOCK") {
+      const p = payload;
+      const s = state.strokes.get(p.id);
+      if (s) {
+        s.locked = !!p.locked;
+        state.strokes.set(p.id, s);
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+    if (type === "SHAPE_SET_LOCK") {
+      const p = payload;
+      const s = state.shapes.get(p.id);
+      if (s) {
+        s.locked = !!p.locked;
+        state.shapes.set(p.id, s);
+      }
+      refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+  }
+
   function clearLocalRoomView() {
     state.room_id = null;
     state.background_mode = "solid";
@@ -2786,26 +3277,30 @@
 
     ws = new WebSocket(url);
     ws.onopen = () => {
+      online = true;
       log(`connected: ${url}`);
       updateSessionPill();
+      refreshSessionModalAuth();
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = setInterval(() => {
         if (ws && ws.readyState === 1) send("HEARTBEAT", { ts: Date.now() });
       }, 10000);
     };
     ws.onclose = (ev) => {
+      online = false;
       const reason = (ev && ev.reason) ? ` (${ev.reason})` : "";
       log(`disconnected (code ${ev.code})${reason}`);
       if (ev.code === 1008) {
         log("Connection rejected: login expired or you are not a member of this room.");
       }
       updateSessionPill();
+      refreshSessionModalAuth();
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
         heartbeatTimer = null;
       }
     };
-    ws.onerror = () => { log("ws error"); updateSessionPill(); };
+    ws.onerror = () => { log("ws error"); updateSessionPill(); refreshSessionModalAuth(); };
 
     ws.onmessage = (msg) => {
       const ev = JSON.parse(msg.data);
@@ -2814,6 +3309,7 @@
         applyStateSync(ev.payload);
         log(`STATE_SYNC v${state.version} gm=${state.gm_id} strokes=${state.strokes.size} shapes=${state.shapes.size}`);
         updateSessionPill();
+        refreshSessionModalAuth();
         return;
       }
 
@@ -2823,6 +3319,7 @@
         }
         refreshGmUI();
         updateSessionPill();
+        refreshSessionModalAuth();
         return;
       }
 
@@ -2836,6 +3333,7 @@
         if (ev.payload?.gm_id) state.gm_id = ev.payload.gm_id;
         refreshGmUI();
         updateSessionPill();
+        refreshSessionModalAuth();
         return;
       }
 
@@ -3057,7 +3555,6 @@
   document.getElementById("connect").onclick = () => connectWS(false);
 
   document.getElementById("spawn").onclick = () => {
-    if (!ws || ws.readyState !== 1) { log("Spawn blocked: connect first."); return; }
     dragSpawn = {
       name: "Token",
       color: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
@@ -3092,9 +3589,67 @@
   sessionPill.addEventListener("click", openSessionModal);
   sessionModalClose.addEventListener("click", closeSessionModal);
   sessionModalBackdrop.addEventListener("click", closeSessionModal);
+  sessionLoginBtn.addEventListener("click", async () => {
+    const username = sessionAuthUserEl.value.trim();
+    const password = sessionAuthPassEl.value;
+    if (!username || !password) {
+      log("LOGIN ERROR: username and password required");
+      return;
+    }
+    try {
+      await apiPost("/api/auth/login", { username, password });
+      const user = await loadMe();
+      if (user?.username) {
+        log(`Logged in as ${user.username}`);
+        refreshSessionModalAuth();
+        updateSessionPill();
+      }
+    } catch (e) {
+      log(`LOGIN ERROR: ${e.message || e}`);
+    }
+  });
+  sessionRegisterBtn.addEventListener("click", async () => {
+    const username = sessionAuthUserEl.value.trim();
+    const password = sessionAuthPassEl.value;
+    if (!username || !password) {
+      log("REGISTER ERROR: username and password required");
+      return;
+    }
+    try {
+      await apiPost("/api/auth/register", { username, password });
+      const user = await loadMe();
+      if (user?.username) {
+        log(`Registered and logged in as ${user.username}`);
+        refreshSessionModalAuth();
+        updateSessionPill();
+      }
+    } catch (e) {
+      log(`REGISTER ERROR: ${e.message || e}`);
+    }
+  });
+  sessionOpenLobbyBtn.addEventListener("click", () => {
+    location.href = "/static/app.html";
+  });
+  sessionLogoutBtn.addEventListener("click", async () => {
+    try {
+      await apiPost("/api/auth/logout", {});
+    } catch (e) {}
+    setAuthIdentity(null);
+    online = false;
+    if (ws && ws.readyState === 1) {
+      try { ws.close(); } catch {}
+    }
+    ensureOfflineGm();
+    refreshSessionModalAuth();
+    updateSessionPill();
+  });
   sessionConnectBtn.addEventListener("click", () => {
     roomEl.value = sessionRoomEl.value.trim() || "demo";
-    cidEl.value = sessionClientEl.value.trim() || "player";
+    if (!me || !me.username) {
+      log("Connect blocked: log in first.");
+      return;
+    }
+    cidEl.value = me.username;
     connectWS(true);
     closeSessionModal();
   });
@@ -3107,16 +3662,24 @@
     inp.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        sessionConnectBtn.click();
+        if (me && me.username) sessionConnectBtn.click();
+        else sessionLoginBtn.click();
       }
     });
   });
   updateSessionPill();
   refreshToolButtons();
   updateCanvasCursor();
-  if (roomEl.value.trim()) {
-    connectWS(false);
-  }
+  (async () => {
+    await loadMe();
+    if (!restoreOfflineState()) {
+      applyStateSync(currentStateSnapshot());
+    }
+    ensureOfflineGm();
+    refreshSessionModalAuth();
+    updateSessionPill();
+    saveOfflineStateNow();
+  })();
   toolColorPicker.addEventListener("input", () => {
     colorEl.value = toolColorPicker.value;
     refreshToolContextChecks();
@@ -3198,12 +3761,16 @@
     if (!t) return;
     const next = (prompt("Rename token", t.name || "Token") || "").trim();
     if (!next) return;
-    t.name = next;
-    state.tokens.set(tokenMenuTokenId, t);
+    if (online) {
+      t.name = next;
+      state.tokens.set(tokenMenuTokenId, t);
+    }
     send("TOKEN_RENAME", { id: tokenMenuTokenId, name: next });
     closeTokenMenu();
-    refreshGmUI();
-    requestRender();
+    if (online) {
+      refreshGmUI();
+      requestRender();
+    }
   };
   document.getElementById("tokenMenuResize").onclick = () => {
     if (!tokenMenuTokenId || !isGM()) return;
@@ -3213,12 +3780,16 @@
     if (raw == null) return;
     const next = clamp(parseFloat(raw), 0.25, 4);
     if (!Number.isFinite(next)) return;
-    t.size_scale = next;
-    state.tokens.set(tokenMenuTokenId, t);
+    if (online) {
+      t.size_scale = next;
+      state.tokens.set(tokenMenuTokenId, t);
+    }
     send("TOKEN_SET_SIZE", { id: tokenMenuTokenId, size_scale: next });
     closeTokenMenu();
-    refreshGmUI();
-    requestRender();
+    if (online) {
+      refreshGmUI();
+      requestRender();
+    }
   };
   document.getElementById("tokenMenuAssign").onclick = () => {
     if (!tokenMenuTokenId || !isGM()) return;
@@ -3238,21 +3809,27 @@
     const t = state.tokens.get(tokenMenuTokenId);
     if (!t) return;
     const next = !t.locked;
-    t.locked = next;
-    state.tokens.set(tokenMenuTokenId, t);
+    if (online) {
+      t.locked = next;
+      state.tokens.set(tokenMenuTokenId, t);
+    }
     send("TOKEN_SET_LOCK", { id: tokenMenuTokenId, locked: next });
     closeTokenMenu();
-    refreshGmUI();
-    requestRender();
+    if (online) {
+      refreshGmUI();
+      requestRender();
+    }
   };
   for (const badge of TOKEN_BADGES) {
     const btn = document.getElementById(badge.menuId);
     if (!btn) continue;
     btn.onclick = () => {
       if (!tokenMenuTokenId || !isGM()) return;
-      setTokenBadgeLocal(tokenMenuTokenId, badge.id, null);
-      refreshTokenMenuBadgeButtons();
-      requestRender();
+      if (online) {
+        setTokenBadgeLocal(tokenMenuTokenId, badge.id, null);
+        refreshTokenMenuBadgeButtons();
+        requestRender();
+      }
       sendTokenBadgeToggle(tokenMenuTokenId, badge.id, null);
     };
   }
@@ -3263,11 +3840,13 @@
     const ids = normalizedBadgeList(t.badges);
     if (!ids.length) return;
     for (const badgeId of ids) {
-      setTokenBadgeLocal(tokenMenuTokenId, badgeId, false);
+      if (online) setTokenBadgeLocal(tokenMenuTokenId, badgeId, false);
       sendTokenBadgeToggle(tokenMenuTokenId, badgeId, false);
     }
-    refreshTokenMenuBadgeButtons();
-    requestRender();
+    if (online) {
+      refreshTokenMenuBadgeButtons();
+      requestRender();
+    }
   };
   document.getElementById("tokenMenuDelete").onclick = () => {
     if (!tokenMenuTokenId || !isGM()) return;
@@ -3360,6 +3939,7 @@
     ui.showGrid = !!showGridEl.checked;
     ui.feetPerSq = clamp(parseFloat(feetPerSqEl.value || "5"), 1, 100);
     requestRender();
+    scheduleOfflineSave();
   }
   snapEl.addEventListener("change", refreshUI);
   showGridEl.addEventListener("change", refreshUI);
@@ -3398,6 +3978,7 @@
     }
     refreshToolButtons();
     updateCanvasCursor();
+    scheduleOfflineSave();
   }
   function brushColor() { return colorEl.value; }
   function brushSize() { return clamp(parseFloat(sizeEl.value || "3"), 1, 30); }
@@ -3440,9 +4021,11 @@
       return;
     }
     if (!isTyping && e.key.toLowerCase() === "d" && selectedTokenId && isGM()) {
-      setTokenBadgeLocal(selectedTokenId, "downed", null);
-      refreshTokenMenuBadgeButtons();
-      requestRender();
+      if (online) {
+        setTokenBadgeLocal(selectedTokenId, "downed", null);
+        refreshTokenMenuBadgeButtons();
+        requestRender();
+      }
       sendTokenBadgeToggle(selectedTokenId, "downed", null);
       e.preventDefault();
       return;
@@ -3818,6 +4401,9 @@
 
   canvas.addEventListener("pointerup", endPointer);
   canvas.addEventListener("pointercancel", endPointer);
+  window.addEventListener("beforeunload", () => {
+    if (!online) saveOfflineStateNow();
+  });
 </script>
 </body>
 </html>
