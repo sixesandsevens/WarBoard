@@ -368,6 +368,8 @@
 
     <label>BG URL <input id="bgUrl" placeholder="https://..."></label>
     <button id="setBg">Set BG</button>
+    <label>BG File <input id="bgFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+    <button id="uploadBg">Upload BG</button>
     <label><input type="checkbox" id="terrainBg"> Terrain BG</label>
     <label>Biome
       <select id="terrainStyle">
@@ -750,6 +752,8 @@
   const allowAllMoveEl = document.getElementById("allowAllMove");
   const lockdownEl = document.getElementById("lockdown");
   const bgUrlEl = document.getElementById("bgUrl");
+  const bgFileEl = document.getElementById("bgFile");
+  const uploadBgEl = document.getElementById("uploadBg");
   const terrainBgEl = document.getElementById("terrainBg");
   const terrainStyleEl = document.getElementById("terrainStyle");
   const regenTerrainEl = document.getElementById("regenTerrain");
@@ -888,6 +892,17 @@
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  async function apiUploadBackground(roomId, file) {
+    const data = new FormData();
+    data.append("file", file);
+    const res = await fetch(apiUrl(`/api/rooms/${encodeURIComponent(roomId)}/background-upload`, true), {
+      method: "POST",
+      body: data,
     });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
@@ -1063,6 +1078,8 @@
     const sceneBackground = drawerSection(tabScene, "Background");
     moveControlTo(sceneBackground, "bgUrl");
     moveControlTo(sceneBackground, "setBg");
+    moveControlTo(sceneBackground, "bgFile");
+    moveControlTo(sceneBackground, "uploadBg");
     moveControlTo(sceneBackground, "terrainBg");
     moveControlTo(sceneBackground, "terrainStyle");
     moveControlTo(sceneBackground, "regenTerrain");
@@ -2421,6 +2438,8 @@
     allowAllMoveEl.disabled = !gm;
     lockdownEl.disabled = !gm;
     bgUrlEl.disabled = !gm;
+    bgFileEl.disabled = !gm;
+    uploadBgEl.disabled = !gm;
     terrainBgEl.disabled = !gm;
     terrainStyleEl.disabled = !gm;
     document.getElementById("setBg").disabled = !gm;
@@ -4334,6 +4353,33 @@
       background_url: nextUrl,
       background_mode: nextUrl ? "url" : "solid",
     });
+  });
+  uploadBgEl.addEventListener("click", async () => {
+    if (!isGM()) {
+      log("Upload BG ERROR: GM only");
+      return;
+    }
+    const rid = roomEl.value.trim();
+    if (!rid) {
+      log("Upload BG ERROR: room id required");
+      return;
+    }
+    const file = bgFileEl.files && bgFileEl.files[0];
+    if (!file) {
+      log("Upload BG ERROR: choose an image file first");
+      return;
+    }
+    try {
+      const out = await apiUploadBackground(rid, file);
+      const nextUrl = String(out.url || "").trim();
+      if (!nextUrl) throw new Error("Missing image URL from server");
+      bgUrlEl.value = nextUrl;
+      send("ROOM_SETTINGS", { background_url: nextUrl, background_mode: "url" });
+      bgFileEl.value = "";
+      log("Background uploaded.");
+    } catch (e) {
+      log(`Upload BG ERROR: ${e.message || e}`);
+    }
   });
   terrainBgEl.addEventListener("change", (e) => {
     if (e.target.checked) {

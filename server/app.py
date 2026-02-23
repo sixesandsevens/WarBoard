@@ -10,7 +10,7 @@ from collections import deque
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from passlib.context import CryptContext
@@ -47,10 +47,21 @@ app = FastAPI(title="WarBoard")
 BASE_DIR = Path(__file__).resolve().parent.parent
 PACKS_DIR = BASE_DIR / "packs"
 STATIC_DIR = BASE_DIR / "static"
+UPLOADS_DIR = BASE_DIR / "data" / "uploads"
+BG_UPLOADS_DIR = UPLOADS_DIR / "backgrounds"
+MAX_BACKGROUND_UPLOAD_BYTES = 10 * 1024 * 1024
+ALLOWED_BACKGROUND_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+CONTENT_TYPE_TO_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 # Static assets (still routed through FastAPI so middleware can protect them)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
 app.mount("/packs", StaticFiles(directory=str(PACKS_DIR), check_dir=False), name="packs")
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR), check_dir=False), name="uploads")
 
 rm = RoomManager()
 HEARTBEAT_TIMEOUT_SECONDS = 35.0
@@ -66,6 +77,21 @@ def _hash_key(raw: str) -> str:
 def _safe_pack_id(pack_id: str) -> str:
     cleaned = "".join(ch for ch in (pack_id or "") if ch.isalnum() or ch in ("-", "_"))
     return cleaned.strip()
+
+
+def _safe_room_id(room_id: str) -> str:
+    cleaned = "".join(ch for ch in (room_id or "") if ch.isalnum() or ch in ("-", "_"))
+    return cleaned.strip()
+
+
+def _background_upload_ext(upload: UploadFile) -> str:
+    ctype = str(upload.content_type or "").strip().lower()
+    if ctype in CONTENT_TYPE_TO_EXT:
+        return CONTENT_TYPE_TO_EXT[ctype]
+    ext = Path(str(upload.filename or "")).suffix.lower()
+    if ext in ALLOWED_BACKGROUND_EXTS:
+        return ext
+    raise HTTPException(status_code=400, detail="Unsupported image type")
 
 
 def _load_pack_manifest(pack_id: str) -> dict:
@@ -157,6 +183,7 @@ def _gm_authorized(room_state: RoomState, user_id: Optional[int], gm_key: str | 
 @app.on_event("startup")
 async def _startup() -> None:
     init_db()
+    BG_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ----------------------------- Auth middleware --------------------------------
@@ -500,6 +527,42 @@ async def delete_room(room_id: str, req: Request, gm_key: str | None = None):
         raise HTTPException(status_code=403, detail="GM only")
     delete_room_record(room_id)
     return {"ok": True}
+
+
+@app.post("/api/rooms/{room_id}/background-upload")
+async def upload_room_background(room_id: str, req: Request, file: UploadFile = File(...), gm_key: str | None = None):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    if not is_member(user.user_id, room_id):
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+    raw = load_room_state_json(room_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Room not found")
+    state = RoomState.model_validate_json(raw)
+    if not _gm_authorized(state, user.user_id, gm_key):
+        raise HTTPException(status_code=403, detail="GM only")
+    ext = _background_upload_ext(file)
+    safe_room_id = _safe_room_id(room_id)
+    if not safe_room_id:
+        raise HTTPException(status_code=400, detail="Invalid room id")
+    room_dir = BG_UPLOADS_DIR / safe_room_id
+    room_dir.mkdir(parents=True, exist_ok=True)
+    data = await file.read(MAX_BACKGROUND_UPLOAD_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    if len(data) > MAX_BACKGROUND_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (max 10MB)")
+    file_name = f"{int(time.time())}-{uuid.uuid4().hex[:10]}{ext}"
+    out_path = room_dir / file_name
+    try:
+        out_path.write_bytes(data)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}") from e
+    rel = out_path.relative_to(UPLOADS_DIR)
+    url_path = "/uploads/" + "/".join(rel.parts)
+    await file.close()
+    return {"url": url_path, "bytes": len(data)}
 
 
 # ----------------------------- WebSocket --------------------------------------
