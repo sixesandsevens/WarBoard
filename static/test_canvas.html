@@ -1188,7 +1188,9 @@
   }
 
   function showFloatingToolPanel(panelEl, x, y) {
-    hideToolPanels();
+    toolColorPanel.classList.add("hidden");
+    toolSizePanel.classList.add("hidden");
+    toolTextPanel.classList.add("hidden");
     panelEl.classList.remove("hidden");
     clampMenuToViewport(panelEl, x, y);
   }
@@ -1201,6 +1203,7 @@
 
   function openToolColorPanel(title = "Color", opts = {}) {
     colorPanelTargetShapeId = opts?.shapeId || null;
+    textPanelTargetShapeId = null;
     toolColorTitle.textContent = title;
     if (colorPanelTargetShapeId) {
       const sh = state.shapes.get(colorPanelTargetShapeId);
@@ -1212,6 +1215,8 @@
   }
 
   function openToolSizePanel(title = "Size") {
+    textPanelTargetShapeId = null;
+    colorPanelTargetShapeId = null;
     const size = clamp(Number(sizeEl.value || "3"), 1, 30);
     toolSizeTitle.textContent = title;
     toolSizeSlider.value = String(Math.round(size));
@@ -1220,6 +1225,7 @@
   }
 
   function openToolTextPanel() {
+    colorPanelTargetShapeId = null;
     if (textPanelTargetShapeId) {
       const sh = state.shapes.get(textPanelTargetShapeId);
       toolTextInput.value = String(sh?.text || ui.textDraft || "");
@@ -4510,7 +4516,7 @@
       appInitialized = true;
     }
   })();
-  toolColorPicker.addEventListener("input", () => {
+  const applyToolColor = () => {
     colorEl.value = toolColorPicker.value;
     if (colorPanelTargetShapeId) {
       const sh = state.shapes.get(colorPanelTargetShapeId);
@@ -4519,7 +4525,9 @@
       }
     }
     refreshToolContextChecks();
-  });
+  };
+  toolColorPicker.addEventListener("input", applyToolColor);
+  toolColorPicker.addEventListener("change", applyToolColor);
   toolSizeSlider.addEventListener("input", () => {
     const next = clamp(Number(toolSizeSlider.value || "3"), 1, 30);
     sizeEl.value = String(Math.round(next));
