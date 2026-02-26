@@ -23,3 +23,8 @@ packs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime sqlite artifacts
+/data/*.db-wal
+/data/*.db-shm
+/data/uploads/
