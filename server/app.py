@@ -231,8 +231,7 @@ async def auth_gate(request: Request, call_next):
 
 @app.get("/")
 def root(req: Request):
-    # Offline-first landing: board loads immediately without auth.
-    return FileResponse(str(STATIC_DIR / "test_canvas.html"))
+    return RedirectResponse(url="/static/test_canvas.html", status_code=307)
 
 
 @app.head("/")
