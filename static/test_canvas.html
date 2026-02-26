@@ -2875,6 +2875,28 @@
     return null;
   }
 
+  function shapeSelectionBoxContainsPoint(sh, wx, wy) {
+    if (!sh) return false;
+    const pad = Math.max(6 / cam.z, 4 / cam.z);
+    if (sh.type === "text") {
+      const fs = clamp(Number(sh.font_size || 20), 8, 96);
+      const txt = String(sh.text || "").trim() || "Text";
+      const w = Math.max(fs, txt.length * fs * 0.6);
+      const h = fs * 1.2;
+      return (
+        wx >= (sh.x1 - pad) &&
+        wx <= (sh.x1 + w + pad) &&
+        wy >= (sh.y1 - pad) &&
+        wy <= (sh.y1 + h + pad)
+      );
+    }
+    const minx = Math.min(sh.x1, sh.x2) - pad;
+    const maxx = Math.max(sh.x1, sh.x2) + pad;
+    const miny = Math.min(sh.y1, sh.y2) - pad;
+    const maxy = Math.max(sh.y1, sh.y2) + pad;
+    return wx >= minx && wx <= maxx && wy >= miny && wy <= maxy;
+  }
+
   function updateHoveredToken(wx, wy) {
     const next = draggingTokenId || (draggingTokenIds.length ? draggingTokenIds[0] : hitTestToken(wx, wy));
     if (next === hoveredTokenId) return;
@@ -4960,10 +4982,17 @@
 
     if (t === "move") {
       const hit = hitTestToken(wpos.x, wpos.y);
-      const shapeHit = hit ? null : hitTestShape(wpos.x, wpos.y);
-      selectedTokenId = hit;
-      selectedShapeId = shapeHit;
+      const shapeHitRaw = hit ? null : hitTestShape(wpos.x, wpos.y);
+      let shapeHit = shapeHitRaw;
+      if (!hit && !shapeHit && selectedShapeId && isGM()) {
+        const selectedShape = state.shapes.get(selectedShapeId);
+        if (selectedShape && shapeSelectionBoxContainsPoint(selectedShape, wpos.x, wpos.y)) {
+          shapeHit = selectedShapeId;
+        }
+      }
       if (hit) {
+        selectedTokenId = hit;
+        selectedShapeId = null;
         if (isShiftDown) {
           toggleSelection(hit);
           requestRender();
@@ -4983,6 +5012,8 @@
           if (tok) dragStartTokenPositions.set(id, { x: tok.x, y: tok.y });
         }
       } else if (shapeHit && isGM()) {
+        selectedTokenId = null;
+        selectedShapeId = shapeHit;
         draggingShapeId = shapeHit;
         draggingTokenId = null;
         draggingTokenIds = [];
@@ -4993,6 +5024,8 @@
           shapeDragOrigin = { wx: wpos.x, wy: wpos.y, x1: sh.x1, y1: sh.y1, x2: sh.x2, y2: sh.y2 };
         }
       } else {
+        selectedTokenId = null;
+        selectedShapeId = null;
         draggingTokenId = null;
         draggingTokenIds = [];
         dragMoveStartWorld = null;
