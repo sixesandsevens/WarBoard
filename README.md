@@ -100,6 +100,35 @@ Open clients:
 DATA_DIR=/tmp/warboard-data uvicorn server.app:app --reload
 ```
 
+### WebSocket Stability (Production)
+
+WarBoard currently tracks active socket membership in process memory, so production deployment should use a single ASGI worker unless you add a shared pub/sub layer.
+
+- Recommended Gunicorn launch:
+
+```bash
+gunicorn server.app:app -k uvicorn.workers.UvicornWorker -w 1 --timeout 0
+```
+
+- Recommended Nginx WebSocket proxy config:
+
+```nginx
+location /ws/ {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+```
+
+- Optional server heartbeat timeout override (seconds):
+
+```bash
+WS_HEARTBEAT_TIMEOUT_SECONDS=75
+```
+
 ### Token Packs
 
 - Pack root directory: `./packs`

@@ -337,13 +337,14 @@
     </div>
     <div class="top-center">
       <div class="tool-strip">
-        <button id="toolBtnMove" class="tool-btn" data-tool="move" data-tip="Move tokens">🖐 Move</button>
+        <button id="toolBtnMove" class="tool-btn" data-tool="move" data-tip="Select and move tokens">🖐 Select</button>
         <button id="toolBtnPen" class="tool-btn" data-tool="pen" data-tip="Draw freehand">✏️ Pen</button>
         <button id="toolBtnShape" class="tool-btn" data-tool="shape" data-tip="Draw shapes">⬛ Shape</button>
         <button id="toolBtnText" class="tool-btn" data-tool="text" data-tip="Place text label">🔤 Text</button>
         <button id="toolBtnErase" class="tool-btn" data-tool="eraser" data-tip="Erase drawings">🧽 Erase</button>
         <button id="toolBtnRuler" class="tool-btn" data-tool="ruler" data-tip="Measure distance">📏 Ruler</button>
       </div>
+      <span id="selectModeLabel" class="pill hidden">Select Mode</span>
       <button id="spawn" class="top-action-btn" data-tip="Place new token">Spawn Token</button>
       <span id="sizePresetGroup" class="size-strip">
         Size
@@ -493,6 +494,8 @@
       <button id="tokenMenuResize" style="display:block; width:100%; text-align:left; margin:2px 0;">Resize</button>
       <button id="tokenMenuAssign" style="display:block; width:100%; text-align:left; margin:2px 0;">Assign owner</button>
       <button id="tokenMenuLock" style="display:block; width:100%; text-align:left; margin:2px 0;">Lock / Unlock</button>
+      <button id="tokenMenuGroup" style="display:block; width:100%; text-align:left; margin:2px 0;">Group selected</button>
+      <button id="tokenMenuUngroup" style="display:block; width:100%; text-align:left; margin:2px 0;">Ungroup selected</button>
       <div style="height:1px; margin:6px 0; background:rgba(255,255,255,0.12);"></div>
       <button id="tokenMenuBadgeDowned" style="display:block; width:100%; text-align:left; margin:2px 0;">Downed</button>
       <button id="tokenMenuBadgePoisoned" style="display:block; width:100%; text-align:left; margin:2px 0;">Poisoned</button>
@@ -812,6 +815,7 @@
   const toolBtnText = document.getElementById("toolBtnText");
   const toolBtnErase = document.getElementById("toolBtnErase");
   const toolBtnRuler = document.getElementById("toolBtnRuler");
+  const selectModeLabelEl = document.getElementById("selectModeLabel");
   const sessionPill = document.getElementById("sessionPill");
   const sessionResyncBadge = document.getElementById("sessionResyncBadge");
   const sessionModal = document.getElementById("sessionModal");
@@ -854,6 +858,13 @@
   ];
   const TOKEN_BADGE_BY_ID = new Map(TOKEN_BADGES.map((b) => [b.id, b]));
   const TOKEN_BADGE_IDS = new Set(TOKEN_BADGES.map((b) => b.id));
+  const tokenMenuRenameBtn = document.getElementById("tokenMenuRename");
+  const tokenMenuResizeBtn = document.getElementById("tokenMenuResize");
+  const tokenMenuAssignBtn = document.getElementById("tokenMenuAssign");
+  const tokenMenuLockBtn = document.getElementById("tokenMenuLock");
+  const tokenMenuGroupBtn = document.getElementById("tokenMenuGroup");
+  const tokenMenuUngroupBtn = document.getElementById("tokenMenuUngroup");
+  const tokenMenuDeleteBtn = document.getElementById("tokenMenuDelete");
 
   function log(line) {
     if (!logEl) return;
@@ -1105,12 +1116,14 @@
     hotkeys.style.fontSize = "12px";
     hotkeys.style.opacity = "0.9";
     hotkeys.innerHTML = `
-      <div><b>V</b> Move tool</div>
+      <div><b>V</b> Select tool</div>
       <div><b>P</b> Pen tool</div>
       <div><b>S</b> Shape tool</div>
       <div><b>T</b> Text tool</div>
       <div><b>E</b> Eraser tool</div>
       <div><b>R</b> Ruler tool</div>
+      <div><b>Shift+Drag</b> Marquee select tokens</div>
+      <div><b>G / U</b> Group / Ungroup selected (GM)</div>
       <div><b>D</b> Toggle Downed badge (GM, selected token)</div>
       <div><b>Tab</b> Toggle drawer</div>
       <div><b>Delete/Backspace</b> Delete selected token (GM)</div>
@@ -1592,11 +1605,118 @@
     state.tokens.set(tokenId, t);
   }
 
+  function canEditTokenLocal(token) {
+    if (!token) return false;
+    if (isGM()) return true;
+    if (state.lockdown) return false;
+    if (token.locked) return false;
+    return !!state.allow_all_move;
+  }
+
+  function setSelection(ids = [], primaryId = null) {
+    selectedTokenIds.clear();
+    for (const id of ids) {
+      if (state.tokens.has(id)) selectedTokenIds.add(id);
+    }
+    if (primaryId && selectedTokenIds.has(primaryId)) {
+      selectedTokenId = primaryId;
+      return;
+    }
+    selectedTokenId = selectedTokenIds.size ? Array.from(selectedTokenIds)[0] : null;
+  }
+
+  function selectOnly(tokenId) {
+    if (!tokenId || !state.tokens.has(tokenId)) {
+      setSelection([]);
+      return;
+    }
+    setSelection([tokenId], tokenId);
+  }
+
+  function toggleSelection(tokenId) {
+    if (!tokenId || !state.tokens.has(tokenId)) return;
+    if (selectedTokenIds.has(tokenId)) selectedTokenIds.delete(tokenId);
+    else selectedTokenIds.add(tokenId);
+    selectedTokenId = selectedTokenIds.has(selectedTokenId) ? selectedTokenId : (selectedTokenIds.size ? tokenId : null);
+  }
+
+  function selectedIdsArray() {
+    if (selectedTokenIds.size) return Array.from(selectedTokenIds).filter((id) => state.tokens.has(id));
+    return selectedTokenId && state.tokens.has(selectedTokenId) ? [selectedTokenId] : [];
+  }
+
+  function selectionCount() {
+    return selectedIdsArray().length;
+  }
+
+  function selectedIdsIncludingGroups() {
+    const base = new Set(selectedIdsArray());
+    const groupIds = new Set();
+    for (const id of base) {
+      const t = state.tokens.get(id);
+      if (t?.group_id) groupIds.add(String(t.group_id));
+    }
+    if (!groupIds.size) return Array.from(base);
+    for (const [id, t] of state.tokens) {
+      if (t?.group_id && groupIds.has(String(t.group_id))) base.add(id);
+    }
+    return Array.from(base);
+  }
+
+  function tokenIntersectsWorldRect(token, rect) {
+    const r = tokenRadiusWorld(token);
+    const nearestX = clamp(token.x, rect.minX, rect.maxX);
+    const nearestY = clamp(token.y, rect.minY, rect.maxY);
+    const dx = token.x - nearestX;
+    const dy = token.y - nearestY;
+    return (dx * dx + dy * dy) <= r * r;
+  }
+
+  function normalizeWorldRect(a, b) {
+    return {
+      minX: Math.min(a.x, b.x),
+      maxX: Math.max(a.x, b.x),
+      minY: Math.min(a.y, b.y),
+      maxY: Math.max(a.y, b.y),
+    };
+  }
+
+  function groupSelectedTokens() {
+    if (!isGM()) return;
+    const ids = selectedIdsArray();
+    if (ids.length < 2) {
+      log("Group requires at least 2 selected tokens.");
+      return;
+    }
+    const groupId = `grp-${makeId()}`;
+    send("TOKEN_SET_GROUP", { ids, group_id: groupId });
+  }
+
+  function ungroupSelectedTokens() {
+    if (!isGM()) return;
+    const ids = selectedIdsIncludingGroups();
+    if (!ids.length) return;
+    send("TOKEN_SET_GROUP", { ids, group_id: null });
+  }
+
   function openTokenMenu(tokenId, clientX, clientY) {
     tokenMenuTokenId = tokenId;
     const t = state.tokens.get(tokenId);
-    const lockBtn = document.getElementById("tokenMenuLock");
-    if (lockBtn) lockBtn.textContent = t?.locked ? "Unlock" : "Lock";
+    const canEdit = canEditTokenLocal(t);
+    if (tokenMenuLockBtn) tokenMenuLockBtn.textContent = t?.locked ? "Unlock" : "Lock";
+    if (tokenMenuRenameBtn) tokenMenuRenameBtn.style.display = canEdit ? "block" : "none";
+    if (tokenMenuResizeBtn) tokenMenuResizeBtn.style.display = canEdit ? "block" : "none";
+    if (tokenMenuAssignBtn) tokenMenuAssignBtn.style.display = isGM() ? "block" : "none";
+    if (tokenMenuLockBtn) tokenMenuLockBtn.style.display = isGM() ? "block" : "none";
+    if (tokenMenuGroupBtn) tokenMenuGroupBtn.style.display = isGM() ? "block" : "none";
+    if (tokenMenuUngroupBtn) tokenMenuUngroupBtn.style.display = isGM() ? "block" : "none";
+    if (tokenMenuDeleteBtn) tokenMenuDeleteBtn.style.display = isGM() ? "block" : "none";
+    for (const badge of TOKEN_BADGES) {
+      const btn = document.getElementById(badge.menuId);
+      if (btn) btn.style.display = isGM() ? "block" : "none";
+    }
+    const badgeClearBtn = document.getElementById("tokenMenuBadgeClear");
+    if (badgeClearBtn) badgeClearBtn.style.display = isGM() ? "block" : "none";
     refreshTokenMenuBadgeButtons();
     const wrapRect = document.getElementById("wrap").getBoundingClientRect();
     tokenMenuEl.style.display = "block";
@@ -1704,7 +1824,7 @@
       return;
     }
     const t = tool();
-    if (isPanning || (t === "move" && draggingTokenId)) {
+    if (isPanning || (t === "move" && draggingTokenIds.length)) {
       canvas.style.cursor = "grabbing";
       return;
     }
@@ -1729,9 +1849,9 @@
       if (!btn) continue;
       btn.classList.toggle("active", Math.abs(parseFloat(k) - scale) < 0.01);
     }
-    if (selectedTokenId && isGM()) {
+    if (selectedTokenId) {
       const tok = state.tokens.get(selectedTokenId);
-      if (tok) {
+      if (tok && canEditTokenLocal(tok)) {
         if (online) {
           tok.size_scale = scale;
           state.tokens.set(selectedTokenId, tok);
@@ -2002,6 +2122,11 @@
   let hoveredTokenId = null;
   let dragOffset = { x: 0, y: 0 };
   let shapeDragOrigin = null;
+  const selectedTokenIds = new Set();
+  let draggingTokenIds = [];
+  let dragMoveStartWorld = null;
+  let dragStartTokenPositions = new Map();
+  let marqueeSelectRect = null;
   let isPanning = false;
   let isShiftDown = false;
   let panStart = { sx: 0, sy: 0, camX: 0, camY: 0 };
@@ -2726,7 +2851,7 @@
   }
 
   function updateHoveredToken(wx, wy) {
-    const next = draggingTokenId || hitTestToken(wx, wy);
+    const next = draggingTokenId || (draggingTokenIds.length ? draggingTokenIds[0] : hitTestToken(wx, wy));
     if (next === hoveredTokenId) return;
     hoveredTokenId = next;
     requestRender();
@@ -2986,7 +3111,8 @@
         ctx.fill();
       }
       ctx.lineWidth = Math.max(2, 2 * cam.z);
-      ctx.strokeStyle = (id === selectedTokenId) ? "#00d1ff" : "rgba(255,255,255,0.45)";
+      const selected = selectedTokenIds.has(id) || id === selectedTokenId;
+      ctx.strokeStyle = selected ? "#00d1ff" : "rgba(255,255,255,0.45)";
       ctx.stroke();
 
       if (t.locked) {
@@ -2997,7 +3123,7 @@
 
       drawTokenBadges(t, s, r);
 
-      const showLabel = id === selectedTokenId || id === hoveredTokenId;
+      const showLabel = selected || id === hoveredTokenId;
       if (showLabel) {
         const label = (t.name || "Token").slice(0, 18);
         const fontSize = Math.max(14, 14 * cam.z);
@@ -3085,6 +3211,49 @@
     ctx.restore();
   }
 
+  function drawMarqueeSelection() {
+    if (!marqueeSelectRect) return;
+    const a = worldToScreen(marqueeSelectRect.x1, marqueeSelectRect.y1);
+    const b = worldToScreen(marqueeSelectRect.x2, marqueeSelectRect.y2);
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    const w = Math.abs(a.x - b.x);
+    const h = Math.abs(a.y - b.y);
+    if (w < 2 || h < 2) return;
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 209, 255, 0.14)";
+    ctx.strokeStyle = "rgba(0, 209, 255, 0.95)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([8, 6]);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+  }
+
+  function drawSelectionCountBadge() {
+    const count = selectionCount();
+    if (count <= 0) return;
+    const text = count === 1 ? "1 selected" : `${count} selected`;
+    ctx.save();
+    ctx.font = "600 12px system-ui, sans-serif";
+    const textW = ctx.measureText(text).width;
+    const x = 12;
+    const y = 12;
+    const w = Math.ceil(textW + 18);
+    const h = 24;
+    ctx.fillStyle = "rgba(0, 0, 0, 0.68)";
+    ctx.strokeStyle = "rgba(0, 209, 255, 0.7)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 12);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.96)";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, x + 9, y + h / 2);
+    ctx.restore();
+  }
+
   function render() {
     const w = canvas.getBoundingClientRect().width;
     const h = canvas.getBoundingClientRect().height;
@@ -3099,6 +3268,8 @@
     drawStrokes();
     drawShapes();
     drawTokens();
+    drawMarqueeSelection();
+    drawSelectionCountBadge();
     drawDragSpawnGhost();
     drawRuler();
   }
@@ -3121,6 +3292,10 @@
     isPanning = false;
     pointerCaptured = false;
     draggingTokenId = null;
+    draggingTokenIds = [];
+    dragMoveStartWorld = null;
+    dragStartTokenPositions.clear();
+    marqueeSelectRect = null;
     dragSpawn = null;
     dragSpawnWorld = null;
     dragSpawnOverCanvas = false;
@@ -3159,6 +3334,7 @@
 
     if (selectedTokenId && !state.tokens.has(selectedTokenId)) selectedTokenId = null;
     if (selectedShapeId && !state.shapes.has(selectedShapeId)) selectedShapeId = null;
+    setSelection(selectedIdsArray(), selectedTokenId);
     if (hoveredTokenId && !state.tokens.has(hoveredTokenId)) hoveredTokenId = null;
     players.add(myId());
     if (state.gm_id) players.add(state.gm_id);
@@ -3605,6 +3781,7 @@
     state.draw_order = { strokes: [], shapes: [] };
     selectedTokenId = null;
     selectedShapeId = null;
+    setSelection([]);
     hoveredTokenId = null;
     draggingShapeId = null;
     shapeDragOrigin = null;
@@ -3622,13 +3799,13 @@
 
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       if (!force) {
-        log("Already connected.");
+        log(ws.readyState === 1 ? "Already connected." : "Connection in progress.");
         return;
       }
       try { ws.close(); } catch {}
     }
 
-    clearLocalRoomView();
+    if (!force) clearLocalRoomView();
     const room = encodeURIComponent(roomEl.value.trim());
     const cid = encodeURIComponent(cidEl.value.trim());
     const proto = (location.protocol === "https:") ? "wss" : "ws";
@@ -3761,14 +3938,33 @@
         }
         if (p.rejected) {
           if (draggingTokenId === p.id) draggingTokenId = null;
+          draggingTokenIds = [];
+          dragMoveStartWorld = null;
+          dragStartTokenPositions.clear();
           log(`MOVE REJECTED for ${p.id}: ${p.reason}`);
         }
         return;
       }
 
+      if (ev.type === "TOKENS_MOVE") {
+        const moves = Array.isArray(ev.payload?.moves) ? ev.payload.moves : [];
+        for (const mv of moves) {
+          const t = state.tokens.get(mv.id);
+          if (!t) continue;
+          t.x = Number(mv.x ?? t.x);
+          t.y = Number(mv.y ?? t.y);
+          state.tokens.set(mv.id, t);
+        }
+        if (ev.payload?.rejected) log(`MOVE REJECTED: ${ev.payload.reason || "Not allowed"}`);
+        requestRender();
+        return;
+      }
+
       if (ev.type === "TOKEN_DELETE") {
         state.tokens.delete(ev.payload.id);
+        selectedTokenIds.delete(ev.payload.id);
         if (selectedTokenId === ev.payload.id) selectedTokenId = null;
+        if (!selectedTokenId && selectedTokenIds.size) selectedTokenId = Array.from(selectedTokenIds)[0];
         if (hoveredTokenId === ev.payload.id) hoveredTokenId = null;
         refreshGmUI();
         requestRender();
@@ -3795,6 +3991,19 @@
           state.tokens.set(p.id, t);
         }
         refreshGmUI();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "TOKEN_SET_GROUP") {
+        const ids = Array.isArray(ev.payload?.ids) ? ev.payload.ids : [];
+        const groupId = ev.payload?.group_id ? String(ev.payload.group_id) : null;
+        for (const id of ids) {
+          const t = state.tokens.get(id);
+          if (!t) continue;
+          t.group_id = groupId;
+          state.tokens.set(id, t);
+        }
         requestRender();
         return;
       }
@@ -4099,9 +4308,15 @@
     closeSessionModal();
   });
   sessionDisconnectBtn.addEventListener("click", () => {
-    if (ws && ws.readyState === 1) {
+    if (ws && (ws.readyState === 0 || ws.readyState === 1 || ws.readyState === WebSocket.OPEN)) {
       try { ws.close(); } catch {}
     }
+    ws = null;
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    updateSessionPill();
   });
   [sessionRoomEl, sessionClientEl].forEach((inp) => {
     inp.addEventListener("keydown", (e) => {
@@ -4207,8 +4422,9 @@
   applyTokenSizePreset(ui.tokenSpawnScale);
 
   document.getElementById("tokenMenuRename").onclick = () => {
-    if (!tokenMenuTokenId || !isGM()) return;
+    if (!tokenMenuTokenId) return;
     const t = state.tokens.get(tokenMenuTokenId);
+    if (!canEditTokenLocal(t)) return;
     if (!t) return;
     const next = (prompt("Rename token", t.name || "Token") || "").trim();
     if (!next) return;
@@ -4224,8 +4440,9 @@
     }
   };
   document.getElementById("tokenMenuResize").onclick = () => {
-    if (!tokenMenuTokenId || !isGM()) return;
+    if (!tokenMenuTokenId) return;
     const t = state.tokens.get(tokenMenuTokenId);
+    if (!canEditTokenLocal(t)) return;
     if (!t) return;
     const raw = prompt("Size multiplier (0.25 - 4.0)", String(t.size_scale ?? 1));
     if (raw == null) return;
@@ -4270,6 +4487,14 @@
       refreshGmUI();
       requestRender();
     }
+  };
+  document.getElementById("tokenMenuGroup").onclick = () => {
+    groupSelectedTokens();
+    closeTokenMenu();
+  };
+  document.getElementById("tokenMenuUngroup").onclick = () => {
+    ungroupSelectedTokens();
+    closeTokenMenu();
   };
   for (const badge of TOKEN_BADGES) {
     const btn = document.getElementById(badge.menuId);
@@ -4438,6 +4663,7 @@
     toolBtnText.classList.toggle("active", t === "text");
     toolBtnErase.classList.toggle("active", t === "eraser");
     toolBtnRuler.classList.toggle("active", t === "ruler");
+    if (selectModeLabelEl) selectModeLabelEl.classList.toggle("hidden", t !== "move");
   }
   function setTool(next) {
     const prev = tool();
@@ -4511,8 +4737,18 @@
       e.preventDefault();
       return;
     }
-    if ((e.key === "Delete" || e.key === "Backspace") && selectedTokenId && isGM()) {
-      send("TOKEN_DELETE", { id: selectedTokenId });
+    if (!isTyping && e.key.toLowerCase() === "g" && isGM()) {
+      groupSelectedTokens();
+      e.preventDefault();
+      return;
+    }
+    if (!isTyping && e.key.toLowerCase() === "u" && isGM()) {
+      ungroupSelectedTokens();
+      e.preventDefault();
+      return;
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedIdsArray().length && isGM()) {
+      for (const id of selectedIdsArray()) send("TOKEN_DELETE", { id });
       e.preventDefault();
     }
   });
@@ -4573,9 +4809,11 @@
 
     const hit = hitTestToken(wpos.x, wpos.y);
     if (hit) {
-      if (isGM()) {
+      const tok = state.tokens.get(hit);
+      if (isGM() || canEditTokenLocal(tok)) {
         hideAllCtx();
-        selectedTokenId = hit;
+        if (isShiftDown) toggleSelection(hit);
+        else if (!selectedTokenIds.has(hit)) selectOnly(hit);
         openTokenMenu(hit, e.clientX, e.clientY);
         refreshGmUI();
         requestRender();
@@ -4618,15 +4856,15 @@
     }
 
     if (e.button === 2) {
-      if (isGM()) {
-        const hit = hitTestToken(wpos.x, wpos.y);
-        if (hit) {
-          selectedTokenId = hit;
-          openTokenMenu(hit, e.clientX, e.clientY);
-          refreshGmUI();
-          requestRender();
-          return;
-        }
+      const hit = hitTestToken(wpos.x, wpos.y);
+      const tok = hit ? state.tokens.get(hit) : null;
+      if (hit && (isGM() || canEditTokenLocal(tok))) {
+        if (isShiftDown) toggleSelection(hit);
+        else if (!selectedTokenIds.has(hit)) selectOnly(hit);
+        openTokenMenu(hit, e.clientX, e.clientY);
+        refreshGmUI();
+        requestRender();
+        return;
       }
       isPanning = true;
       panStart = { sx: e.clientX, sy: e.clientY, camX: cam.x, camY: cam.y };
@@ -4643,12 +4881,16 @@
       selectedTokenId = hit;
       selectedShapeId = shapeHit;
       if (hit) {
+        if (isShiftDown) {
+          toggleSelection(hit);
+          requestRender();
+          return;
+        }
+        if (!selectedTokenIds.has(hit)) selectOnly(hit);
+        const moveIds = selectedIdsIncludingGroups();
         draggingTokenId = hit;
         draggingShapeId = null;
         shapeDragOrigin = null;
-        const tok = state.tokens.get(hit);
-        dragOffset.x = wpos.x - tok.x;
-        dragOffset.y = wpos.y - tok.y;
       } else if (shapeHit && isGM()) {
         draggingShapeId = shapeHit;
         draggingTokenId = null;
@@ -4656,6 +4898,20 @@
         if (sh) {
           shapeDragOrigin = { wx: wpos.x, wy: wpos.y, x1: sh.x1, y1: sh.y1, x2: sh.x2, y2: sh.y2 };
         }
+        draggingTokenIds = moveIds;
+        dragMoveStartWorld = { x: wpos.x, y: wpos.y };
+        dragStartTokenPositions = new Map();
+        for (const id of moveIds) {
+          const tok = state.tokens.get(id);
+          if (tok) dragStartTokenPositions.set(id, { x: tok.x, y: tok.y });
+        }
+      } else {
+        draggingTokenId = null;
+        draggingTokenIds = [];
+        dragMoveStartWorld = null;
+        dragStartTokenPositions.clear();
+        if (!isShiftDown) setSelection([]);
+        marqueeSelectRect = { x1: wpos.x, y1: wpos.y, x2: wpos.x, y2: wpos.y, additive: isShiftDown };
       }
       requestRender();
       return;
@@ -4735,22 +4991,35 @@
     updateHoveredToken(wpos.x, wpos.y);
     const t = tool();
 
-    if (t === "move" && draggingTokenId) {
-      const tok = state.tokens.get(draggingTokenId);
-      if (!tok) return;
+    if (t === "move" && marqueeSelectRect) {
+      marqueeSelectRect.x2 = wpos.x;
+      marqueeSelectRect.y2 = wpos.y;
+      requestRender();
+      return;
+    }
 
-      const x = snap(wpos.x - dragOffset.x);
-      const y = snap(wpos.y - dragOffset.y);
-
-      tok.x = x;
-      tok.y = y;
-      state.tokens.set(draggingTokenId, tok);
+    if (t === "move" && draggingTokenIds.length && dragMoveStartWorld) {
+      const dx = wpos.x - dragMoveStartWorld.x;
+      const dy = wpos.y - dragMoveStartWorld.y;
+      const moves = [];
+      for (const id of draggingTokenIds) {
+        const start = dragStartTokenPositions.get(id);
+        const tok = state.tokens.get(id);
+        if (!start || !tok) continue;
+        const x = snap(start.x + dx);
+        const y = snap(start.y + dy);
+        tok.x = x;
+        tok.y = y;
+        state.tokens.set(id, tok);
+        moves.push({ id, x, y });
+      }
       requestRender();
 
       const now = Date.now();
-      if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
+      if (moves.length && now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
         lastMoveSentAt = now;
-        send("TOKEN_MOVE", { id: draggingTokenId, x, y, commit: false });
+        if (moves.length === 1) send("TOKEN_MOVE", { id: moves[0].id, x: moves[0].x, y: moves[0].y, commit: false });
+        else send("TOKENS_MOVE", { moves, commit: false });
       }
       return;
     }
@@ -4815,7 +5084,7 @@
       requestRender();
       return;
     }
-    if (hoveredTokenId !== null && !draggingTokenId) {
+    if (hoveredTokenId !== null && !draggingTokenIds.length) {
       hoveredTokenId = null;
       requestRender();
     }
@@ -4879,15 +5148,47 @@
 
     isPanning = false;
     const t = tool();
+    const movedTokenIds = draggingTokenIds.slice();
     const movedTokenId = draggingTokenId;
     const movedShapeId = draggingShapeId;
     draggingTokenId = null;
     draggingShapeId = null;
+    const hadMarquee = !!marqueeSelectRect;
+    const finalMarqueeRect = marqueeSelectRect
+      ? normalizeWorldRect({ x: marqueeSelectRect.x1, y: marqueeSelectRect.y1 }, { x: marqueeSelectRect.x2, y: marqueeSelectRect.y2 })
+      : null;
+    const marqueeAdditive = !!marqueeSelectRect?.additive;
+    marqueeSelectRect = null;
+    draggingTokenId = null;
+    draggingTokenIds = [];
+    dragMoveStartWorld = null;
+    dragStartTokenPositions.clear();
 
-    if (t === "move" && movedTokenId) {
-      const tok = state.tokens.get(movedTokenId);
-      if (tok) {
-        send("TOKEN_MOVE", { id: movedTokenId, x: tok.x, y: tok.y, commit: true });
+    if (t === "move" && hadMarquee && finalMarqueeRect) {
+      const hitIds = [];
+      for (const [id, tok] of state.tokens) {
+        if (tokenIntersectsWorldRect(tok, finalMarqueeRect)) hitIds.push(id);
+      }
+      if (marqueeAdditive) {
+        for (const id of hitIds) selectedTokenIds.add(id);
+        selectedTokenId = selectedTokenIds.size ? Array.from(selectedTokenIds)[0] : null;
+      } else {
+        setSelection(hitIds, hitIds[0] || null);
+      }
+      requestRender();
+    }
+
+    if (t === "move" && movedTokenIds.length) {
+      const moves = [];
+      for (const id of movedTokenIds) {
+        const tok = state.tokens.get(id);
+        if (!tok) continue;
+        moves.push({ id, x: tok.x, y: tok.y });
+      }
+      if (moves.length === 1 && movedTokenId) {
+        send("TOKEN_MOVE", { id: movedTokenId, x: moves[0].x, y: moves[0].y, commit: true });
+      } else if (moves.length > 1) {
+        send("TOKENS_MOVE", { moves, commit: true });
       }
     }
     if (t === "move" && movedShapeId) {

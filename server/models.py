@@ -15,11 +15,13 @@ EventType = Literal[
     "REDO",
     "TOKEN_CREATE",
     "TOKEN_MOVE",
+    "TOKENS_MOVE",
     "TOKEN_DELETE",
     "TOKEN_RENAME",
     "TOKEN_SET_SIZE",
     "TOKEN_ASSIGN",
     "TOKEN_SET_LOCK",
+    "TOKEN_SET_GROUP",
     "TOKEN_BADGE_TOGGLE",
     "STROKE_ADD",
     "STROKE_DELETE",
@@ -42,6 +44,7 @@ class Token(BaseModel):
     image_url: Optional[str] = None
     size_scale: float = 1.0
     owner_id: Optional[str] = None
+    group_id: Optional[str] = None
     locked: bool = False
     badges: List[str] = Field(default_factory=list)
 

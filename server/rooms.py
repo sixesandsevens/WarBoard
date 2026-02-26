@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import random
 import time
@@ -16,6 +17,8 @@ from .storage import load_room_state_json, save_room_state_json
 AUTOSAVE_DEBOUNCE_SECONDS = 2.0
 ERASER_HIT_RADIUS_DEFAULT = 18.0
 VALID_TOKEN_BADGES = {"downed", "poisoned", "stunned", "burning", "bleeding", "prone"}
+BROADCAST_SEND_TIMEOUT_SECONDS = 5.0
+logger = logging.getLogger("warboard.ws")
 
 
 @dataclass
@@ -110,12 +113,34 @@ class RoomManager:
 
     async def broadcast(self, room: Room, event: WireEvent) -> None:
         msg = event.model_dump_json()
-        dead = []
-        for s in list(room.sockets):
-            try:
-                await s.send_text(msg)
-            except Exception:
-                dead.append(s)
+        sockets = list(room.sockets)
+        if not sockets:
+            return
+        results = await asyncio.gather(
+            *(asyncio.wait_for(s.send_text(msg), timeout=BROADCAST_SEND_TIMEOUT_SECONDS) for s in sockets),
+            return_exceptions=True,
+        )
+        dead = [s for s, result in zip(sockets, results) if isinstance(result, Exception)]
+        if dead:
+            timeout_count = 0
+            error_count = 0
+            error_types: Dict[str, int] = {}
+            for result in results:
+                if isinstance(result, Exception):
+                    if isinstance(result, TimeoutError):
+                        timeout_count += 1
+                    else:
+                        error_count += 1
+                        name = result.__class__.__name__
+                        error_types[name] = error_types.get(name, 0) + 1
+            logger.warning(
+                "WS BROADCAST DROP room=%s dropped=%s timeout=%s send_error=%s error_types=%s",
+                room.state.room_id,
+                len(dead),
+                timeout_count,
+                error_count,
+                error_types,
+            )
         for s in dead:
             room.sockets.discard(s)
             client_id = room.socket_to_client.pop(s, None)
@@ -258,6 +283,17 @@ class RoomManager:
 
         return False
 
+    def can_edit_token(self, room: Room, user_id: Optional[int], client_id: str, token: Token) -> bool:
+        # GM can always edit token metadata.
+        if self._is_gm(room, user_id, client_id):
+            return True
+        if room.state.lockdown:
+            return False
+        if token.locked:
+            return False
+        # When everyone-can-move is enabled, allow non-GM rename/resize/group edits.
+        return room.state.allow_all_move
+
     async def apply_event(self, room_id: str, room: Room, event: WireEvent, client_id: str, user_id: Optional[int] = None) -> WireEvent:
         t = event.type
         p = event.payload
@@ -305,6 +341,7 @@ class RoomManager:
                 image_url=str(p.get("image_url")) if p.get("image_url") else None,
                 size_scale=float(p.get("size_scale", 1.0)),
                 owner_id=None,
+                group_id=str(p.get("group_id")) if p.get("group_id") else None,
                 locked=bool(p.get("locked", False)),
                 badges=badges,
             )
@@ -340,6 +377,52 @@ class RoomManager:
             room.state.tokens[token.id] = token
             self._mark_dirty(room_id, room)
             return event
+
+        if t == "TOKENS_MOVE":
+            moves = p.get("moves")
+            if not isinstance(moves, list) or not moves:
+                return WireEvent(type="ERROR", payload={"message": "Invalid moves payload"})
+
+            token_ids: List[str] = []
+            for mv in moves:
+                if not isinstance(mv, dict):
+                    return WireEvent(type="ERROR", payload={"message": "Invalid move item"})
+                token_id = mv.get("id")
+                if not isinstance(token_id, str) or not token_id:
+                    return WireEvent(type="ERROR", payload={"message": "Missing token id in move item"})
+                token_ids.append(token_id)
+
+            resolved: Dict[str, Token] = {}
+            for token_id in token_ids:
+                token = room.state.tokens.get(token_id)
+                if not token:
+                    return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
+                if not self.can_move_token(room, user_id, client_id, token):
+                    return WireEvent(
+                        type="TOKENS_MOVE",
+                        payload={
+                            "moves": [{"id": token.id, "x": token.x, "y": token.y} for token in resolved.values()] + [
+                                {"id": token.id, "x": token.x, "y": token.y}
+                            ],
+                            "rejected": True,
+                            "reason": "Not allowed",
+                            "id": token_id,
+                        },
+                    )
+                resolved[token_id] = token
+
+            if bool(p.get("commit", False)):
+                self._push_history(room)
+            applied: List[Dict[str, float | str]] = []
+            for mv in moves:
+                token_id = mv.get("id")
+                token = resolved[token_id]
+                token.x = float(mv.get("x", token.x))
+                token.y = float(mv.get("y", token.y))
+                room.state.tokens[token_id] = token
+                applied.append({"id": token_id, "x": token.x, "y": token.y})
+            self._mark_dirty(room_id, room)
+            return WireEvent(type="TOKENS_MOVE", payload={"moves": applied, "commit": bool(p.get("commit", False))})
 
         if t == "ROOM_SETTINGS":
             # GM-only
@@ -660,8 +743,8 @@ class RoomManager:
             token = room.state.tokens.get(token_id)
             if not token:
                 return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can rename tokens", "id": token_id})
+            if not self.can_edit_token(room, user_id, client_id, token):
+                return WireEvent(type="ERROR", payload={"message": "Not allowed to rename token", "id": token_id})
             name = str(p.get("name", "")).strip() or "Token"
             self._push_history(room)
             token.name = name
@@ -674,8 +757,8 @@ class RoomManager:
             token = room.state.tokens.get(token_id)
             if not token:
                 return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can resize tokens", "id": token_id})
+            if not self.can_edit_token(room, user_id, client_id, token):
+                return WireEvent(type="ERROR", payload={"message": "Not allowed to resize token", "id": token_id})
             try:
                 size_scale = float(p.get("size_scale", token.size_scale))
             except (TypeError, ValueError):
@@ -699,6 +782,28 @@ class RoomManager:
             room.state.tokens[token_id] = token
             self._mark_dirty(room_id, room)
             return WireEvent(type="TOKEN_SET_LOCK", payload={"id": token_id, "locked": token.locked})
+
+        if t == "TOKEN_SET_GROUP":
+            ids = p.get("ids")
+            if not isinstance(ids, list) or not ids:
+                return WireEvent(type="ERROR", payload={"message": "ids is required"})
+            # Group metadata is GM-authoritative for now.
+            if not self._is_gm(room, user_id, client_id):
+                return WireEvent(type="ERROR", payload={"message": "Only GM can group tokens"})
+            group_id_raw = p.get("group_id")
+            group_id = str(group_id_raw).strip() if group_id_raw else None
+            if group_id is not None and not group_id:
+                group_id = None
+            existing = [token_id for token_id in ids if token_id in room.state.tokens]
+            if not existing:
+                return WireEvent(type="TOKEN_SET_GROUP", payload={"ids": [], "group_id": group_id})
+            self._push_history(room)
+            for token_id in existing:
+                token = room.state.tokens[token_id]
+                token.group_id = group_id
+                room.state.tokens[token_id] = token
+            self._mark_dirty(room_id, room)
+            return WireEvent(type="TOKEN_SET_GROUP", payload={"ids": existing, "group_id": group_id})
 
         if t == "TOKEN_BADGE_TOGGLE":
             token_id = p.get("id")
