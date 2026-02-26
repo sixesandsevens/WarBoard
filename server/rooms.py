@@ -16,6 +16,7 @@ from .storage import load_room_state_json, save_room_state_json
 
 AUTOSAVE_DEBOUNCE_SECONDS = 2.0
 ERASER_HIT_RADIUS_DEFAULT = 18.0
+TOKEN_HIT_BASE_RADIUS = 25.0
 VALID_TOKEN_BADGES = {"downed", "poisoned", "stunned", "burning", "bleeding", "prone"}
 BROADCAST_SEND_TIMEOUT_SECONDS = 5.0
 logger = logging.getLogger("warboard.ws")
@@ -256,6 +257,11 @@ class RoomManager:
 
         return False
 
+    def _token_hits_circle(self, token: Token, cx: float, cy: float, r: float) -> bool:
+        token_r = TOKEN_HIT_BASE_RADIUS * max(0.25, min(4.0, float(token.size_scale or 1.0)))
+        dist = math.hypot(cx - float(token.x), cy - float(token.y))
+        return dist <= token_r + r
+
     def _is_gm(self, room: Room, user_id: Optional[int], client_id: str) -> bool:
         if room.state.gm_user_id is not None and user_id is not None:
             return room.state.gm_user_id == user_id
@@ -293,6 +299,33 @@ class RoomManager:
             return False
         # When everyone-can-move is enabled, allow non-GM rename/resize/group edits.
         return room.state.allow_all_move
+
+    def can_delete_token(self, room: Room, user_id: Optional[int], client_id: str, token: Token) -> bool:
+        if self._is_gm(room, user_id, client_id):
+            return True
+        if room.state.lockdown:
+            return False
+        if token.locked:
+            return False
+        return bool(token.creator_id and token.creator_id == client_id)
+
+    def can_delete_stroke(self, room: Room, user_id: Optional[int], client_id: str, stroke: Stroke) -> bool:
+        if self._is_gm(room, user_id, client_id):
+            return True
+        if room.state.lockdown:
+            return False
+        if stroke.locked:
+            return False
+        return bool(stroke.creator_id and stroke.creator_id == client_id)
+
+    def can_delete_shape(self, room: Room, user_id: Optional[int], client_id: str, shape: Shape) -> bool:
+        if self._is_gm(room, user_id, client_id):
+            return True
+        if room.state.lockdown:
+            return False
+        if shape.locked:
+            return False
+        return bool(shape.creator_id and shape.creator_id == client_id)
 
     async def apply_event(self, room_id: str, room: Room, event: WireEvent, client_id: str, user_id: Optional[int] = None) -> WireEvent:
         t = event.type
@@ -342,13 +375,14 @@ class RoomManager:
                 size_scale=float(p.get("size_scale", 1.0)),
                 owner_id=None,
                 group_id=str(p.get("group_id")) if p.get("group_id") else None,
+                creator_id=client_id,
                 locked=bool(p.get("locked", False)),
                 badges=badges,
             )
             token.size_scale = max(0.25, min(4.0, token.size_scale))
             room.state.tokens[token.id] = token
             self._mark_dirty(room_id, room)
-            return event  # echo
+            return WireEvent(type="TOKEN_CREATE", payload=token.model_dump())
 
         if t == "TOKEN_MOVE":
             token_id = p.get("id")
@@ -535,6 +569,7 @@ class RoomManager:
                 points=[Point(x=float(pp["x"]), y=float(pp["y"])) for pp in pts if "x" in pp and "y" in pp],
                 color=color,
                 width=width,
+                creator_id=client_id,
                 locked=bool(p.get("locked", False)),
                 layer=layer,
             )
@@ -559,15 +594,17 @@ class RoomManager:
             )
 
         if t == "STROKE_DELETE":
-            if room.state.lockdown:
-                return WireEvent(type="ERROR", payload={"message": "Lockdown is enabled"})
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can delete strokes"})
             ids = p.get("ids")
             if not isinstance(ids, list):
                 sid = p.get("id")
                 ids = [sid] if sid else []
-            existing = [sid for sid in ids if sid in room.state.strokes]
+            existing = []
+            for sid in ids:
+                stroke = room.state.strokes.get(sid)
+                if not stroke:
+                    continue
+                if self.can_delete_stroke(room, user_id, client_id, stroke):
+                    existing.append(sid)
             if not existing:
                 return WireEvent(type="STROKE_DELETE", payload={"ids": []})
             self._push_history(room)
@@ -593,18 +630,19 @@ class RoomManager:
         if t == "ERASE_AT":
             if room.state.lockdown:
                 return WireEvent(type="ERROR", payload={"message": "Lockdown is enabled"})
-            # Erasing is destructive, so GM-only for now.
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can erase"})
+            is_gm = self._is_gm(room, user_id, client_id)
 
             cx = float(p.get("x", 0))
             cy = float(p.get("y", 0))
             r = float(p.get("r", ERASER_HIT_RADIUS_DEFAULT))
             erase_shapes = bool(p.get("erase_shapes", False))
+            erase_tokens = bool(p.get("erase_tokens", True))
 
             stroke_ids = []
             for sid, stroke in list(room.state.strokes.items()):
-                if stroke.locked:
+                if stroke.locked and not is_gm:
+                    continue
+                if not is_gm and stroke.creator_id != client_id:
                     continue
                 if self._stroke_hits_circle(stroke, cx, cy, r):
                     stroke_ids.append(sid)
@@ -612,13 +650,25 @@ class RoomManager:
             shape_ids = []
             if erase_shapes:
                 for sid, shape in list(room.state.shapes.items()):
-                    if shape.locked:
+                    if shape.locked and not is_gm:
+                        continue
+                    if not is_gm and shape.creator_id != client_id:
                         continue
                     if self._shape_hits_circle(shape, cx, cy, r):
                         shape_ids.append(sid)
 
-            if not stroke_ids and not shape_ids:
-                return WireEvent(type="ERASE_AT", payload={"stroke_ids": [], "shape_ids": []})
+            token_ids = []
+            if erase_tokens:
+                for token_id, token in list(room.state.tokens.items()):
+                    if token.locked and not is_gm:
+                        continue
+                    if not is_gm and token.creator_id != client_id:
+                        continue
+                    if self._token_hits_circle(token, cx, cy, r):
+                        token_ids.append(token_id)
+
+            if not stroke_ids and not shape_ids and not token_ids:
+                return WireEvent(type="ERASE_AT", payload={"stroke_ids": [], "shape_ids": [], "token_ids": []})
 
             self._push_history(room)
             for sid in stroke_ids:
@@ -627,9 +677,11 @@ class RoomManager:
             for sid in shape_ids:
                 room.state.shapes.pop(sid, None)
                 self._remove_order(room.state, "shapes", sid)
+            for token_id in token_ids:
+                room.state.tokens.pop(token_id, None)
 
             self._mark_dirty(room_id, room)
-            return WireEvent(type="ERASE_AT", payload={"stroke_ids": stroke_ids, "shape_ids": shape_ids})
+            return WireEvent(type="ERASE_AT", payload={"stroke_ids": stroke_ids, "shape_ids": shape_ids, "token_ids": token_ids})
 
         if t == "SHAPE_ADD":
             sid = p.get("id")
@@ -656,6 +708,7 @@ class RoomManager:
                 y2=float(p.get("y2", 0)),
                 color=p.get("color", "#ffffff"),
                 width=float(p.get("width", 3.0)),
+                creator_id=client_id,
                 text=text_val,
                 font_size=font_size,
                 fill=bool(p.get("fill", False)),
@@ -724,11 +777,9 @@ class RoomManager:
             return WireEvent(type="SHAPE_SET_LOCK", payload={"id": sid, "locked": shape.locked})
 
         if t == "SHAPE_DELETE":
-            # GM only
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can delete shapes"})
             sid = p.get("id")
-            if sid in room.state.shapes:
+            shape = room.state.shapes.get(sid)
+            if shape and self.can_delete_shape(room, user_id, client_id, shape):
                 self._push_history(room)
                 room.state.shapes.pop(sid, None)
                 self._remove_order(room.state, "shapes", sid)
@@ -736,16 +787,12 @@ class RoomManager:
             return WireEvent(type="SHAPE_DELETE", payload={"id": sid})
 
         if t == "TOKEN_DELETE":
-            if room.state.lockdown:
-                return WireEvent(type="ERROR", payload={"message": "Lockdown is enabled"})
             token_id = p.get("id")
             token = room.state.tokens.get(token_id)
             if not token:
                 return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-
-            # only GM deletes (for now)
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can delete tokens", "id": token_id})
+            if not self.can_delete_token(room, user_id, client_id, token):
+                return WireEvent(type="ERROR", payload={"message": "Not allowed to delete token", "id": token_id})
 
             self._push_history(room)
             room.state.tokens.pop(token_id, None)

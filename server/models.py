@@ -45,6 +45,7 @@ class Token(BaseModel):
     size_scale: float = 1.0
     owner_id: Optional[str] = None
     group_id: Optional[str] = None
+    creator_id: Optional[str] = None
     locked: bool = False
     badges: List[str] = Field(default_factory=list)
 
@@ -59,6 +60,7 @@ class Stroke(BaseModel):
     points: List[Point] = Field(default_factory=list)
     color: str = "#ffffff"
     width: float = 3.0
+    creator_id: Optional[str] = None
     locked: bool = False
     layer: Literal["map", "draw", "notes"] = "draw"
 
@@ -72,6 +74,7 @@ class Shape(BaseModel):
     y2: float
     color: str = "#ffffff"
     width: float = 3.0
+    creator_id: Optional[str] = None
     text: Optional[str] = None
     font_size: float = 20.0
     fill: bool = False

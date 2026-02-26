@@ -725,7 +725,7 @@
       <div><span class="pill">Left-drag</span> act with tool</div>
       <div><span class="pill">Right-drag</span> pan</div>
       <div><span class="pill">Wheel</span> zoom</div>
-      <div><span class="pill">Delete</span> delete selected token (GM)</div>
+      <div><span class="pill">Delete</span> delete selected token (if allowed)</div>
       <div style="opacity:.85;margin-top:6px">
         Layer visibility and background are server-synced room settings.
       </div>
@@ -1613,6 +1613,14 @@
     return !!state.allow_all_move;
   }
 
+  function canDeleteTokenLocal(token) {
+    if (!token) return false;
+    if (isGM()) return true;
+    if (state.lockdown) return false;
+    if (token.locked) return false;
+    return !!(token.creator_id && token.creator_id === myId());
+  }
+
   function setSelection(ids = [], primaryId = null) {
     selectedTokenIds.clear();
     for (const id of ids) {
@@ -1703,6 +1711,7 @@
     tokenMenuTokenId = tokenId;
     const t = state.tokens.get(tokenId);
     const canEdit = canEditTokenLocal(t);
+    const canDelete = canDeleteTokenLocal(t);
     if (tokenMenuLockBtn) tokenMenuLockBtn.textContent = t?.locked ? "Unlock" : "Lock";
     if (tokenMenuRenameBtn) tokenMenuRenameBtn.style.display = canEdit ? "block" : "none";
     if (tokenMenuResizeBtn) tokenMenuResizeBtn.style.display = canEdit ? "block" : "none";
@@ -1710,7 +1719,7 @@
     if (tokenMenuLockBtn) tokenMenuLockBtn.style.display = isGM() ? "block" : "none";
     if (tokenMenuGroupBtn) tokenMenuGroupBtn.style.display = isGM() ? "block" : "none";
     if (tokenMenuUngroupBtn) tokenMenuUngroupBtn.style.display = isGM() ? "block" : "none";
-    if (tokenMenuDeleteBtn) tokenMenuDeleteBtn.style.display = isGM() ? "block" : "none";
+    if (tokenMenuDeleteBtn) tokenMenuDeleteBtn.style.display = canDelete ? "block" : "none";
     for (const badge of TOKEN_BADGES) {
       const btn = document.getElementById(badge.menuId);
       if (btn) btn.style.display = isGM() ? "block" : "none";
@@ -3521,6 +3530,13 @@
     return false;
   }
 
+  function localTokenHitsCircle(token, cx, cy, r) {
+    const tx = Number(token?.x || 0);
+    const ty = Number(token?.y || 0);
+    const tr = tokenRadiusWorld(token);
+    return Math.hypot(cx - tx, cy - ty) <= (tr + r);
+  }
+
   function applyLocalEvent(type, payload = {}) {
     if (type === "UNDO") {
       if (!offlineHistory.length) return;
@@ -3686,11 +3702,15 @@
       const r = Math.max(1, Number(payload.r || 14));
       const strokeIds = [];
       const shapeIds = [];
+      const tokenIds = [];
       for (const [id, s] of state.strokes.entries()) {
         if (localStrokeHitsCircle(s, x, y, r)) strokeIds.push(id);
       }
       for (const [id, sh] of state.shapes.entries()) {
         if (localShapeHitsCircle(sh, x, y, r)) shapeIds.push(id);
+      }
+      for (const [id, tok] of state.tokens.entries()) {
+        if (localTokenHitsCircle(tok, x, y, r)) tokenIds.push(id);
       }
       for (const id of strokeIds) {
         state.strokes.delete(id);
@@ -3700,7 +3720,14 @@
         state.shapes.delete(id);
         state.draw_order.shapes = state.draw_order.shapes.filter((v) => v !== id);
       }
-      if (strokeIds.length || shapeIds.length) {
+      for (const id of tokenIds) {
+        state.tokens.delete(id);
+        selectedTokenIds.delete(id);
+        if (selectedTokenId === id) selectedTokenId = null;
+        if (hoveredTokenId === id) hoveredTokenId = null;
+      }
+      if (!selectedTokenId && selectedTokenIds.size) selectedTokenId = Array.from(selectedTokenIds)[0];
+      if (strokeIds.length || shapeIds.length || tokenIds.length) {
         refreshGmUI();
         requestRender();
         scheduleOfflineSave();
@@ -4125,6 +4152,7 @@
       if (ev.type === "ERASE_AT") {
         const strokeIds = ev.payload?.stroke_ids || [];
         const shapeIds = ev.payload?.shape_ids || [];
+        const tokenIds = ev.payload?.token_ids || [];
         for (const id of strokeIds) {
           state.strokes.delete(id);
           state.draw_order.strokes = state.draw_order.strokes.filter((x) => x !== id);
@@ -4133,7 +4161,14 @@
           state.shapes.delete(id);
           state.draw_order.shapes = state.draw_order.shapes.filter((x) => x !== id);
         }
-        if (strokeIds.length || shapeIds.length) {
+        for (const id of tokenIds) {
+          state.tokens.delete(id);
+          selectedTokenIds.delete(id);
+          if (selectedTokenId === id) selectedTokenId = null;
+          if (hoveredTokenId === id) hoveredTokenId = null;
+        }
+        if (!selectedTokenId && selectedTokenIds.size) selectedTokenId = Array.from(selectedTokenIds)[0];
+        if (strokeIds.length || shapeIds.length || tokenIds.length) {
           refreshGmUI();
           requestRender();
         }
@@ -4568,7 +4603,9 @@
     }
   };
   document.getElementById("tokenMenuDelete").onclick = () => {
-    if (!tokenMenuTokenId || !isGM()) return;
+    if (!tokenMenuTokenId) return;
+    const t = state.tokens.get(tokenMenuTokenId);
+    if (!canDeleteTokenLocal(t)) return;
     send("TOKEN_DELETE", { id: tokenMenuTokenId });
     closeTokenMenu();
   };
@@ -4790,8 +4827,11 @@
       e.preventDefault();
       return;
     }
-    if ((e.key === "Delete" || e.key === "Backspace") && selectedIdsArray().length && isGM()) {
-      for (const id of selectedIdsArray()) send("TOKEN_DELETE", { id });
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedIdsArray().length) {
+      for (const id of selectedIdsArray()) {
+        const tok = state.tokens.get(id);
+        if (canDeleteTokenLocal(tok)) send("TOKEN_DELETE", { id });
+      }
       e.preventDefault();
     }
   });
@@ -4853,7 +4893,7 @@
     const hit = hitTestToken(wpos.x, wpos.y);
     if (hit) {
       const tok = state.tokens.get(hit);
-      if (isGM() || canEditTokenLocal(tok)) {
+      if (isGM() || canEditTokenLocal(tok) || canDeleteTokenLocal(tok)) {
         hideAllCtx();
         if (isShiftDown) toggleSelection(hit);
         else if (!selectedTokenIds.has(hit)) selectOnly(hit);
@@ -4901,7 +4941,7 @@
     if (e.button === 2) {
       const hit = hitTestToken(wpos.x, wpos.y);
       const tok = hit ? state.tokens.get(hit) : null;
-      if (hit && (isGM() || canEditTokenLocal(tok))) {
+      if (hit && (isGM() || canEditTokenLocal(tok) || canDeleteTokenLocal(tok))) {
         if (isShiftDown) toggleSelection(hit);
         else if (!selectedTokenIds.has(hit)) selectOnly(hit);
         openTokenMenu(hit, e.clientX, e.clientY);
@@ -5184,7 +5224,7 @@
     const now = Date.now();
     if (now - lastEraseSentAt < ERASE_SEND_INTERVAL_MS) return;
     lastEraseSentAt = now;
-    send("ERASE_AT", { x: wx, y: wy, r, erase_shapes: true });
+    send("ERASE_AT", { x: wx, y: wy, r, erase_shapes: true, erase_tokens: true });
   }
 
   function endPointer(e) {
