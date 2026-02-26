@@ -28,3 +28,8 @@ Thumbs.db
 /data/*.db-wal
 /data/*.db-shm
 /data/uploads/
+
+# Runtime sqlite artifacts
+/data/*.db-wal
+/data/*.db-shm
+/data/uploads/
