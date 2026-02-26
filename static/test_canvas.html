@@ -1184,6 +1184,7 @@
     toolSizePanel.classList.add("hidden");
     toolTextPanel.classList.add("hidden");
     textPanelTargetShapeId = null;
+    colorPanelTargetShapeId = null;
   }
 
   function showFloatingToolPanel(panelEl, x, y) {
@@ -1198,9 +1199,15 @@
       || !toolTextPanel.classList.contains("hidden") && toolTextPanel.contains(target);
   }
 
-  function openToolColorPanel(title = "Color") {
+  function openToolColorPanel(title = "Color", opts = {}) {
+    colorPanelTargetShapeId = opts?.shapeId || null;
     toolColorTitle.textContent = title;
-    toolColorPicker.value = String(colorEl.value || "#ffffff");
+    if (colorPanelTargetShapeId) {
+      const sh = state.shapes.get(colorPanelTargetShapeId);
+      toolColorPicker.value = String(sh?.color || colorEl.value || "#ffffff");
+    } else {
+      toolColorPicker.value = String(colorEl.value || "#ffffff");
+    }
     showFloatingToolPanel(toolColorPanel, lastCtxClientPos.x + 8, lastCtxClientPos.y + 8);
   }
 
@@ -1502,30 +1509,74 @@
         refreshUI();
         break;
       case "text_set_content":
-        textPanelTargetShapeId = (
-          selectedShapeId &&
-          state.shapes.get(selectedShapeId)?.type === "text" &&
-          canEditShapeLocal(state.shapes.get(selectedShapeId))
-        ) ? selectedShapeId : null;
+        if (selectedShapeId) {
+          const sh = state.shapes.get(selectedShapeId);
+          if (sh?.type === "text") {
+            if (!canEditShapeLocal(sh)) {
+              log("Not allowed to edit this text.");
+              break;
+            }
+            textPanelTargetShapeId = selectedShapeId;
+          } else {
+            textPanelTargetShapeId = null;
+          }
+        } else {
+          textPanelTargetShapeId = null;
+        }
         openToolTextPanel();
         break;
       case "text_size_16":
+        if (selectedShapeId) {
+          const sh = state.shapes.get(selectedShapeId);
+          if (sh && sh.type === "text" && canEditShapeLocal(sh)) {
+            send("SHAPE_UPDATE", { id: selectedShapeId, font_size: 16, commit: true });
+            refreshToolContextChecks();
+            break;
+          }
+        }
         ui.textFontSize = 16;
         refreshToolContextChecks();
         break;
       case "text_size_24":
+        if (selectedShapeId) {
+          const sh = state.shapes.get(selectedShapeId);
+          if (sh && sh.type === "text" && canEditShapeLocal(sh)) {
+            send("SHAPE_UPDATE", { id: selectedShapeId, font_size: 24, commit: true });
+            refreshToolContextChecks();
+            break;
+          }
+        }
         ui.textFontSize = 24;
         refreshToolContextChecks();
         break;
       case "text_size_32":
+        if (selectedShapeId) {
+          const sh = state.shapes.get(selectedShapeId);
+          if (sh && sh.type === "text" && canEditShapeLocal(sh)) {
+            send("SHAPE_UPDATE", { id: selectedShapeId, font_size: 32, commit: true });
+            refreshToolContextChecks();
+            break;
+          }
+        }
         ui.textFontSize = 32;
         refreshToolContextChecks();
         break;
       case "text_size_custom": {
-        const raw = prompt("Text size (8-96):", String(ui.textFontSize || 24));
+        const currentSize = selectedShapeId
+          ? Number(state.shapes.get(selectedShapeId)?.font_size || ui.textFontSize || 24)
+          : Number(ui.textFontSize || 24);
+        const raw = prompt("Text size (8-96):", String(currentSize));
         if (raw == null) break;
         const n = clamp(Number(raw), 8, 96);
         if (!Number.isFinite(n)) break;
+        if (selectedShapeId) {
+          const sh = state.shapes.get(selectedShapeId);
+          if (sh && sh.type === "text" && canEditShapeLocal(sh)) {
+            send("SHAPE_UPDATE", { id: selectedShapeId, font_size: n, commit: true });
+            refreshToolContextChecks();
+            break;
+          }
+        }
         ui.textFontSize = n;
         refreshToolContextChecks();
         break;
@@ -1534,7 +1585,7 @@
         if (selectedShapeId) {
           const sh = state.shapes.get(selectedShapeId);
           if (sh && canEditShapeLocal(sh)) {
-            send("SHAPE_UPDATE", { id: selectedShapeId, color: String(colorEl.value || "#ffffff"), commit: true });
+            openToolColorPanel("Text Color", { shapeId: selectedShapeId });
             break;
           }
         }
@@ -2167,6 +2218,7 @@
   let dragSpawnWorld = null;
   let dragSpawnOverCanvas = false;
   let textPanelTargetShapeId = null;
+  let colorPanelTargetShapeId = null;
   let tokenMenuTokenId = null;
   let mapCtxWorld = null;
   let ctxSubHideTimer = null;
@@ -4460,6 +4512,12 @@
   })();
   toolColorPicker.addEventListener("input", () => {
     colorEl.value = toolColorPicker.value;
+    if (colorPanelTargetShapeId) {
+      const sh = state.shapes.get(colorPanelTargetShapeId);
+      if (sh && canEditShapeLocal(sh)) {
+        send("SHAPE_UPDATE", { id: colorPanelTargetShapeId, color: String(toolColorPicker.value || "#ffffff"), commit: true });
+      }
+    }
     refreshToolContextChecks();
   });
   toolSizeSlider.addEventListener("input", () => {
