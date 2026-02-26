@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Set
 
 from fastapi import WebSocket
 
-from .models import Point, RoomState, Shape, Stroke, Token, WireEvent
+from .models import AssetInstance, Point, RoomState, Shape, Stroke, Token, WireEvent
 from .storage import load_room_state_json, save_room_state_json
 
 
@@ -186,18 +186,26 @@ class RoomManager:
             room.future.clear()
 
     def _normalize_order(self, state: RoomState) -> None:
+        if "assets" not in state.layer_visibility:
+            state.layer_visibility["assets"] = True
         strokes = state.draw_order.get("strokes", [])
         shapes = state.draw_order.get("shapes", [])
+        assets = state.draw_order.get("assets", [])
         strokes = [sid for sid in strokes if sid in state.strokes]
         shapes = [sid for sid in shapes if sid in state.shapes]
+        assets = [sid for sid in assets if sid in state.assets]
         for sid in state.strokes.keys():
             if sid not in strokes:
                 strokes.append(sid)
         for sid in state.shapes.keys():
             if sid not in shapes:
                 shapes.append(sid)
+        for sid in state.assets.keys():
+            if sid not in assets:
+                assets.append(sid)
         state.draw_order["strokes"] = strokes
         state.draw_order["shapes"] = shapes
+        state.draw_order["assets"] = assets
 
     def _append_order(self, state: RoomState, kind: str, item_id: str) -> None:
         self._normalize_order(state)
@@ -335,6 +343,26 @@ class RoomManager:
         if shape.locked:
             return False
         return bool(shape.creator_id and shape.creator_id == client_id)
+
+    def can_edit_asset(self, room: Room, user_id: Optional[int], client_id: str, asset: AssetInstance) -> bool:
+        if self._is_gm(room, user_id, client_id):
+            return True
+        if room.state.lockdown:
+            return False
+        if asset.locked:
+            return False
+        if room.state.allow_all_move:
+            return True
+        return bool(asset.creator_id and asset.creator_id == client_id)
+
+    def can_delete_asset(self, room: Room, user_id: Optional[int], client_id: str, asset: AssetInstance) -> bool:
+        if self._is_gm(room, user_id, client_id):
+            return True
+        if room.state.lockdown:
+            return False
+        if asset.locked:
+            return False
+        return bool(asset.creator_id and asset.creator_id == client_id)
 
     async def apply_event(self, room_id: str, room: Room, event: WireEvent, client_id: str, user_id: Optional[int] = None) -> WireEvent:
         t = event.type
@@ -794,6 +822,106 @@ class RoomManager:
                 self._remove_order(room.state, "shapes", sid)
                 self._mark_dirty(room_id, room)
             return WireEvent(type="SHAPE_DELETE", payload={"id": sid})
+
+        if t == "ASSET_INSTANCE_CREATE":
+            if room.state.lockdown:
+                return WireEvent(type="ERROR", payload={"message": "Lockdown is enabled"})
+            if not self._is_gm(room, user_id, client_id) and not room.state.allow_all_move:
+                return WireEvent(type="ERROR", payload={"message": "Not allowed to place assets"})
+            aid = str(p.get("id") or "").strip()
+            image_url = str(p.get("image_url") or "").strip()
+            if not aid or not image_url:
+                return WireEvent(type="ERROR", payload={"message": "Invalid asset instance"})
+            def _clamp_asset_scale(value: float) -> float:
+                v = max(-10.0, min(10.0, float(value)))
+                if 0 < v < 0.05:
+                    return 0.05
+                if -0.05 < v < 0:
+                    return -0.05
+                if v == 0:
+                    return 0.05
+                return v
+
+            asset = AssetInstance(
+                id=aid,
+                asset_id=str(p.get("asset_id") or "").strip() or None,
+                image_url=image_url,
+                x=float(p.get("x", 0)),
+                y=float(p.get("y", 0)),
+                width=max(8.0, float(p.get("width", 64))),
+                height=max(8.0, float(p.get("height", 64))),
+                scale_x=_clamp_asset_scale(float(p.get("scale_x", 1.0))),
+                scale_y=_clamp_asset_scale(float(p.get("scale_y", 1.0))),
+                rotation=float(p.get("rotation", 0.0)),
+                opacity=max(0.05, min(1.0, float(p.get("opacity", 1.0)))),
+                layer=int(p.get("layer", 0)),
+                creator_id=client_id,
+                locked=bool(p.get("locked", False)),
+            )
+            self._push_history(room)
+            room.state.assets[asset.id] = asset
+            self._append_order(room.state, "assets", asset.id)
+            self._mark_dirty(room_id, room)
+            return WireEvent(type="ASSET_INSTANCE_CREATE", payload=asset.model_dump())
+
+        if t == "ASSET_INSTANCE_UPDATE":
+            def _clamp_asset_scale(value: float) -> float:
+                v = max(-10.0, min(10.0, float(value)))
+                if 0 < v < 0.05:
+                    return 0.05
+                if -0.05 < v < 0:
+                    return -0.05
+                if v == 0:
+                    return 0.05
+                return v
+
+            aid = p.get("id")
+            asset = room.state.assets.get(aid)
+            if not asset:
+                return WireEvent(type="ERROR", payload={"message": "Unknown asset instance", "id": aid})
+            if not self.can_edit_asset(room, user_id, client_id, asset):
+                return WireEvent(type="ERROR", payload={"message": "Not allowed to edit asset", "id": aid})
+            if bool(p.get("commit", False)):
+                self._push_history(room)
+            changed = False
+            for key in ("x", "y", "rotation"):
+                if key in p:
+                    setattr(asset, key, float(p.get(key)))
+                    changed = True
+            for key in ("width", "height"):
+                if key in p:
+                    setattr(asset, key, max(8.0, float(p.get(key))))
+                    changed = True
+            for key in ("scale_x", "scale_y"):
+                if key in p:
+                    setattr(asset, key, _clamp_asset_scale(float(p.get(key))))
+                    changed = True
+            if "opacity" in p:
+                asset.opacity = max(0.05, min(1.0, float(p.get("opacity"))))
+                changed = True
+            if "layer" in p:
+                asset.layer = int(p.get("layer", asset.layer))
+                changed = True
+            if "locked" in p and self._is_gm(room, user_id, client_id):
+                asset.locked = bool(p.get("locked", False))
+                changed = True
+            if changed:
+                room.state.assets[asset.id] = asset
+                self._mark_dirty(room_id, room)
+            return WireEvent(type="ASSET_INSTANCE_UPDATE", payload=asset.model_dump())
+
+        if t == "ASSET_INSTANCE_DELETE":
+            aid = p.get("id")
+            asset = room.state.assets.get(aid)
+            if not asset:
+                return WireEvent(type="ASSET_INSTANCE_DELETE", payload={"id": aid})
+            if not self.can_delete_asset(room, user_id, client_id, asset):
+                return WireEvent(type="ERROR", payload={"message": "Not allowed to delete asset", "id": aid})
+            self._push_history(room)
+            room.state.assets.pop(aid, None)
+            self._remove_order(room.state, "assets", aid)
+            self._mark_dirty(room_id, room)
+            return WireEvent(type="ASSET_INSTANCE_DELETE", payload={"id": aid})
 
         if t == "TOKEN_DELETE":
             token_id = p.get("id")

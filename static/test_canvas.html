@@ -407,6 +407,7 @@
     <label><input type="checkbox" id="layerGrid" checked> Layer Grid</label>
     <label><input type="checkbox" id="layerDraw" checked> Layer Drawings</label>
     <label><input type="checkbox" id="layerShapes" checked> Layer Shapes</label>
+    <label><input type="checkbox" id="layerAssets" checked> Layer Assets</label>
     <label><input type="checkbox" id="layerTokens" checked> Layer Tokens</label>
   </div>
 
@@ -465,6 +466,7 @@
 
       <div class="drawer-tabs">
         <button data-tab="tokens" class="tab-btn active">Tokens</button>
+        <button data-tab="assets" class="tab-btn">Assets</button>
         <button data-tab="rooms" class="tab-btn">Rooms</button>
         <button data-tab="scene" class="tab-btn">Scene</button>
         <button data-tab="players" class="tab-btn">Players</button>
@@ -473,6 +475,7 @@
 
       <div class="drawer-content">
         <div id="tab-tokens" class="drawer-panel active"></div>
+        <div id="tab-assets" class="drawer-panel"></div>
         <div id="tab-rooms" class="drawer-panel"></div>
         <div id="tab-scene" class="drawer-panel"></div>
         <div id="tab-players" class="drawer-panel"></div>
@@ -517,6 +520,7 @@
       <div class="ctx-item" data-action="save_snapshot" data-gm="1">💾 Save snapshot</div>
       <div class="ctx-sep"></div>
       <div class="ctx-item" data-action="open_tokens">📚 Token Library</div>
+      <div class="ctx-item" data-action="open_assets">🖼 Asset Library</div>
       <div class="ctx-item" data-action="open_rooms">🏠 Rooms</div>
       <div class="ctx-item" data-action="open_scene">🎛 Scene</div>
     </div>
@@ -532,6 +536,7 @@
       <div class="ctx-item" data-action="toggle_layer_grid" data-gm="1">Toggle Grid</div>
       <div class="ctx-item" data-action="toggle_layer_drawings" data-gm="1">Toggle Drawings</div>
       <div class="ctx-item" data-action="toggle_layer_shapes" data-gm="1">Toggle Shapes</div>
+      <div class="ctx-item" data-action="toggle_layer_assets" data-gm="1">Toggle Assets</div>
       <div class="ctx-item" data-action="toggle_layer_tokens" data-gm="1">Toggle Tokens</div>
     </div>
     <div id="mapCtx-clear" class="ctx hidden ctx-sub" role="menu" aria-label="Clear menu">
@@ -586,6 +591,23 @@
       <div class="ctx-sep"></div>
       <div class="ctx-item" data-action="ruler_toggle_snap">Toggle Snap</div>
       <div class="ctx-item" data-action="ruler_clear">Clear ruler</div>
+    </div>
+    <div id="assetCtx" class="ctx hidden" role="menu" aria-label="Asset menu">
+      <div class="ctx-title">Asset</div>
+      <div class="ctx-item" data-action="asset_duplicate">Duplicate</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="asset_resize_up">Resize +1 grid</div>
+      <div class="ctx-item" data-action="asset_resize_down">Resize -1 grid</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="asset_rotate_cw">Rotate +15°</div>
+      <div class="ctx-item" data-action="asset_rotate_ccw">Rotate -15°</div>
+      <div class="ctx-item" data-action="asset_rotate_reset">Reset rotation</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="asset_flip_x">Flip horizontal</div>
+      <div class="ctx-item" data-action="asset_flip_y">Flip vertical</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="asset_lock_toggle" data-gm="1">Lock / Unlock</div>
+      <div class="ctx-item danger" data-action="asset_delete">Delete asset</div>
     </div>
     <div id="toolColorPanel" class="ctx hidden" role="dialog" aria-label="Tool color">
       <div id="toolColorTitle" class="ctx-title">Color</div>
@@ -671,6 +693,44 @@
         margin-top:8px;
         display:grid;
         grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+        gap:8px;
+      "></div>
+    </div>
+    <div id="assetPanel" style="
+      position:absolute; top:10px; left:10px;
+      width:min(560px, calc(100vw - 20px));
+      max-height: calc(100vh - 120px);
+      overflow:auto;
+      background: rgba(0,0,0,0.82);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px;
+      display:none;
+      z-index: 3;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <b>Asset Library</b>
+        <button id="assetPanelClose">Close</button>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <input id="assetNameInput" placeholder="Asset name (optional)" style="flex:1; min-width:150px;">
+        <input id="assetTagsInput" placeholder="tags comma-separated" style="flex:1; min-width:170px;">
+      </div>
+      <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <input id="assetFileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+        <button id="assetUploadBtn">Upload</button>
+        <input id="assetZipInput" type="file" accept=".zip,application/zip">
+        <button id="assetZipUploadBtn">Upload ZIP</button>
+        <button id="assetRefreshBtn">Refresh</button>
+      </div>
+      <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+        <input id="assetSearchInput" placeholder="Search assets..." style="flex:1; min-width:180px;">
+        <button id="assetPlaceModeBtn" class="ghost" type="button" title="When enabled, clicking asset cards starts drag-place instead of spawning at center.">Place Mode: On</button>
+      </div>
+      <div id="assetFolderTree" style="margin-top:6px; max-height:180px; overflow:auto; border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:6px; font-size:12px;"></div>
+      <div id="assetGrid" style="
+        margin-top:8px;
+        display:grid;
+        grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
         gap:8px;
       "></div>
     </div>
@@ -765,11 +825,13 @@
   const layerGridEl = document.getElementById("layerGrid");
   const layerDrawEl = document.getElementById("layerDraw");
   const layerShapesEl = document.getElementById("layerShapes");
+  const layerAssetsEl = document.getElementById("layerAssets");
   const layerTokensEl = document.getElementById("layerTokens");
 
   const gmPanel = document.getElementById("gmPanel");
   const roomsPanel = document.getElementById("roomsPanel");
   const libraryPanel = document.getElementById("libraryPanel");
+  const assetPanel = document.getElementById("assetPanel");
   const tokenMenuEl = document.getElementById("tokenMenu");
   const drawer = document.getElementById("drawer");
   const drawerToggle = document.getElementById("drawerToggle");
@@ -782,6 +844,7 @@
   const shapeCtx = document.getElementById("shapeCtx");
   const textCtx = document.getElementById("textCtx");
   const rulerCtx = document.getElementById("rulerCtx");
+  const assetCtx = document.getElementById("assetCtx");
   const toolColorPanel = document.getElementById("toolColorPanel");
   const toolColorTitle = document.getElementById("toolColorTitle");
   const toolColorPicker = document.getElementById("toolColorPicker");
@@ -793,7 +856,7 @@
   const toolTextInput = document.getElementById("toolTextInput");
   const toolTextApply = document.getElementById("toolTextApply");
   const uiTooltip = document.getElementById("uiTooltip");
-  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, textCtx, rulerCtx];
+  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, textCtx, rulerCtx, assetCtx];
   const playerListEl = document.getElementById("playerList");
   const tokenListEl = document.getElementById("tokenList");
   const strokeListEl = document.getElementById("strokeList");
@@ -807,6 +870,17 @@
   const packSelectEl = document.getElementById("packSelect");
   const packSearchEl = document.getElementById("packSearch");
   const packGridEl = document.getElementById("packGrid");
+  const assetNameInputEl = document.getElementById("assetNameInput");
+  const assetTagsInputEl = document.getElementById("assetTagsInput");
+  const assetFileInputEl = document.getElementById("assetFileInput");
+  const assetUploadBtnEl = document.getElementById("assetUploadBtn");
+  const assetZipInputEl = document.getElementById("assetZipInput");
+  const assetZipUploadBtnEl = document.getElementById("assetZipUploadBtn");
+  const assetRefreshBtnEl = document.getElementById("assetRefreshBtn");
+  const assetSearchInputEl = document.getElementById("assetSearchInput");
+  const assetPlaceModeBtnEl = document.getElementById("assetPlaceModeBtn");
+  const assetFolderTreeEl = document.getElementById("assetFolderTree");
+  const assetGridEl = document.getElementById("assetGrid");
 
   const toolEl = document.getElementById("tool");
   const toolBtnMove = document.getElementById("toolBtnMove");
@@ -915,6 +989,37 @@
       method: "POST",
       body: data,
     });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  async function apiUploadAsset(file, name = "", tags = "") {
+    const data = new FormData();
+    data.append("file", file);
+    if (name) data.append("name", name);
+    if (tags) data.append("tags", tags);
+    const res = await fetch("/api/assets/upload", {
+      method: "POST",
+      body: data,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  async function apiUploadAssetZip(file, tags = "") {
+    const data = new FormData();
+    data.append("file", file);
+    if (tags) data.append("tags", tags);
+    const res = await fetch("/api/assets/upload-zip", {
+      method: "POST",
+      body: data,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  async function apiDeleteAsset(assetId) {
+    const res = await fetch(`/api/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   }
@@ -1100,6 +1205,7 @@
     moveControlTo(sceneLayers, "layerGrid");
     moveControlTo(sceneLayers, "layerDraw");
     moveControlTo(sceneLayers, "layerShapes");
+    moveControlTo(sceneLayers, "layerAssets");
     moveControlTo(sceneLayers, "layerTokens");
 
     const settingsTools = drawerSection(tabSettings, "Tool Defaults");
@@ -1133,22 +1239,27 @@
 
   function mountDrawerPanels() {
     const tabTokens = document.getElementById("tab-tokens");
+    const tabAssets = document.getElementById("tab-assets");
     const tabRooms = document.getElementById("tab-rooms");
     const tabPlayers = document.getElementById("tab-players");
 
     if (libraryPanel && tabTokens && libraryPanel.parentElement !== tabTokens) tabTokens.appendChild(libraryPanel);
+    if (assetPanel && tabAssets && assetPanel.parentElement !== tabAssets) tabAssets.appendChild(assetPanel);
     if (roomsPanel && tabRooms && roomsPanel.parentElement !== tabRooms) tabRooms.appendChild(roomsPanel);
     if (gmPanel && tabPlayers && gmPanel.parentElement !== tabPlayers) tabPlayers.appendChild(gmPanel);
 
     normalizePanelForDrawer(libraryPanel);
+    normalizePanelForDrawer(assetPanel);
     normalizePanelForDrawer(roomsPanel);
     normalizePanelForDrawer(gmPanel);
 
     const roomsClose = document.getElementById("roomsPanelClose");
     const libraryClose = document.getElementById("libraryPanelClose");
+    const assetClose = document.getElementById("assetPanelClose");
     const gmClose = document.getElementById("gmPanelClose");
     if (roomsClose) roomsClose.style.display = "none";
     if (libraryClose) libraryClose.style.display = "none";
+    if (assetClose) assetClose.style.display = "none";
     if (gmClose) gmClose.style.display = "none";
 
     mountSceneAndSettingsControls();
@@ -1350,6 +1461,7 @@
     layerGridEl.checked = !!state.layer_visibility.grid;
     layerDrawEl.checked = !!state.layer_visibility.drawings;
     layerShapesEl.checked = !!state.layer_visibility.shapes;
+    layerAssetsEl.checked = !!state.layer_visibility.assets;
     layerTokensEl.checked = !!state.layer_visibility.tokens;
     send("ROOM_SETTINGS", { layer_visibility: state.layer_visibility });
     requestRender();
@@ -1425,6 +1537,10 @@
         if (!isGM()) return;
         setLayerVisibility({ shapes: !state.layer_visibility.shapes });
         break;
+      case "toggle_layer_assets":
+        if (!isGM()) return;
+        setLayerVisibility({ assets: !state.layer_visibility.assets });
+        break;
       case "toggle_layer_tokens":
         if (!isGM()) return;
         setLayerVisibility({ tokens: !state.layer_visibility.tokens });
@@ -1447,6 +1563,83 @@
       case "open_tokens":
         activateDrawerTab("tokens", true);
         break;
+      case "open_assets":
+        activateDrawerTab("assets", true);
+        refreshAssetsPanel();
+        break;
+      case "asset_duplicate": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canEditAssetLocal(a)) break;
+        const id = makeId();
+        const offset = ui.snap ? ui.gridSize : Math.max(24, ui.gridSize * 0.5);
+        const clone = {
+          ...a,
+          id,
+          x: Number(a.x || 0) + offset,
+          y: Number(a.y || 0) + offset,
+          creator_id: myId(),
+          locked: false,
+        };
+        send("ASSET_INSTANCE_CREATE", clone);
+        break;
+      }
+      case "asset_resize_up": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canEditAssetLocal(a)) break;
+        applyAssetUpdate(a.id, assetResizePatch(a, +1), true);
+        break;
+      }
+      case "asset_resize_down": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canEditAssetLocal(a)) break;
+        applyAssetUpdate(a.id, assetResizePatch(a, -1), true);
+        break;
+      }
+      case "asset_rotate_cw": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canEditAssetLocal(a)) break;
+        applyAssetUpdate(a.id, { rotation: Number(a.rotation || 0) + (Math.PI / 12) }, true);
+        break;
+      }
+      case "asset_rotate_ccw": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canEditAssetLocal(a)) break;
+        applyAssetUpdate(a.id, { rotation: Number(a.rotation || 0) - (Math.PI / 12) }, true);
+        break;
+      }
+      case "asset_rotate_reset": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canEditAssetLocal(a)) break;
+        applyAssetUpdate(a.id, { rotation: 0 }, true);
+        break;
+      }
+      case "asset_flip_x": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canEditAssetLocal(a)) break;
+        const sx = signedAssetScale(a.scale_x, 1);
+        applyAssetUpdate(a.id, { scale_x: -sx }, true);
+        break;
+      }
+      case "asset_flip_y": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canEditAssetLocal(a)) break;
+        const sy = signedAssetScale(a.scale_y, 1);
+        applyAssetUpdate(a.id, { scale_y: -sy }, true);
+        break;
+      }
+      case "asset_lock_toggle": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !isGM()) break;
+        applyAssetUpdate(a.id, { locked: !a.locked }, true);
+        break;
+      }
+      case "asset_delete": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canDeleteAssetLocal(a)) break;
+        if (!confirm("Delete selected asset?")) break;
+        send("ASSET_INSTANCE_DELETE", { id: a.id });
+        break;
+      }
       case "open_rooms":
         activateDrawerTab("rooms", true);
         refreshRoomsPanel();
@@ -1690,6 +1883,64 @@
     return !!(shape.creator_id && shape.creator_id === myId());
   }
 
+  function canEditAssetLocal(asset) {
+    if (!asset) return false;
+    if (isGM()) return true;
+    if (state.lockdown) return false;
+    if (asset.locked) return false;
+    if (state.allow_all_move) return true;
+    return !!(asset.creator_id && asset.creator_id === myId());
+  }
+
+  function canDeleteAssetLocal(asset) {
+    if (!asset) return false;
+    if (isGM()) return true;
+    if (state.lockdown) return false;
+    if (asset.locked) return false;
+    return !!(asset.creator_id && asset.creator_id === myId());
+  }
+
+  function signedAssetScale(raw, fallback = 1) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n === 0) return fallback;
+    return n;
+  }
+
+  function assetResizePatch(asset, direction = 1) {
+    const sx = signedAssetScale(asset?.scale_x, 1);
+    const sy = signedAssetScale(asset?.scale_y, 1);
+    const signX = sx < 0 ? -1 : 1;
+    const signY = sy < 0 ? -1 : 1;
+    const absX = Math.abs(sx);
+    const absY = Math.abs(sy);
+    if (!ui.snap) {
+      const f = direction > 0 ? 1.25 : 0.8;
+      return {
+        scale_x: signX * clamp(absX * f, 0.05, 10),
+        scale_y: signY * clamp(absY * f, 0.05, 10),
+      };
+    }
+    const baseW = Math.max(8, Number(asset?.width || ui.gridSize));
+    const cellsW = Math.max(1, Math.round((baseW * absX) / ui.gridSize));
+    const nextCellsW = direction > 0 ? (cellsW + 1) : Math.max(1, cellsW - 1);
+    const nextAbsX = clamp((nextCellsW * ui.gridSize) / baseW, 0.05, 10);
+    const ratio = absY / Math.max(absX, 0.0001);
+    const nextAbsY = clamp(nextAbsX * ratio, 0.05, 10);
+    return {
+      scale_x: signX * nextAbsX,
+      scale_y: signY * nextAbsY,
+    };
+  }
+
+  function applyAssetUpdate(assetId, patch, commit = true) {
+    const current = state.assets.get(assetId);
+    if (!current) return;
+    const next = { ...current, ...patch };
+    state.assets.set(assetId, next);
+    requestRender();
+    send("ASSET_INSTANCE_UPDATE", { id: assetId, ...patch, commit: !!commit });
+  }
+
   function setSelection(ids = [], primaryId = null) {
     selectedTokenIds.clear();
     for (const id of ids) {
@@ -1902,7 +2153,7 @@
       return;
     }
     const t = tool();
-    if (isPanning || (t === "move" && draggingTokenIds.length)) {
+    if (isPanning || (t === "move" && (draggingTokenIds.length || !!draggingAssetId))) {
       canvas.style.cursor = "grabbing";
       return;
     }
@@ -2003,7 +2254,7 @@
       <button
         data-pack-idx="${idx}"
         style="padding:6px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.03); color:#eee; text-align:center;"
-        title="${escapeHtml(t.name)}">
+        title="${escapeHtml(t.name)} (click: token, Alt+click: asset)">
         <div style="width:100%; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#1a1a1a; display:flex; align-items:center; justify-content:center;">
           <img src="${escapeHtml(t.image_url)}" alt="${escapeHtml(t.name)}" style="width:100%; height:100%; object-fit:cover;">
         </div>
@@ -2016,10 +2267,16 @@
       const t = rows[idx];
       if (!t) return;
 
-      btn.onclick = () => spawnPackToken(t);
+      btn.onclick = (e) => {
+        if (e && e.altKey) {
+          spawnPackAsset(t);
+          return;
+        }
+        spawnPackToken(t);
+      };
       btn.onpointerdown = (e) => {
         if (e.button !== 0) return;
-        dragSpawn = { ...t, size_scale: ui.tokenSpawnScale };
+        dragSpawn = { ...t, size_scale: ui.tokenSpawnScale, kind: "token" };
         dragSpawnWorld = null;
         dragSpawnOverCanvas = false;
         e.preventDefault();
@@ -2072,6 +2329,143 @@
     }
   }
 
+  function renderAssetGrid() {
+    if (!assetGridEl) return;
+    const q = (assetState.search || "").trim().toLowerCase();
+    const folder = (assetState.folder || "").trim();
+    const rows = assetState.items.filter((a) => {
+      const fp = String(a.folder_path || "");
+      if (folder && fp !== folder) return false;
+      if (!q) return true;
+      const tags = Array.isArray(a.tags) ? a.tags.join(" ").toLowerCase() : "";
+      return String(a.name || "").toLowerCase().includes(q) || tags.includes(q) || fp.toLowerCase().includes(q);
+    });
+    if (!rows.length) {
+      assetGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">(no assets)</div>`;
+      return;
+    }
+    assetGridEl.innerHTML = rows.map((a, idx) => `
+      <button
+        data-asset-idx="${idx}"
+        style="padding:6px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.03); color:#eee; text-align:center;"
+        title="${escapeHtml(String(a.name || "Asset"))}">
+        <div style="width:100%; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#1a1a1a; display:flex; align-items:center; justify-content:center;">
+          <img src="${escapeHtml(String(a.url_thumb || a.url_original || ""))}" alt="${escapeHtml(String(a.name || "Asset"))}" style="width:100%; height:100%; object-fit:cover;">
+        </div>
+        <div style="margin-top:6px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.name || "Asset"))}</div>
+        <div style="font-size:10px; opacity:.75; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.folder_path || "/"))}</div>
+      </button>
+    `).join("");
+    assetGridEl.querySelectorAll("button[data-asset-idx]").forEach((btn) => {
+      const idx = Number(btn.getAttribute("data-asset-idx"));
+      const a = rows[idx];
+      if (!a) return;
+      btn.onclick = () => {
+        if (assetSuppressCardClick) {
+          assetSuppressCardClick = false;
+          return;
+        }
+        if (assetState.placeMode) {
+          dragSpawn = { ...a, kind: "asset" };
+          dragSpawnWorld = null;
+          dragSpawnOverCanvas = false;
+          updateCanvasCursor();
+          return;
+        }
+        spawnPackAsset(a);
+      };
+      btn.onpointerdown = (e) => {
+        if (!assetState.placeMode) return;
+        if (e.button !== 0) return;
+        assetSuppressCardClick = true;
+        dragSpawn = { ...a, kind: "asset" };
+        dragSpawnWorld = null;
+        dragSpawnOverCanvas = false;
+        updateCanvasCursor();
+        e.preventDefault();
+      };
+      btn.oncontextmenu = async (e) => {
+        e.preventDefault();
+        if (!isGM()) return;
+        if (!confirm(`Delete asset '${a.name || "asset"}'?`)) return;
+        try {
+          await apiDeleteAsset(String(a.asset_id || a.id || ""));
+          await refreshAssetsPanel();
+        } catch (err) {
+          log(`ASSET DELETE ERROR: ${err.message || err}`);
+        }
+      };
+    });
+  }
+
+  function buildAssetFolderTree(paths = []) {
+    const root = { name: "", path: "", children: new Map(), count: 0 };
+    for (const rawPath of paths) {
+      const cleaned = String(rawPath || "").trim().replace(/^\/+|\/+$/g, "");
+      if (!cleaned) continue;
+      const parts = cleaned.split("/").filter(Boolean);
+      let node = root;
+      node.count += 1;
+      let pathAcc = "";
+      for (const part of parts) {
+        pathAcc = pathAcc ? `${pathAcc}/${part}` : part;
+        if (!node.children.has(part)) {
+          node.children.set(part, { name: part, path: pathAcc, children: new Map(), count: 0 });
+        }
+        node = node.children.get(part);
+        node.count += 1;
+      }
+    }
+    return root;
+  }
+
+  function renderAssetFolderTree() {
+    if (!assetFolderTreeEl) return;
+    const allFolders = assetState.items.map((a) => String(a.folder_path || "")).filter(Boolean);
+    const root = buildAssetFolderTree(allFolders);
+    const selected = String(assetState.folder || "");
+    const lines = [];
+
+    const row = (node, depth, hasChildren) => {
+      const isSelected = selected === node.path;
+      const expanded = expandedAssetFolders.has(node.path);
+      const indent = depth * 14;
+      const caret = hasChildren ? (expanded ? "▾" : "▸") : "•";
+      const label = node.path || "All folders";
+      const count = node.path ? node.count : assetState.items.length;
+      lines.push(`
+        <div style="display:flex; align-items:center; gap:6px; padding:2px 4px; border-radius:6px; ${isSelected ? "background:rgba(0,209,255,0.15);" : ""}">
+          <button type="button" data-folder-toggle="${escapeHtml(node.path)}" style="width:16px; text-align:center; background:transparent; border:none; color:#ddd; cursor:${hasChildren ? "pointer" : "default"};">${caret}</button>
+          <button type="button" data-folder-select="${escapeHtml(node.path)}" style="flex:1; text-align:left; background:transparent; border:none; color:${isSelected ? "#fff" : "#ddd"}; cursor:pointer; padding-left:${indent}px;">
+            ${escapeHtml(label)} <span style="opacity:.65">(${count})</span>
+          </button>
+        </div>
+      `);
+    };
+
+    const walk = (node, depth) => {
+      const children = Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name));
+      row(node, depth, children.length > 0);
+      if (!children.length || !expandedAssetFolders.has(node.path)) return;
+      for (const child of children) walk(child, depth + 1);
+    };
+    walk(root, 0);
+    assetFolderTreeEl.innerHTML = lines.join("") || `<div style="opacity:.75;">(no folders)</div>`;
+  }
+
+  async function refreshAssetsPanel() {
+    try {
+      const data = await apiGet(`/api/assets`);
+      assetState.items = Array.isArray(data.assets) ? data.assets : [];
+      renderAssetFolderTree();
+      renderAssetGrid();
+    } catch (e) {
+      assetState.items = [];
+      if (assetGridEl) assetGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Asset load failed</div>`;
+      log(`ASSETS ERROR: ${e.message || e}`);
+    }
+  }
+
   function spawnPackToken(packToken, x = null, y = null) {
     const id = makeId();
     let wx = x;
@@ -2104,6 +2498,45 @@
     send("TOKEN_CREATE", token);
   }
 
+  function spawnPackAsset(packToken, x = null, y = null) {
+    const id = makeId();
+    let wx = x;
+    let wy = y;
+    if (wx === null || wy === null) {
+      const w = canvas.getBoundingClientRect().width;
+      const h = canvas.getBoundingClientRect().height;
+      const centerWorld = screenToWorld(w / 2, h / 2);
+      wx = snap(centerWorld.x + (Math.random() * 80 - 40));
+      wy = snap(centerWorld.y + (Math.random() * 80 - 40));
+    }
+    const base = ui.gridSize;
+    const width = Math.max(8, Number(packToken.width || base));
+    const height = Math.max(8, Number(packToken.height || base));
+    const asset = {
+      id,
+      asset_id: packToken.asset_id || packToken.id || null,
+      image_url: packToken.url_original || packToken.image_url || "",
+      x: wx,
+      y: wy,
+      width,
+      height,
+      scale_x: clamp(Number(packToken.size_scale ?? 1), 0.05, 10),
+      scale_y: clamp(Number(packToken.size_scale ?? 1), 0.05, 10),
+      rotation: 0,
+      opacity: 1,
+      layer: 0,
+      locked: false,
+      creator_id: myId(),
+    };
+    if (online) {
+      state.assets.set(id, asset);
+      state.draw_order.assets = state.draw_order.assets.filter((aid) => aid !== id);
+      state.draw_order.assets.push(id);
+      requestRender();
+    }
+    send("ASSET_INSTANCE_CREATE", asset);
+  }
+
   let ws = null;
   let wsConnectSeq = 0;
   let appInitialized = false;
@@ -2133,6 +2566,9 @@
     "SHAPE_UPDATE",
     "SHAPE_DELETE",
     "SHAPE_SET_LOCK",
+    "ASSET_INSTANCE_CREATE",
+    "ASSET_INSTANCE_UPDATE",
+    "ASSET_INSTANCE_DELETE",
   ]);
   const WATCHDOG_MUTATION_EVENTS = new Set([
     "ROOM_SETTINGS",
@@ -2152,6 +2588,9 @@
     "SHAPE_UPDATE",
     "SHAPE_DELETE",
     "SHAPE_SET_LOCK",
+    "ASSET_INSTANCE_CREATE",
+    "ASSET_INSTANCE_UPDATE",
+    "ASSET_INSTANCE_DELETE",
   ]);
 
   const state = {
@@ -2164,12 +2603,13 @@
     background_url: null,
     terrain_seed: 1,
     terrain_style: "grassland",
-    layer_visibility: { grid: true, drawings: true, shapes: true, tokens: true },
-    draw_order: { strokes: [], shapes: [] },
+    layer_visibility: { grid: true, drawings: true, shapes: true, assets: true, tokens: true },
+    draw_order: { strokes: [], shapes: [], assets: [] },
     version: 0,
     tokens: new Map(),
     strokes: new Map(),
     shapes: new Map(),
+    assets: new Map(),
   };
   const packState = {
     packs: [],
@@ -2177,6 +2617,14 @@
     tokens: [],
     search: "",
   };
+  const assetState = {
+    items: [],
+    search: "",
+    folder: "",
+    placeMode: true,
+  };
+  let assetSuppressCardClick = false;
+  const expandedAssetFolders = new Set([""]);
 
   function myId() { return cidEl.value.trim(); }
   function isGM() { return state.gm_id && myId() === state.gm_id; }
@@ -2194,9 +2642,12 @@
   const ui = { gridSize: 50, snap: true, showGrid: true, feetPerSq: 5, tokenSpawnScale: 1.0, textDraft: "Text", textFontSize: 24 };
 
   let draggingTokenId = null;
+  let draggingAssetId = null;
   let draggingShapeId = null;
   let selectedTokenId = null;
+  let selectedAssetId = null;
   let selectedShapeId = null;
+  let assetDragOrigin = null;
   let hoveredTokenId = null;
   let dragOffset = { x: 0, y: 0 };
   let shapeDragOrigin = null;
@@ -2667,7 +3118,7 @@
     document.getElementById("undo").disabled = !gm;
     document.getElementById("redo").disabled = !gm;
 
-    [layerGridEl, layerDrawEl, layerShapesEl, layerTokensEl].forEach((el) => { el.disabled = !gm; });
+    [layerGridEl, layerDrawEl, layerShapesEl, layerAssetsEl, layerTokensEl].forEach((el) => { el.disabled = !gm; });
 
     allowPlayersMoveEl.checked = !!state.allow_players_move;
     allowAllMoveEl.checked = !!state.allow_all_move;
@@ -2675,6 +3126,7 @@
     layerGridEl.checked = !!state.layer_visibility.grid;
     layerDrawEl.checked = !!state.layer_visibility.drawings;
     layerShapesEl.checked = !!state.layer_visibility.shapes;
+    layerAssetsEl.checked = !!state.layer_visibility.assets;
     layerTokensEl.checked = !!state.layer_visibility.tokens;
     bgUrlEl.value = state.background_url || "";
     terrainBgEl.checked = state.background_mode === "terrain";
@@ -2882,6 +3334,14 @@
     return (ui.gridSize * s) / 2;
   }
 
+  function assetHalfSizeWorld(asset = null) {
+    const w = Math.max(8, Number(asset?.width || ui.gridSize));
+    const h = Math.max(8, Number(asset?.height || ui.gridSize));
+    const sx = Math.abs(signedAssetScale(asset?.scale_x, 1));
+    const sy = Math.abs(signedAssetScale(asset?.scale_y, 1));
+    return { hw: (w * sx) / 2, hh: (h * sy) / 2 };
+  }
+
   function hitTestToken(wx, wy) {
     let best = null;
     let bestD2 = Infinity;
@@ -2893,6 +3353,18 @@
       if (d2 <= r * r && d2 < bestD2) { best = id; bestD2 = d2; }
     }
     return best;
+  }
+
+  function hitTestAsset(wx, wy) {
+    const order = state.draw_order?.assets || [];
+    for (let i = order.length - 1; i >= 0; i--) {
+      const id = order[i];
+      const a = state.assets.get(id);
+      if (!a) continue;
+      const { hw, hh } = assetHalfSizeWorld(a);
+      if (wx >= a.x - hw && wx <= a.x + hw && wy >= a.y - hh && wy <= a.y + hh) return id;
+    }
+    return null;
   }
 
   function pointToSegmentDistance(wx, wy, x1, y1, x2, y2) {
@@ -3166,6 +3638,47 @@
     if (activeShapePreview) drawOneShape(activeShapePreview, true);
   }
 
+  function drawAssets() {
+    if (!state.layer_visibility.assets) return;
+    const ids = [...(state.draw_order.assets || [])];
+    ids.sort((a, b) => {
+      const aa = state.assets.get(a);
+      const bb = state.assets.get(b);
+      return Number(aa?.layer || 0) - Number(bb?.layer || 0);
+    });
+    for (const id of ids) {
+      const a = state.assets.get(id);
+      if (!a) continue;
+      const s = worldToScreen(a.x, a.y);
+      const { hw, hh } = assetHalfSizeWorld(a);
+      const w = hw * 2 * cam.z;
+      const h = hh * 2 * cam.z;
+      const opacity = clamp(Number(a.opacity ?? 1), 0.05, 1);
+      const angle = Number(a.rotation || 0);
+      const sxSign = signedAssetScale(a.scale_x, 1) < 0 ? -1 : 1;
+      const sySign = signedAssetScale(a.scale_y, 1) < 0 ? -1 : 1;
+      const img = tokenImage(a.image_url || "");
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      if (angle) ctx.rotate(angle);
+      if (sxSign < 0 || sySign < 0) ctx.scale(sxSign, sySign);
+      ctx.globalAlpha = opacity;
+      if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        ctx.drawImage(img, -w / 2, -h / 2, w, h);
+      } else {
+        ctx.fillStyle = "rgba(200,200,200,0.25)";
+        ctx.fillRect(-w / 2, -h / 2, w, h);
+      }
+      const selected = id === selectedAssetId;
+      if (selected || a.locked) {
+        ctx.lineWidth = Math.max(2, 2 * cam.z);
+        ctx.strokeStyle = selected ? "#00d1ff" : "rgba(255,0,0,0.85)";
+        ctx.strokeRect(-w / 2, -h / 2, w, h);
+      }
+      ctx.restore();
+    }
+  }
+
   function drawTokenBadges(t, s, r) {
     const badges = normalizedBadgeList(t?.badges);
     if (!badges.length) return;
@@ -3308,6 +3821,31 @@
   function drawDragSpawnGhost() {
     if (!dragSpawn || !dragSpawnWorld || !dragSpawnOverCanvas) return;
     const s = worldToScreen(dragSpawnWorld.x, dragSpawnWorld.y);
+    if (dragSpawn.kind === "asset") {
+      const w = Math.max(8, Number(dragSpawn.width || ui.gridSize)) * cam.z;
+      const h = Math.max(8, Number(dragSpawn.height || ui.gridSize)) * cam.z;
+      ctx.save();
+      ctx.globalAlpha = 0.7;
+      if (dragSpawn.url_original || dragSpawn.image_url) {
+        const img = tokenImage(dragSpawn.url_original || dragSpawn.image_url);
+        if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+          ctx.drawImage(img, s.x - w / 2, s.y - h / 2, w, h);
+        } else {
+          ctx.fillStyle = "rgba(220,220,220,0.3)";
+          ctx.fillRect(s.x - w / 2, s.y - h / 2, w, h);
+        }
+      } else {
+        ctx.fillStyle = "rgba(220,220,220,0.3)";
+        ctx.fillRect(s.x - w / 2, s.y - h / 2, w, h);
+      }
+      ctx.lineWidth = Math.max(2, 2 * cam.z);
+      ctx.setLineDash([7, 5]);
+      ctx.strokeStyle = "rgba(255,255,255,0.95)";
+      ctx.strokeRect(s.x - w / 2, s.y - h / 2, w, h);
+      ctx.setLineDash([]);
+      ctx.restore();
+      return;
+    }
     const r = tokenRadiusWorld(dragSpawn) * cam.z;
     ctx.save();
     ctx.globalAlpha = 0.7;
@@ -3389,6 +3927,7 @@
     drawGrid();
     drawStrokes();
     drawShapes();
+    drawAssets();
     drawTokens();
     drawMarqueeSelection();
     drawSelectionCountBadge();
@@ -3414,9 +3953,11 @@
     isPanning = false;
     pointerCaptured = false;
     draggingTokenId = null;
+    draggingAssetId = null;
     draggingTokenIds = [];
     dragMoveStartWorld = null;
     dragStartTokenPositions.clear();
+    assetDragOrigin = null;
     marqueeSelectRect = null;
     dragSpawn = null;
     dragSpawnWorld = null;
@@ -3435,6 +3976,7 @@
       grid: s.layer_visibility?.grid ?? true,
       drawings: s.layer_visibility?.drawings ?? true,
       shapes: s.layer_visibility?.shapes ?? true,
+      assets: s.layer_visibility?.assets ?? true,
       tokens: s.layer_visibility?.tokens ?? true,
     };
     state.version = s.version || 0;
@@ -3447,15 +3989,20 @@
     for (const [id, st] of Object.entries(s.strokes || {})) state.strokes.set(id, st);
     state.shapes.clear();
     for (const [id, sh] of Object.entries(s.shapes || {})) state.shapes.set(id, sh);
+    state.assets.clear();
+    for (const [id, a] of Object.entries(s.assets || {})) state.assets.set(id, a);
     state.draw_order = {
       strokes: Array.isArray(s.draw_order?.strokes) ? s.draw_order.strokes.filter((id) => state.strokes.has(id)) : [],
       shapes: Array.isArray(s.draw_order?.shapes) ? s.draw_order.shapes.filter((id) => state.shapes.has(id)) : [],
+      assets: Array.isArray(s.draw_order?.assets) ? s.draw_order.assets.filter((id) => state.assets.has(id)) : [],
     };
     for (const id of state.strokes.keys()) if (!state.draw_order.strokes.includes(id)) state.draw_order.strokes.push(id);
     for (const id of state.shapes.keys()) if (!state.draw_order.shapes.includes(id)) state.draw_order.shapes.push(id);
+    for (const id of state.assets.keys()) if (!state.draw_order.assets.includes(id)) state.draw_order.assets.push(id);
 
     if (selectedTokenId && !state.tokens.has(selectedTokenId)) selectedTokenId = null;
     if (selectedShapeId && !state.shapes.has(selectedShapeId)) selectedShapeId = null;
+    if (selectedAssetId && !state.assets.has(selectedAssetId)) selectedAssetId = null;
     setSelection(selectedIdsArray(), selectedTokenId);
     if (hoveredTokenId && !state.tokens.has(hoveredTokenId)) hoveredTokenId = null;
     players.add(myId());
@@ -3486,9 +4033,11 @@
       tokens: toPlainObjectMap(state.tokens),
       strokes: toPlainObjectMap(state.strokes),
       shapes: toPlainObjectMap(state.shapes),
+      assets: toPlainObjectMap(state.assets),
       draw_order: {
         strokes: [...(state.draw_order?.strokes || [])],
         shapes: [...(state.draw_order?.shapes || [])],
+        assets: [...(state.draw_order?.assets || [])],
       },
     };
   }
@@ -3501,6 +4050,7 @@
   const OFFLINE_MUTATION_TYPES = new Set([
     "ROOM_SETTINGS", "TOKEN_CREATE", "TOKEN_DELETE", "TOKEN_ASSIGN", "TOKEN_RENAME", "TOKEN_SET_SIZE", "TOKEN_SET_LOCK",
     "TOKEN_BADGE_TOGGLE", "TOKEN_MOVE", "STROKE_ADD", "STROKE_DELETE", "STROKE_SET_LOCK", "ERASE_AT", "SHAPE_ADD", "SHAPE_UPDATE", "SHAPE_DELETE", "SHAPE_SET_LOCK",
+    "ASSET_INSTANCE_CREATE", "ASSET_INSTANCE_UPDATE", "ASSET_INSTANCE_DELETE",
   ]);
 
   function saveOfflineStateNow() {
@@ -3793,6 +4343,48 @@
       return;
     }
 
+    if (type === "ASSET_INSTANCE_CREATE") {
+      const p = payload;
+      if (p?.id) {
+        const next = { ...p };
+        if (!next.creator_id) next.creator_id = myId();
+        state.assets.set(p.id, next);
+        state.draw_order.assets = state.draw_order.assets.filter((id) => id !== p.id);
+        state.draw_order.assets.push(p.id);
+      }
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "ASSET_INSTANCE_UPDATE") {
+      const p = payload;
+      if (p?.id) {
+        const current = state.assets.get(p.id) || {};
+        const next = { ...current, ...p };
+        if (!next.creator_id) next.creator_id = myId();
+        state.assets.set(p.id, next);
+        if (!state.draw_order.assets.includes(p.id)) state.draw_order.assets.push(p.id);
+      }
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "ASSET_INSTANCE_DELETE") {
+      const id = payload?.id;
+      state.assets.delete(id);
+      state.draw_order.assets = state.draw_order.assets.filter((x) => x !== id);
+      if (selectedAssetId === id) selectedAssetId = null;
+      if (draggingAssetId === id) {
+        draggingAssetId = null;
+        assetDragOrigin = null;
+      }
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
     if (type === "ERASE_AT") {
       const x = Number(payload.x || 0);
       const y = Number(payload.y || 0);
@@ -3923,11 +4515,15 @@
     state.tokens.clear();
     state.strokes.clear();
     state.shapes.clear();
-    state.draw_order = { strokes: [], shapes: [] };
+    state.assets.clear();
+    state.draw_order = { strokes: [], shapes: [], assets: [] };
     selectedTokenId = null;
+    selectedAssetId = null;
     selectedShapeId = null;
     setSelection([]);
     hoveredTokenId = null;
+    draggingAssetId = null;
+    assetDragOrigin = null;
     draggingShapeId = null;
     shapeDragOrigin = null;
     dragSpawn = null;
@@ -4211,6 +4807,40 @@
         return;
       }
 
+      if (ev.type === "ASSET_INSTANCE_CREATE") {
+        const p = ev.payload;
+        if (p?.id) {
+          state.assets.set(p.id, p);
+          state.draw_order.assets = state.draw_order.assets.filter((id) => id !== p.id);
+          state.draw_order.assets.push(p.id);
+        }
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "ASSET_INSTANCE_UPDATE") {
+        const p = ev.payload;
+        if (p?.id) {
+          state.assets.set(p.id, { ...(state.assets.get(p.id) || {}), ...p });
+          if (!state.draw_order.assets.includes(p.id)) state.draw_order.assets.push(p.id);
+        }
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "ASSET_INSTANCE_DELETE") {
+        const aid = ev.payload?.id;
+        state.assets.delete(aid);
+        state.draw_order.assets = state.draw_order.assets.filter((id) => id !== aid);
+        if (selectedAssetId === aid) selectedAssetId = null;
+        if (draggingAssetId === aid) {
+          draggingAssetId = null;
+          assetDragOrigin = null;
+        }
+        requestRender();
+        return;
+      }
+
       if (ev.type === "STROKE_ADD") {
         const p = ev.payload;
         if (p?.id) {
@@ -4339,6 +4969,7 @@
 
   document.getElementById("spawn").onclick = () => {
     dragSpawn = {
+      kind: "token",
       name: "Token",
       color: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
       image_url: null,
@@ -4356,7 +4987,11 @@
   drawerToggle.onclick = () => drawer.classList.toggle("hidden");
   drawerClose.onclick = () => drawer.classList.add("hidden");
   document.querySelectorAll(".tab-btn").forEach((btn) => {
-    btn.addEventListener("click", () => activateDrawerTab(btn.dataset.tab, true));
+    btn.addEventListener("click", () => {
+      activateDrawerTab(btn.dataset.tab, true);
+      if (btn.dataset.tab === "assets") refreshAssetsPanel();
+      if (btn.dataset.tab === "tokens") refreshPacks();
+    });
   });
   try {
     mountDrawerPanels();
@@ -4590,6 +5225,71 @@
   };
   document.getElementById("libraryPanelClose").onclick = () => { drawer.classList.add("hidden"); };
   document.getElementById("refreshPacksBtn").onclick = () => refreshPacks();
+  document.getElementById("assetPanelClose").onclick = () => { drawer.classList.add("hidden"); };
+  if (assetRefreshBtnEl) assetRefreshBtnEl.onclick = () => refreshAssetsPanel();
+  if (assetSearchInputEl) assetSearchInputEl.addEventListener("input", () => {
+    assetState.search = assetSearchInputEl.value || "";
+    renderAssetGrid();
+  });
+  if (assetPlaceModeBtnEl) {
+    const syncPlaceModeBtn = () => {
+      assetPlaceModeBtnEl.textContent = assetState.placeMode ? "Place Mode: On" : "Place Mode: Off";
+      assetPlaceModeBtnEl.classList.toggle("primary", assetState.placeMode);
+    };
+    assetPlaceModeBtnEl.onclick = () => {
+      assetState.placeMode = !assetState.placeMode;
+      syncPlaceModeBtn();
+    };
+    syncPlaceModeBtn();
+  }
+  if (assetFolderTreeEl) assetFolderTreeEl.addEventListener("click", (e) => {
+    const toggle = e.target.closest("[data-folder-toggle]");
+    if (toggle) {
+      const path = String(toggle.getAttribute("data-folder-toggle") || "");
+      if (expandedAssetFolders.has(path)) expandedAssetFolders.delete(path);
+      else expandedAssetFolders.add(path);
+      renderAssetFolderTree();
+      return;
+    }
+    const selectBtn = e.target.closest("[data-folder-select]");
+    if (selectBtn) {
+      assetState.folder = String(selectBtn.getAttribute("data-folder-select") || "");
+      renderAssetFolderTree();
+      renderAssetGrid();
+    }
+  });
+  if (assetUploadBtnEl) assetUploadBtnEl.onclick = async () => {
+    const file = assetFileInputEl?.files && assetFileInputEl.files[0];
+    if (!file) {
+      log("ASSET UPLOAD ERROR: choose a file first");
+      return;
+    }
+    try {
+      await apiUploadAsset(file, String(assetNameInputEl?.value || "").trim(), String(assetTagsInputEl?.value || "").trim());
+      if (assetFileInputEl) assetFileInputEl.value = "";
+      if (assetNameInputEl) assetNameInputEl.value = "";
+      if (assetTagsInputEl) assetTagsInputEl.value = "";
+      await refreshAssetsPanel();
+      log("Asset uploaded.");
+    } catch (e) {
+      log(`ASSET UPLOAD ERROR: ${e.message || e}`);
+    }
+  };
+  if (assetZipUploadBtnEl) assetZipUploadBtnEl.onclick = async () => {
+    const file = assetZipInputEl?.files && assetZipInputEl.files[0];
+    if (!file) {
+      log("ASSET ZIP ERROR: choose a zip file first");
+      return;
+    }
+    try {
+      const out = await apiUploadAssetZip(file, String(assetTagsInputEl?.value || "").trim());
+      if (assetZipInputEl) assetZipInputEl.value = "";
+      await refreshAssetsPanel();
+      log(`ZIP imported: ${out.created_count || 0} assets`);
+    } catch (e) {
+      log(`ASSET ZIP ERROR: ${e.message || e}`);
+    }
+  };
   packSelectEl.addEventListener("change", async () => {
     packState.selectedPackId = packSelectEl.value;
     await loadPack(packState.selectedPackId);
@@ -4812,6 +5512,7 @@
         grid: layerGridEl.checked,
         drawings: layerDrawEl.checked,
         shapes: layerShapesEl.checked,
+        assets: layerAssetsEl.checked,
         tokens: layerTokensEl.checked,
       },
     });
@@ -4819,6 +5520,7 @@
   layerGridEl.addEventListener("change", sendLayerVisibility);
   layerDrawEl.addEventListener("change", sendLayerVisibility);
   layerShapesEl.addEventListener("change", sendLayerVisibility);
+  layerAssetsEl.addEventListener("change", sendLayerVisibility);
   layerTokensEl.addEventListener("change", sendLayerVisibility);
 
   function refreshUI() {
@@ -4837,6 +5539,7 @@
   refreshGmUI();
   snapshotRoomLabelEl.textContent = roomEl.value.trim();
   refreshPacks();
+  refreshAssetsPanel();
 
   function tool() { return toolEl.value; }
   function isShapeTool(v) { return v === "rect" || v === "circle" || v === "line"; }
@@ -4938,6 +5641,14 @@
         if (canDeleteTokenLocal(tok)) send("TOKEN_DELETE", { id });
       }
       e.preventDefault();
+      return;
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedAssetId) {
+      const a = state.assets.get(selectedAssetId);
+      if (canDeleteAssetLocal(a)) {
+        send("ASSET_INSTANCE_DELETE", { id: selectedAssetId });
+        e.preventDefault();
+      }
     }
   });
   window.addEventListener("keyup", (e) => {
@@ -5011,6 +5722,21 @@
       }
       return;
     }
+    const assetHit = hitTestAsset(wpos.x, wpos.y);
+    if (assetHit) {
+      selectedAssetId = assetHit;
+      selectedShapeId = null;
+      selectedTokenId = null;
+      closeTokenMenu();
+      const a = state.assets.get(assetHit);
+      if (a && (canEditAssetLocal(a) || canDeleteAssetLocal(a))) {
+        const lockItem = assetCtx?.querySelector('[data-action="asset_lock_toggle"]');
+        if (lockItem) lockItem.style.display = isGM() ? "flex" : "none";
+        showContextMenu(assetCtx, e.clientX, e.clientY);
+      }
+      requestRender();
+      return;
+    }
     const shapeHit = hitTestShape(wpos.x, wpos.y);
     if (shapeHit) {
       selectedShapeId = shapeHit;
@@ -5058,6 +5784,20 @@
         requestRender();
         return;
       }
+      const assetHit = hit ? null : hitTestAsset(wpos.x, wpos.y);
+      if (assetHit) {
+        selectedAssetId = assetHit;
+        selectedShapeId = null;
+        selectedTokenId = null;
+        const a = state.assets.get(assetHit);
+        if (a && (canEditAssetLocal(a) || canDeleteAssetLocal(a))) {
+          const lockItem = assetCtx?.querySelector('[data-action="asset_lock_toggle"]');
+          if (lockItem) lockItem.style.display = isGM() ? "flex" : "none";
+          showContextMenu(assetCtx, e.clientX, e.clientY);
+        }
+        requestRender();
+        return;
+      }
       const shapeHit = hit ? null : hitTestShape(wpos.x, wpos.y);
       if (shapeHit) {
         selectedShapeId = shapeHit;
@@ -5076,7 +5816,8 @@
 
     if (t === "move") {
       const hit = hitTestToken(wpos.x, wpos.y);
-      const shapeHitRaw = hit ? null : hitTestShape(wpos.x, wpos.y);
+      const assetHit = hit ? null : hitTestAsset(wpos.x, wpos.y);
+      const shapeHitRaw = (hit || assetHit) ? null : hitTestShape(wpos.x, wpos.y);
       let shapeHit = shapeHitRaw;
       if (!hit && !shapeHit && selectedShapeId) {
         const selectedShape = state.shapes.get(selectedShapeId);
@@ -5086,6 +5827,7 @@
       }
       if (hit) {
         selectedTokenId = hit;
+        selectedAssetId = null;
         selectedShapeId = null;
         if (isShiftDown) {
           toggleSelection(hit);
@@ -5105,8 +5847,31 @@
           const tok = state.tokens.get(id);
           if (tok) dragStartTokenPositions.set(id, { x: tok.x, y: tok.y });
         }
+      } else if (assetHit) {
+        selectedTokenId = null;
+        selectedAssetId = assetHit;
+        selectedShapeId = null;
+        const a = state.assets.get(assetHit);
+        if (canEditAssetLocal(a)) {
+          draggingAssetId = assetHit;
+          draggingTokenId = null;
+          draggingTokenIds = [];
+          draggingShapeId = null;
+          dragMoveStartWorld = null;
+          dragStartTokenPositions.clear();
+          shapeDragOrigin = null;
+          if (a) {
+            assetDragOrigin = { wx: wpos.x, wy: wpos.y, x: Number(a.x || 0), y: Number(a.y || 0) };
+          } else {
+            assetDragOrigin = null;
+          }
+        } else {
+          draggingAssetId = null;
+          assetDragOrigin = null;
+        }
       } else if (shapeHit) {
         selectedTokenId = null;
+        selectedAssetId = null;
         selectedShapeId = shapeHit;
         const sh = state.shapes.get(shapeHit);
         if (canEditShapeLocal(sh)) {
@@ -5126,8 +5891,11 @@
         }
       } else {
         selectedTokenId = null;
+        selectedAssetId = null;
         selectedShapeId = null;
         draggingTokenId = null;
+        draggingAssetId = null;
+        assetDragOrigin = null;
         draggingTokenIds = [];
         dragMoveStartWorld = null;
         dragStartTokenPositions.clear();
@@ -5256,6 +6024,29 @@
       return;
     }
 
+    if (t === "move" && draggingAssetId && assetDragOrigin) {
+      const a = state.assets.get(draggingAssetId);
+      if (!a) return;
+      const dx = wpos.x - assetDragOrigin.wx;
+      const dy = wpos.y - assetDragOrigin.wy;
+      let x = assetDragOrigin.x + dx;
+      let y = assetDragOrigin.y + dy;
+      if (ui.snap) {
+        x = snap(x);
+        y = snap(y);
+      }
+      a.x = x;
+      a.y = y;
+      state.assets.set(draggingAssetId, a);
+      requestRender();
+      const now = Date.now();
+      if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
+        lastMoveSentAt = now;
+        send("ASSET_INSTANCE_UPDATE", { id: draggingAssetId, x, y, commit: false });
+      }
+      return;
+    }
+
     if (t === "move" && draggingShapeId && shapeDragOrigin) {
       const sh = state.shapes.get(draggingShapeId);
       if (!sh) return;
@@ -5365,7 +6156,11 @@
   function endPointer(e) {
     if (dragSpawn) {
       if (dragSpawnWorld && dragSpawnOverCanvas) {
-        spawnPackToken(dragSpawn, snap(dragSpawnWorld.x), snap(dragSpawnWorld.y));
+        if (dragSpawn.kind === "asset") {
+          spawnPackAsset(dragSpawn, snap(dragSpawnWorld.x), snap(dragSpawnWorld.y));
+        } else {
+          spawnPackToken(dragSpawn, snap(dragSpawnWorld.x), snap(dragSpawnWorld.y));
+        }
       }
       dragSpawn = null;
       dragSpawnWorld = null;
@@ -5382,8 +6177,10 @@
     const t = tool();
     const movedTokenIds = draggingTokenIds.slice();
     const movedTokenId = draggingTokenId;
+    const movedAssetId = draggingAssetId;
     const movedShapeId = draggingShapeId;
     draggingTokenId = null;
+    draggingAssetId = null;
     draggingShapeId = null;
     const hadMarquee = !!marqueeSelectRect;
     const finalMarqueeRect = marqueeSelectRect
@@ -5395,6 +6192,7 @@
     draggingTokenIds = [];
     dragMoveStartWorld = null;
     dragStartTokenPositions.clear();
+    assetDragOrigin = null;
 
     if (t === "move" && hadMarquee && finalMarqueeRect) {
       const hitIds = [];
@@ -5428,6 +6226,12 @@
         });
       } else if (moves.length > 1) {
         send("TOKENS_MOVE", { moves, commit: true, move_seq: activeDragMoveSeq, move_client: localMoveClientId });
+      }
+    }
+    if (t === "move" && movedAssetId) {
+      const a = state.assets.get(movedAssetId);
+      if (a) {
+        send("ASSET_INSTANCE_UPDATE", { id: movedAssetId, x: a.x, y: a.y, commit: true });
       }
     }
     activeDragMoveSeq = null;

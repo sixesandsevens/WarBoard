@@ -31,6 +31,9 @@ EventType = Literal[
     "SHAPE_UPDATE",
     "SHAPE_DELETE",
     "SHAPE_SET_LOCK",
+    "ASSET_INSTANCE_CREATE",
+    "ASSET_INSTANCE_UPDATE",
+    "ASSET_INSTANCE_DELETE",
     "ERROR",
 ]
 
@@ -82,6 +85,23 @@ class Shape(BaseModel):
     layer: Literal["map", "draw", "notes"] = "draw"
 
 
+class AssetInstance(BaseModel):
+    id: str
+    asset_id: Optional[str] = None
+    image_url: str
+    x: float
+    y: float
+    width: float = 64.0
+    height: float = 64.0
+    scale_x: float = 1.0
+    scale_y: float = 1.0
+    rotation: float = 0.0
+    opacity: float = 1.0
+    layer: int = 0
+    creator_id: Optional[str] = None
+    locked: bool = False
+
+
 class RoomState(BaseModel):
     room_id: str
     version: int = 0
@@ -96,12 +116,13 @@ class RoomState(BaseModel):
     terrain_seed: int = 1
     terrain_style: Literal["grassland", "dirt", "snow", "desert"] = "grassland"
     layer_visibility: Dict[str, bool] = Field(
-        default_factory=lambda: {"grid": True, "drawings": True, "shapes": True, "tokens": True}
+        default_factory=lambda: {"grid": True, "drawings": True, "shapes": True, "assets": True, "tokens": True}
     )
     tokens: Dict[str, Token] = Field(default_factory=dict)
     strokes: Dict[str, Stroke] = Field(default_factory=dict)
     shapes: Dict[str, Shape] = Field(default_factory=dict)
-    draw_order: Dict[str, List[str]] = Field(default_factory=lambda: {"strokes": [], "shapes": []})
+    assets: Dict[str, AssetInstance] = Field(default_factory=dict)
+    draw_order: Dict[str, List[str]] = Field(default_factory=lambda: {"strokes": [], "shapes": [], "assets": []})
 
 
 class ClientHello(BaseModel):

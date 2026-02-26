@@ -5,16 +5,19 @@ import base64
 import hashlib
 import hmac
 import importlib.util
+import io
 import json
 import logging
+import posixpath
 import secrets
 import time
 import uuid
+import zipfile
 from collections import deque
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 try:
@@ -26,10 +29,12 @@ from .models import RoomState, WireEvent
 from .rooms import RoomManager
 from .storage import (
     add_membership,
+    create_asset_record,
     create_room_record,
     create_session,
     create_snapshot,
     create_user,
+    delete_asset_record,
     delete_room_record,
     delete_session,
     ensure_room_join_code,
@@ -38,6 +43,7 @@ from .storage import (
     get_user_by_username,
     init_db,
     is_member,
+    list_assets_for_user,
     list_rooms_for_user,
     list_snapshots,
     load_room_state_json,
@@ -56,7 +62,12 @@ PACKS_DIR = BASE_DIR / "packs"
 STATIC_DIR = BASE_DIR / "static"
 UPLOADS_DIR = BASE_DIR / "data" / "uploads"
 BG_UPLOADS_DIR = UPLOADS_DIR / "backgrounds"
+ASSET_UPLOADS_DIR = UPLOADS_DIR / "assets"
 MAX_BACKGROUND_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_ASSET_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_ZIP_UPLOAD_BYTES = 200 * 1024 * 1024
+MAX_ZIP_ASSET_FILES = 1500
+MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 600 * 1024 * 1024
 ALLOWED_BACKGROUND_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 CONTENT_TYPE_TO_EXT = {
     "image/png": ".png",
@@ -124,6 +135,19 @@ def _safe_pack_id(pack_id: str) -> str:
 def _safe_room_id(room_id: str) -> str:
     cleaned = "".join(ch for ch in (room_id or "") if ch.isalnum() or ch in ("-", "_"))
     return cleaned.strip()
+
+
+def _safe_zip_member_path(raw_name: str) -> tuple[str, str]:
+    # Normalize zip paths and reject traversal/absolute paths.
+    name = str(raw_name or "").replace("\\", "/").strip()
+    norm = posixpath.normpath(name)
+    if not norm or norm in (".", "/") or norm.startswith("/") or norm.startswith("../") or "/../" in norm:
+        return "", ""
+    folder = posixpath.dirname(norm)
+    if folder in (".", "/"):
+        folder = ""
+    base = posixpath.basename(norm)
+    return folder.strip("/"), base
 
 
 def _background_upload_ext(upload: UploadFile) -> str:
@@ -226,6 +250,7 @@ def _gm_authorized(room_state: RoomState, user_id: Optional[int], gm_key: str | 
 async def _startup() -> None:
     init_db()
     BG_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    ASSET_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ----------------------------- Auth middleware --------------------------------
@@ -423,6 +448,189 @@ def get_pack_api(pack_id: str, req: Request):
         return Response(status_code=304, headers={**_pack_cache_headers(), "ETag": etag})
     manifest = _load_pack_manifest(pack_id)
     return JSONResponse(manifest, headers={**_pack_cache_headers(), "ETag": etag})
+
+
+# ----------------------------- Asset Library API ------------------------------
+
+@app.get("/api/assets")
+def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = ""):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    return {"assets": list_assets_for_user(user.user_id, q=q, tag=tag, folder=folder)}
+
+
+if HAS_MULTIPART:
+    @app.post("/api/assets/upload")
+    async def upload_asset_api(
+        req: Request,
+        file: UploadFile = File(...),
+        name: str = Form(""),
+        tags: str = Form(""),
+    ):
+        user = _require_user(req)
+        if user.user_id is None:
+            raise HTTPException(status_code=500, detail="Invalid user record")
+        ext = _background_upload_ext(file)
+        data = await file.read(MAX_ASSET_UPLOAD_BYTES + 1)
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty upload")
+        if len(data) > MAX_ASSET_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Asset too large (max 20MB)")
+        aid = uuid.uuid4().hex
+        user_dir = ASSET_UPLOADS_DIR / str(user.user_id)
+        user_dir.mkdir(parents=True, exist_ok=True)
+        file_name = f"{aid}{ext}"
+        out_path = user_dir / file_name
+        try:
+            out_path.write_bytes(data)
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}") from e
+        rel = out_path.relative_to(UPLOADS_DIR)
+        url_path = "/uploads/" + "/".join(rel.parts)
+        raw_name = name.strip() if name.strip() else Path(str(file.filename or "asset")).stem
+        tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+        create_asset_record(
+            asset_id=aid,
+            uploader_user_id=user.user_id,
+            name=raw_name[:120] or "Asset",
+            folder_path="",
+            tags=tags_list[:20],
+            mime=str(file.content_type or "application/octet-stream"),
+            width=0,
+            height=0,
+            url_original=url_path,
+            url_thumb=url_path,
+        )
+        await file.close()
+        return {
+            "asset_id": aid,
+            "name": raw_name[:120] or "Asset",
+            "tags": tags_list[:20],
+            "url_original": url_path,
+            "url_thumb": url_path,
+            "mime": str(file.content_type or "application/octet-stream"),
+        }
+
+    @app.post("/api/assets/upload-zip")
+    async def upload_asset_zip_api(
+        req: Request,
+        file: UploadFile = File(...),
+        tags: str = Form(""),
+    ):
+        user = _require_user(req)
+        if user.user_id is None:
+            raise HTTPException(status_code=500, detail="Invalid user record")
+        fname = str(file.filename or "").lower()
+        if not fname.endswith(".zip"):
+            raise HTTPException(status_code=400, detail="Expected a .zip file")
+        data = await file.read(MAX_ZIP_UPLOAD_BYTES + 1)
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty upload")
+        if len(data) > MAX_ZIP_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="ZIP too large (max 200MB)")
+        shared_tags = [t.strip() for t in tags.split(",") if t.strip()][:20]
+        user_dir = ASSET_UPLOADS_DIR / str(user.user_id)
+        user_dir.mkdir(parents=True, exist_ok=True)
+        created: list[dict[str, object]] = []
+        skipped: list[str] = []
+        total_uncompressed = 0
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                infos = [i for i in zf.infolist() if not i.is_dir()]
+                if len(infos) > MAX_ZIP_ASSET_FILES:
+                    raise HTTPException(status_code=400, detail=f"Too many files in zip (max {MAX_ZIP_ASSET_FILES})")
+                for info in infos:
+                    folder_path, base = _safe_zip_member_path(info.filename)
+                    if not base:
+                        skipped.append(info.filename)
+                        continue
+                    ext = Path(base).suffix.lower()
+                    if ext not in ALLOWED_BACKGROUND_EXTS:
+                        continue
+                    total_uncompressed += max(0, int(info.file_size or 0))
+                    if total_uncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
+                        raise HTTPException(status_code=400, detail="Zip expands beyond allowed size")
+                    if info.file_size > MAX_ASSET_UPLOAD_BYTES:
+                        skipped.append(info.filename)
+                        continue
+                    try:
+                        content = zf.read(info)
+                    except Exception:
+                        skipped.append(info.filename)
+                        continue
+                    aid = uuid.uuid4().hex
+                    out_path = user_dir / f"{aid}{ext}"
+                    try:
+                        out_path.write_bytes(content)
+                    except OSError:
+                        skipped.append(info.filename)
+                        continue
+                    rel = out_path.relative_to(UPLOADS_DIR)
+                    url_path = "/uploads/" + "/".join(rel.parts)
+                    display_name = Path(base).stem.replace("_", " ").strip()[:120] or "Asset"
+                    create_asset_record(
+                        asset_id=aid,
+                        uploader_user_id=user.user_id,
+                        name=display_name,
+                        folder_path=folder_path,
+                        tags=shared_tags,
+                        mime="image/" + ext.lstrip("."),
+                        width=0,
+                        height=0,
+                        url_original=url_path,
+                        url_thumb=url_path,
+                    )
+                    created.append(
+                        {
+                            "asset_id": aid,
+                            "name": display_name,
+                            "folder_path": folder_path,
+                            "url_original": url_path,
+                            "url_thumb": url_path,
+                        }
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid zip: {e}") from e
+        await file.close()
+        if not created:
+            raise HTTPException(status_code=400, detail="No supported image files found in zip")
+        return {"created_count": len(created), "created": created[:200], "skipped_count": len(skipped)}
+else:
+    @app.post("/api/assets/upload")
+    async def upload_asset_unavailable(req: Request):
+        _ = req
+        raise HTTPException(status_code=503, detail="Asset upload unavailable: python-multipart not installed")
+
+    @app.post("/api/assets/upload-zip")
+    async def upload_asset_zip_unavailable(req: Request):
+        _ = req
+        raise HTTPException(status_code=503, detail="Asset zip upload unavailable: python-multipart not installed")
+
+
+@app.delete("/api/assets/{asset_id}")
+def delete_asset_api(asset_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    assets = list_assets_for_user(user.user_id)
+    target = next((a for a in assets if a.get("asset_id") == asset_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    deleted = delete_asset_record(asset_id, user.user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    rel = str(target.get("url_original") or "")
+    if rel.startswith("/uploads/"):
+        local_path = UPLOADS_DIR / rel.replace("/uploads/", "", 1)
+        try:
+            if local_path.exists():
+                local_path.unlink()
+        except Exception:
+            pass
+    return {"ok": True}
 
 
 # ----------------------------- Rooms API --------------------------------------
@@ -728,7 +936,7 @@ async def ws_room(ws: WebSocket, room_id: str):
                 await ws.send_text(WireEvent(type="ERROR", payload={"message": "rate limited"}).model_dump_json())
                 continue
 
-            if event.type in ("TOKEN_MOVE", "SHAPE_UPDATE", "ERASE_AT") and not _allow_rate("erase" if event.type == "ERASE_AT" else "move"):
+            if event.type in ("TOKEN_MOVE", "SHAPE_UPDATE", "ASSET_INSTANCE_UPDATE", "ERASE_AT") and not _allow_rate("erase" if event.type == "ERASE_AT" else "move"):
                 await ws.send_text(WireEvent(type="ERROR", payload={"message": "rate limited"}).model_dump_json())
                 continue
 

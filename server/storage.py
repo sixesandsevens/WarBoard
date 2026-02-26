@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import secrets
 import sqlite3
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -72,6 +73,20 @@ class RoomMemberRow(SQLModel, table=True):
     last_seen_at: str
 
 
+class AssetRow(SQLModel, table=True):
+    asset_id: str = Field(primary_key=True)
+    uploader_user_id: int = Field(index=True)
+    name: str
+    folder_path: str = ""
+    tags_json: str = "[]"
+    mime: str
+    width: int = 0
+    height: int = 0
+    url_original: str
+    url_thumb: str
+    created_at: str
+
+
 def _sqlite_conn() -> sqlite3.Connection:
     # engine.url is like sqlite:////path/to/db
     url = str(engine.url)
@@ -113,6 +128,10 @@ def init_db() -> None:
             if not _column_exists(conn, user_table, "last_room_id"):
                 conn.execute(f"ALTER TABLE {user_table} ADD COLUMN last_room_id TEXT;")
                 conn.execute(f"CREATE INDEX IF NOT EXISTS ix_userrow_last_room_id ON {user_table}(last_room_id);")
+        asset_table = "assetrow"
+        if _table_exists(conn, asset_table):
+            if not _column_exists(conn, asset_table, "folder_path"):
+                conn.execute(f"ALTER TABLE {asset_table} ADD COLUMN folder_path TEXT DEFAULT '';")
         conn.commit()
     except Exception:
         # If anything goes sideways here, we don't want startup to fail; the app
@@ -403,3 +422,92 @@ def list_rooms_for_user(user_id: int) -> List[Dict[str, str]]:
                 }
             )
         return out
+
+
+# --- Asset library -----------------------------------------------------------
+
+def create_asset_record(
+    *,
+    asset_id: str,
+    uploader_user_id: int,
+    name: str,
+    folder_path: str = "",
+    tags: List[str],
+    mime: str,
+    width: int,
+    height: int,
+    url_original: str,
+    url_thumb: str,
+) -> None:
+    now = utc_now_iso()
+    with Session(engine) as s:
+        s.add(
+            AssetRow(
+                asset_id=asset_id,
+                uploader_user_id=uploader_user_id,
+                name=name,
+                folder_path=folder_path or "",
+                tags_json=json.dumps(tags or []),
+                mime=mime,
+                width=max(0, int(width or 0)),
+                height=max(0, int(height or 0)),
+                url_original=url_original,
+                url_thumb=url_thumb,
+                created_at=now,
+            )
+        )
+        s.commit()
+
+
+def list_assets_for_user(user_id: int, q: str = "", tag: str = "", folder: str = "") -> List[Dict[str, object]]:
+    qn = (q or "").strip().lower()
+    tn = (tag or "").strip().lower()
+    fn = (folder or "").strip().strip("/").lower()
+    with Session(engine) as s:
+        rows = s.exec(select(AssetRow).where(AssetRow.uploader_user_id == user_id)).all()
+    out: List[Dict[str, object]] = []
+    for row in rows:
+        try:
+            tags = [str(t).strip() for t in (json.loads(row.tags_json or "[]") or []) if str(t).strip()]
+        except Exception:
+            tags = []
+        if qn and qn not in (row.name or "").lower() and not any(qn in t.lower() for t in tags):
+            continue
+        if tn and not any(tn == t.lower() for t in tags):
+            continue
+        if fn and str(row.folder_path or "").strip("/").lower() != fn:
+            continue
+        out.append(
+            {
+                "asset_id": row.asset_id,
+                "name": row.name,
+                "folder_path": row.folder_path or "",
+                "tags": tags,
+                "mime": row.mime,
+                "width": row.width,
+                "height": row.height,
+                "url_original": row.url_original,
+                "url_thumb": row.url_thumb,
+                "created_at": row.created_at,
+            }
+        )
+    out.sort(key=lambda a: str(a.get("created_at", "")), reverse=True)
+    return out
+
+
+def get_asset_for_user(asset_id: str, user_id: int) -> Optional[AssetRow]:
+    with Session(engine) as s:
+        row = s.get(AssetRow, asset_id)
+        if not row or row.uploader_user_id != user_id:
+            return None
+        return row
+
+
+def delete_asset_record(asset_id: str, user_id: int) -> bool:
+    with Session(engine) as s:
+        row = s.get(AssetRow, asset_id)
+        if not row or row.uploader_user_id != user_id:
+            return False
+        s.delete(row)
+        s.commit()
+        return True
