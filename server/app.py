@@ -737,9 +737,6 @@ async def ws_room(ws: WebSocket, room_id: str):
                 await ws.send_text(out.model_dump_json())
             else:
                 await rm.broadcast(room, out)
-                # Presence can change (ownership/lock, etc.), so keep it simple.
-                if out.type in ("HELLO", "TOKEN_DELETE", "TOKEN_CREATE", "TOKEN_SET_OWNER", "TOKEN_LOCK", "TOKEN_UNLOCK"):
-                    await rm.broadcast(room, rm.presence_event(room))
 
     except (WebSocketDisconnect, asyncio.TimeoutError):
         pass

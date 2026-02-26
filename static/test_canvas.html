@@ -2152,6 +2152,22 @@
   let lastShapeTool = "rect";
   let lastCtxClientPos = { x: 24, y: 24 };
   let tooltipTimer = null;
+  let lastPartialRejectLogAt = 0;
+  let moveSeqCounter = 0;
+  let activeDragMoveSeq = null;
+  function getLocalMoveClientId() {
+    const key = "warboard:v1:move_client_id";
+    try {
+      const existing = sessionStorage.getItem(key);
+      if (existing) return existing;
+      const created = makeId();
+      sessionStorage.setItem(key, created);
+      return created;
+    } catch (_) {
+      return makeId();
+    }
+  }
+  const localMoveClientId = getLocalMoveClientId();
 
   let bgImage = null;
   let bgImageUrl = null;
@@ -3254,6 +3270,11 @@
     ctx.restore();
   }
 
+  function parseMoveSeq(payload) {
+    const seq = Number(payload?.move_seq);
+    return Number.isFinite(seq) ? seq : null;
+  }
+
   function render() {
     const w = canvas.getBoundingClientRect().width;
     const h = canvas.getBoundingClientRect().height;
@@ -3929,6 +3950,9 @@
 
       if (ev.type === "TOKEN_MOVE") {
         const p = ev.payload;
+        const respSeq = parseMoveSeq(p);
+        const isLocalMoveResponse = p?.move_client === localMoveClientId;
+        if (isLocalMoveResponse && respSeq !== null && activeDragMoveSeq !== null && respSeq !== activeDragMoveSeq) return;
         const t = state.tokens.get(p.id);
         if (t) {
           t.x = p.x;
@@ -3947,6 +3971,9 @@
       }
 
       if (ev.type === "TOKENS_MOVE") {
+        const respSeq = parseMoveSeq(ev.payload);
+        const isLocalMoveResponse = ev.payload?.move_client === localMoveClientId;
+        if (isLocalMoveResponse && respSeq !== null && activeDragMoveSeq !== null && respSeq !== activeDragMoveSeq) return;
         const moves = Array.isArray(ev.payload?.moves) ? ev.payload.moves : [];
         for (const mv of moves) {
           const t = state.tokens.get(mv.id);
@@ -3955,7 +3982,23 @@
           t.y = Number(mv.y ?? t.y);
           state.tokens.set(mv.id, t);
         }
-        if (ev.payload?.rejected) log(`MOVE REJECTED: ${ev.payload.reason || "Not allowed"}`);
+        if (ev.payload?.rejected) {
+          const partial = !!ev.payload?.partial;
+          if (!partial) {
+            draggingTokenId = null;
+            draggingTokenIds = [];
+            dragMoveStartWorld = null;
+            dragStartTokenPositions.clear();
+          }
+          const now = Date.now();
+          const shouldLog = !partial || !!ev.payload?.commit || (now - lastPartialRejectLogAt > 1200);
+          if (shouldLog) {
+            const rejectedCount = Array.isArray(ev.payload?.rejected_ids) ? ev.payload.rejected_ids.length : 0;
+            const suffix = rejectedCount ? ` (${rejectedCount} blocked)` : "";
+            log(`MOVE REJECTED: ${ev.payload.reason || "Not allowed"}${suffix}`);
+            if (partial) lastPartialRejectLogAt = now;
+          }
+        }
         requestRender();
         return;
       }
@@ -4888,6 +4931,7 @@
         }
         if (!selectedTokenIds.has(hit)) selectOnly(hit);
         const moveIds = selectedIdsIncludingGroups();
+        activeDragMoveSeq = ++moveSeqCounter;
         draggingTokenId = hit;
         draggingShapeId = null;
         shapeDragOrigin = null;
@@ -5019,10 +5063,20 @@
       requestRender();
 
       const now = Date.now();
-      if (moves.length && now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
-        lastMoveSentAt = now;
-        if (moves.length === 1) send("TOKEN_MOVE", { id: moves[0].id, x: moves[0].x, y: moves[0].y, commit: false });
-        else send("TOKENS_MOVE", { moves, commit: false });
+        if (moves.length && now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
+          lastMoveSentAt = now;
+        if (moves.length === 1) {
+          send("TOKEN_MOVE", {
+            id: moves[0].id,
+            x: moves[0].x,
+            y: moves[0].y,
+            commit: false,
+            move_seq: activeDragMoveSeq,
+            move_client: localMoveClientId,
+          });
+        } else {
+          send("TOKENS_MOVE", { moves, commit: false, move_seq: activeDragMoveSeq, move_client: localMoveClientId });
+        }
       }
       return;
     }
@@ -5189,11 +5243,19 @@
         moves.push({ id, x: tok.x, y: tok.y });
       }
       if (moves.length === 1 && movedTokenId) {
-        send("TOKEN_MOVE", { id: movedTokenId, x: moves[0].x, y: moves[0].y, commit: true });
+        send("TOKEN_MOVE", {
+          id: movedTokenId,
+          x: moves[0].x,
+          y: moves[0].y,
+          commit: true,
+          move_seq: activeDragMoveSeq,
+          move_client: localMoveClientId,
+        });
       } else if (moves.length > 1) {
-        send("TOKENS_MOVE", { moves, commit: true });
+        send("TOKENS_MOVE", { moves, commit: true, move_seq: activeDragMoveSeq, move_client: localMoveClientId });
       }
     }
+    activeDragMoveSeq = null;
     if (t === "move" && movedShapeId) {
       const sh = state.shapes.get(movedShapeId);
       if (sh) {

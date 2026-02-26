@@ -353,21 +353,25 @@ class RoomManager:
         if t == "TOKEN_MOVE":
             token_id = p.get("id")
             token = room.state.tokens.get(token_id)
+            move_seq = p.get("move_seq")
+            move_client = p.get("move_client")
             if not token:
                 return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
 
             if not self.can_move_token(room, user_id, client_id, token):
                 # Send authoritative position so clients can snap back from optimistic moves.
-                return WireEvent(
-                    type="TOKEN_MOVE",
-                    payload={
-                        "id": token_id,
-                        "x": token.x,
-                        "y": token.y,
-                        "rejected": True,
-                        "reason": "Not allowed",
-                    },
-                )
+                payload: Dict[str, object] = {
+                    "id": token_id,
+                    "x": token.x,
+                    "y": token.y,
+                    "rejected": True,
+                    "reason": "Not allowed",
+                }
+                if move_seq is not None:
+                    payload["move_seq"] = move_seq
+                if move_client is not None:
+                    payload["move_client"] = move_client
+                return WireEvent(type="TOKEN_MOVE", payload=payload)
 
             # Keep move traffic cheap: history snapshots only on explicit commit moves.
             if bool(p.get("commit", False)):
@@ -380,10 +384,13 @@ class RoomManager:
 
         if t == "TOKENS_MOVE":
             moves = p.get("moves")
+            move_seq = p.get("move_seq")
+            move_client = p.get("move_client")
             if not isinstance(moves, list) or not moves:
                 return WireEvent(type="ERROR", payload={"message": "Invalid moves payload"})
 
             token_ids: List[str] = []
+            move_by_id: Dict[str, Dict[str, object]] = {}
             for mv in moves:
                 if not isinstance(mv, dict):
                     return WireEvent(type="ERROR", payload={"message": "Invalid move item"})
@@ -391,38 +398,62 @@ class RoomManager:
                 if not isinstance(token_id, str) or not token_id:
                     return WireEvent(type="ERROR", payload={"message": "Missing token id in move item"})
                 token_ids.append(token_id)
+                move_by_id[token_id] = mv
 
-            resolved: Dict[str, Token] = {}
+            rejected_ids: List[str] = []
+            allowed_ids: List[str] = []
             for token_id in token_ids:
                 token = room.state.tokens.get(token_id)
                 if not token:
                     return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-                if not self.can_move_token(room, user_id, client_id, token):
-                    return WireEvent(
-                        type="TOKENS_MOVE",
-                        payload={
-                            "moves": [{"id": token.id, "x": token.x, "y": token.y} for token in resolved.values()] + [
-                                {"id": token.id, "x": token.x, "y": token.y}
-                            ],
-                            "rejected": True,
-                            "reason": "Not allowed",
-                            "id": token_id,
-                        },
-                    )
-                resolved[token_id] = token
+                if self.can_move_token(room, user_id, client_id, token):
+                    allowed_ids.append(token_id)
+                else:
+                    rejected_ids.append(token_id)
 
-            if bool(p.get("commit", False)):
+            if bool(p.get("commit", False)) and allowed_ids:
                 self._push_history(room)
-            applied: List[Dict[str, float | str]] = []
-            for mv in moves:
-                token_id = mv.get("id")
-                token = resolved[token_id]
+
+            moved_any = False
+            for token_id in allowed_ids:
+                mv = move_by_id[token_id]
+                token = room.state.tokens[token_id]
+                prev_x = token.x
+                prev_y = token.y
                 token.x = float(mv.get("x", token.x))
                 token.y = float(mv.get("y", token.y))
                 room.state.tokens[token_id] = token
-                applied.append({"id": token_id, "x": token.x, "y": token.y})
-            self._mark_dirty(room_id, room)
-            return WireEvent(type="TOKENS_MOVE", payload={"moves": applied, "commit": bool(p.get("commit", False))})
+                if token.x != prev_x or token.y != prev_y:
+                    moved_any = True
+
+            if moved_any:
+                self._mark_dirty(room_id, room)
+
+            # Return authoritative positions for all requested tokens, including snapback for rejected ones.
+            applied: List[Dict[str, float | str]] = []
+            seen: Set[str] = set()
+            for token_id in token_ids:
+                if token_id in seen:
+                    continue
+                seen.add(token_id)
+                token = room.state.tokens.get(token_id)
+                if token:
+                    applied.append({"id": token_id, "x": token.x, "y": token.y})
+
+            has_rejected = bool(rejected_ids)
+            return WireEvent(
+                type="TOKENS_MOVE",
+                payload={
+                    "moves": applied,
+                    "commit": bool(p.get("commit", False)),
+                    "rejected": has_rejected,
+                    "partial": has_rejected and bool(allowed_ids),
+                    "rejected_ids": rejected_ids,
+                    "reason": "Some tokens are locked or not allowed" if has_rejected else None,
+                    "move_seq": move_seq,
+                    "move_client": move_client,
+                },
+            )
 
         if t == "ROOM_SETTINGS":
             # GM-only
