@@ -3756,7 +3756,9 @@
     if (type === "SHAPE_ADD") {
       const p = payload;
       if (p?.id) {
-        state.shapes.set(p.id, p);
+        const next = { ...p };
+        if (!next.creator_id) next.creator_id = myId();
+        state.shapes.set(p.id, next);
         state.draw_order.shapes = state.draw_order.shapes.filter((id) => id !== p.id);
         state.draw_order.shapes.push(p.id);
       }
@@ -3769,7 +3771,10 @@
     if (type === "SHAPE_UPDATE") {
       const p = payload;
       if (p?.id) {
-        state.shapes.set(p.id, { ...(state.shapes.get(p.id) || {}), ...p });
+        const current = state.shapes.get(p.id) || {};
+        const next = { ...current, ...p };
+        if (!next.creator_id) next.creator_id = myId();
+        state.shapes.set(p.id, next);
         if (!state.draw_order.shapes.includes(p.id)) state.draw_order.shapes.push(p.id);
       }
       refreshGmUI();
@@ -5174,6 +5179,7 @@
         fill: false,
         locked: false,
         layer: "draw",
+        creator_id: myId(),
       });
       return;
     }
@@ -5487,6 +5493,7 @@
         fill: false,
         locked: false,
         layer: "draw",
+        creator_id: myId(),
       });
       activeShapePreview = null;
       requestRender();
