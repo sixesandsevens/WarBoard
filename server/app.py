@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import hmac
+import importlib.util
 import json
 import logging
+import secrets
 import time
 import uuid
 from collections import deque
@@ -13,7 +17,10 @@ from typing import Optional
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from passlib.context import CryptContext
+try:
+    from passlib.context import CryptContext  # type: ignore
+except Exception:  # pragma: no cover - fallback used in minimal/offline envs
+    CryptContext = None  # type: ignore
 
 from .models import RoomState, WireEvent
 from .rooms import RoomManager
@@ -66,8 +73,43 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR), check_dir=False), 
 rm = RoomManager()
 HEARTBEAT_TIMEOUT_SECONDS = 35.0
 SESSION_COOKIE = "warboard_sid"
-PASSWORD_CONTEXT = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
+
+
+class _PBKDF2Context:
+    """Compatibility fallback when passlib isn't available."""
+
+    _ITERATIONS = 260_000
+
+    def hash(self, password: str) -> str:
+        salt = secrets.token_bytes(16)
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, self._ITERATIONS)
+        return "pbkdf2_sha256${}${}${}".format(
+            self._ITERATIONS,
+            base64.b64encode(salt).decode("ascii"),
+            base64.b64encode(dk).decode("ascii"),
+        )
+
+    def verify_and_update(self, password: str, stored_hash: str) -> tuple[bool, None]:
+        try:
+            algo, iter_s, salt_b64, digest_b64 = stored_hash.split("$", 3)
+            if algo != "pbkdf2_sha256":
+                return False, None
+            iterations = int(iter_s)
+            salt = base64.b64decode(salt_b64.encode("ascii"))
+            expected = base64.b64decode(digest_b64.encode("ascii"))
+        except Exception:
+            return False, None
+        got = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(got, expected), None
+
+
+PASSWORD_CONTEXT = (
+    CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
+    if CryptContext is not None
+    else _PBKDF2Context()
+)
 LOG = logging.getLogger("warboard.ws")
+HAS_MULTIPART = importlib.util.find_spec("multipart") is not None
 
 
 def _hash_key(raw: str) -> str:
@@ -528,40 +570,46 @@ async def delete_room(room_id: str, req: Request, gm_key: str | None = None):
     return {"ok": True}
 
 
-@app.post("/api/rooms/{room_id}/background-upload")
-async def upload_room_background(room_id: str, req: Request, file: UploadFile = File(...), gm_key: str | None = None):
-    user = _require_user(req)
-    if user.user_id is None:
-        raise HTTPException(status_code=500, detail="Invalid user record")
-    if not is_member(user.user_id, room_id):
-        raise HTTPException(status_code=403, detail="Not a member of this room")
-    raw = load_room_state_json(room_id)
-    if not raw:
-        raise HTTPException(status_code=404, detail="Room not found")
-    state = RoomState.model_validate_json(raw)
-    if not _gm_authorized(state, user.user_id, gm_key):
-        raise HTTPException(status_code=403, detail="GM only")
-    ext = _background_upload_ext(file)
-    safe_room_id = _safe_room_id(room_id)
-    if not safe_room_id:
-        raise HTTPException(status_code=400, detail="Invalid room id")
-    room_dir = BG_UPLOADS_DIR / safe_room_id
-    room_dir.mkdir(parents=True, exist_ok=True)
-    data = await file.read(MAX_BACKGROUND_UPLOAD_BYTES + 1)
-    if not data:
-        raise HTTPException(status_code=400, detail="Empty upload")
-    if len(data) > MAX_BACKGROUND_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Image too large (max 10MB)")
-    file_name = f"{int(time.time())}-{uuid.uuid4().hex[:10]}{ext}"
-    out_path = room_dir / file_name
-    try:
-        out_path.write_bytes(data)
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}") from e
-    rel = out_path.relative_to(UPLOADS_DIR)
-    url_path = "/uploads/" + "/".join(rel.parts)
-    await file.close()
-    return {"url": url_path, "bytes": len(data)}
+if HAS_MULTIPART:
+    @app.post("/api/rooms/{room_id}/background-upload")
+    async def upload_room_background(room_id: str, req: Request, file: UploadFile = File(...), gm_key: str | None = None):
+        user = _require_user(req)
+        if user.user_id is None:
+            raise HTTPException(status_code=500, detail="Invalid user record")
+        if not is_member(user.user_id, room_id):
+            raise HTTPException(status_code=403, detail="Not a member of this room")
+        raw = load_room_state_json(room_id)
+        if not raw:
+            raise HTTPException(status_code=404, detail="Room not found")
+        state = RoomState.model_validate_json(raw)
+        if not _gm_authorized(state, user.user_id, gm_key):
+            raise HTTPException(status_code=403, detail="GM only")
+        ext = _background_upload_ext(file)
+        safe_room_id = _safe_room_id(room_id)
+        if not safe_room_id:
+            raise HTTPException(status_code=400, detail="Invalid room id")
+        room_dir = BG_UPLOADS_DIR / safe_room_id
+        room_dir.mkdir(parents=True, exist_ok=True)
+        data = await file.read(MAX_BACKGROUND_UPLOAD_BYTES + 1)
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty upload")
+        if len(data) > MAX_BACKGROUND_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large (max 10MB)")
+        file_name = f"{int(time.time())}-{uuid.uuid4().hex[:10]}{ext}"
+        out_path = room_dir / file_name
+        try:
+            out_path.write_bytes(data)
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}") from e
+        rel = out_path.relative_to(UPLOADS_DIR)
+        url_path = "/uploads/" + "/".join(rel.parts)
+        await file.close()
+        return {"url": url_path, "bytes": len(data)}
+else:
+    @app.post("/api/rooms/{room_id}/background-upload")
+    async def upload_room_background_unavailable(room_id: str, req: Request, gm_key: str | None = None):
+        _ = room_id, req, gm_key
+        raise HTTPException(status_code=503, detail="Background upload unavailable: python-multipart not installed")
 
 
 # ----------------------------- WebSocket --------------------------------------

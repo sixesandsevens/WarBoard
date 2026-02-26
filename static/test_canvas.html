@@ -4891,19 +4891,22 @@
         draggingTokenId = hit;
         draggingShapeId = null;
         shapeDragOrigin = null;
-      } else if (shapeHit && isGM()) {
-        draggingShapeId = shapeHit;
-        draggingTokenId = null;
-        const sh = state.shapes.get(shapeHit);
-        if (sh) {
-          shapeDragOrigin = { wx: wpos.x, wy: wpos.y, x1: sh.x1, y1: sh.y1, x2: sh.x2, y2: sh.y2 };
-        }
         draggingTokenIds = moveIds;
         dragMoveStartWorld = { x: wpos.x, y: wpos.y };
         dragStartTokenPositions = new Map();
         for (const id of moveIds) {
           const tok = state.tokens.get(id);
           if (tok) dragStartTokenPositions.set(id, { x: tok.x, y: tok.y });
+        }
+      } else if (shapeHit && isGM()) {
+        draggingShapeId = shapeHit;
+        draggingTokenId = null;
+        draggingTokenIds = [];
+        dragMoveStartWorld = null;
+        dragStartTokenPositions.clear();
+        const sh = state.shapes.get(shapeHit);
+        if (sh) {
+          shapeDragOrigin = { wx: wpos.x, wy: wpos.y, x1: sh.x1, y1: sh.y1, x2: sh.x2, y2: sh.y2 };
         }
       } else {
         draggingTokenId = null;
