@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import logging
+import os
 import posixpath
 import secrets
 import time
@@ -20,6 +21,12 @@ from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+try:
+    from PIL import Image, ImageOps, UnidentifiedImageError  # type: ignore
+except Exception:  # pragma: no cover - fallback keeps app booting without Pillow
+    Image = None  # type: ignore
+    ImageOps = None  # type: ignore
+    UnidentifiedImageError = Exception  # type: ignore
 try:
     from passlib.context import CryptContext  # type: ignore
 except Exception:  # pragma: no cover - fallback used in minimal/offline envs
@@ -65,15 +72,39 @@ BG_UPLOADS_DIR = UPLOADS_DIR / "backgrounds"
 ASSET_UPLOADS_DIR = UPLOADS_DIR / "assets"
 MAX_BACKGROUND_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_ASSET_UPLOAD_BYTES = 20 * 1024 * 1024
-MAX_ZIP_UPLOAD_BYTES = 200 * 1024 * 1024
-MAX_ZIP_ASSET_FILES = 1500
-MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 600 * 1024 * 1024
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        val = int(raw)
+    except ValueError:
+        return default
+    return val if val > 0 else default
+
+
+# ZIP import limits are intentionally configurable for large GM asset packs.
+MAX_ZIP_UPLOAD_BYTES = _env_int("MAX_ZIP_UPLOAD_BYTES", 512 * 1024 * 1024)
+MAX_ZIP_ASSET_FILES = _env_int("MAX_ZIP_ASSET_FILES", 2000)
+MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = _env_int("MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES", 1024 * 1024 * 1024)
+ASSET_THUMB_MAX_DIM = 256
+MAX_ASSET_IMAGE_DIM = 12_000
+MAX_ASSET_IMAGE_PIXELS = 36_000_000
 ALLOWED_BACKGROUND_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 CONTENT_TYPE_TO_EXT = {
     "image/png": ".png",
     "image/jpeg": ".jpg",
     "image/webp": ".webp",
     "image/gif": ".gif",
+}
+EXT_TO_IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
 }
 
 # Static assets (still routed through FastAPI so middleware can protect them)
@@ -158,6 +189,61 @@ def _background_upload_ext(upload: UploadFile) -> str:
     if ext in ALLOWED_BACKGROUND_EXTS:
         return ext
     raise HTTPException(status_code=400, detail="Unsupported image type")
+
+
+def _image_mime_from_ext(ext: str) -> str:
+    return EXT_TO_IMAGE_MIME.get(str(ext or "").lower(), "application/octet-stream")
+
+
+def _asset_image_meta_and_thumb(data: bytes) -> tuple[int, int, bytes, str]:
+    if Image is None:
+        raise HTTPException(status_code=503, detail="Asset upload unavailable: Pillow not installed")
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            if ImageOps is not None:
+                img = ImageOps.exif_transpose(img)
+            width, height = img.size
+            thumb = img.copy()
+    except UnidentifiedImageError:
+        raise HTTPException(status_code=400, detail="Unsupported or corrupt image file")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read image: {e}") from e
+
+    if width < 1 or height < 1:
+        raise HTTPException(status_code=400, detail="Invalid image dimensions")
+    if width > MAX_ASSET_IMAGE_DIM or height > MAX_ASSET_IMAGE_DIM:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Image dimensions exceed limit ({MAX_ASSET_IMAGE_DIM}px max side)",
+        )
+    if int(width) * int(height) > MAX_ASSET_IMAGE_PIXELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Image pixel count exceeds limit ({MAX_ASSET_IMAGE_PIXELS} max)",
+        )
+
+    if thumb.mode not in ("RGB", "RGBA"):
+        thumb = thumb.convert("RGBA")
+    if hasattr(Image, "Resampling"):
+        resample = Image.Resampling.LANCZOS
+    else:  # Pillow < 9.1
+        resample = Image.LANCZOS
+    thumb.thumbnail((ASSET_THUMB_MAX_DIM, ASSET_THUMB_MAX_DIM), resample)
+
+    has_alpha = "A" in thumb.getbands()
+    if has_alpha:
+        out = io.BytesIO()
+        thumb.save(out, format="PNG", optimize=True)
+        return int(width), int(height), out.getvalue(), ".png"
+
+    try:
+        out = io.BytesIO()
+        thumb.save(out, format="WEBP", quality=82, method=6)
+        return int(width), int(height), out.getvalue(), ".webp"
+    except Exception:
+        out = io.BytesIO()
+        thumb.save(out, format="PNG", optimize=True)
+        return int(width), int(height), out.getvalue(), ".png"
 
 
 def _load_pack_manifest(pack_id: str) -> dict:
@@ -477,17 +563,35 @@ if HAS_MULTIPART:
             raise HTTPException(status_code=400, detail="Empty upload")
         if len(data) > MAX_ASSET_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="Asset too large (max 20MB)")
+        width, height, thumb_bytes, thumb_ext = _asset_image_meta_and_thumb(data)
         aid = uuid.uuid4().hex
         user_dir = ASSET_UPLOADS_DIR / str(user.user_id)
+        thumb_dir = user_dir / "thumbs"
         user_dir.mkdir(parents=True, exist_ok=True)
+        thumb_dir.mkdir(parents=True, exist_ok=True)
         file_name = f"{aid}{ext}"
+        thumb_name = f"{aid}{thumb_ext}"
         out_path = user_dir / file_name
+        thumb_path = thumb_dir / thumb_name
         try:
             out_path.write_bytes(data)
+            thumb_path.write_bytes(thumb_bytes)
         except OSError as e:
+            try:
+                if out_path.exists():
+                    out_path.unlink()
+            except Exception:
+                pass
+            try:
+                if thumb_path.exists():
+                    thumb_path.unlink()
+            except Exception:
+                pass
             raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}") from e
         rel = out_path.relative_to(UPLOADS_DIR)
+        thumb_rel = thumb_path.relative_to(UPLOADS_DIR)
         url_path = "/uploads/" + "/".join(rel.parts)
+        thumb_url_path = "/uploads/" + "/".join(thumb_rel.parts)
         raw_name = name.strip() if name.strip() else Path(str(file.filename or "asset")).stem
         tags_list = [t.strip() for t in tags.split(",") if t.strip()]
         create_asset_record(
@@ -496,20 +600,22 @@ if HAS_MULTIPART:
             name=raw_name[:120] or "Asset",
             folder_path="",
             tags=tags_list[:20],
-            mime=str(file.content_type or "application/octet-stream"),
-            width=0,
-            height=0,
+            mime=_image_mime_from_ext(ext),
+            width=width,
+            height=height,
             url_original=url_path,
-            url_thumb=url_path,
+            url_thumb=thumb_url_path,
         )
         await file.close()
         return {
             "asset_id": aid,
             "name": raw_name[:120] or "Asset",
             "tags": tags_list[:20],
+            "width": width,
+            "height": height,
             "url_original": url_path,
-            "url_thumb": url_path,
-            "mime": str(file.content_type or "application/octet-stream"),
+            "url_thumb": thumb_url_path,
+            "mime": _image_mime_from_ext(ext),
         }
 
     @app.post("/api/assets/upload-zip")
@@ -547,6 +653,7 @@ if HAS_MULTIPART:
                         continue
                     ext = Path(base).suffix.lower()
                     if ext not in ALLOWED_BACKGROUND_EXTS:
+                        skipped.append(info.filename)
                         continue
                     total_uncompressed += max(0, int(info.file_size or 0))
                     if total_uncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
@@ -559,15 +666,36 @@ if HAS_MULTIPART:
                     except Exception:
                         skipped.append(info.filename)
                         continue
+                    try:
+                        width, height, thumb_bytes, thumb_ext = _asset_image_meta_and_thumb(content)
+                    except HTTPException:
+                        skipped.append(info.filename)
+                        continue
                     aid = uuid.uuid4().hex
+                    thumb_dir = user_dir / "thumbs"
+                    thumb_dir.mkdir(parents=True, exist_ok=True)
                     out_path = user_dir / f"{aid}{ext}"
+                    thumb_path = thumb_dir / f"{aid}{thumb_ext}"
                     try:
                         out_path.write_bytes(content)
+                        thumb_path.write_bytes(thumb_bytes)
                     except OSError:
+                        try:
+                            if out_path.exists():
+                                out_path.unlink()
+                        except Exception:
+                            pass
+                        try:
+                            if thumb_path.exists():
+                                thumb_path.unlink()
+                        except Exception:
+                            pass
                         skipped.append(info.filename)
                         continue
                     rel = out_path.relative_to(UPLOADS_DIR)
+                    thumb_rel = thumb_path.relative_to(UPLOADS_DIR)
                     url_path = "/uploads/" + "/".join(rel.parts)
+                    thumb_url_path = "/uploads/" + "/".join(thumb_rel.parts)
                     display_name = Path(base).stem.replace("_", " ").strip()[:120] or "Asset"
                     create_asset_record(
                         asset_id=aid,
@@ -575,19 +703,21 @@ if HAS_MULTIPART:
                         name=display_name,
                         folder_path=folder_path,
                         tags=shared_tags,
-                        mime="image/" + ext.lstrip("."),
-                        width=0,
-                        height=0,
+                        mime=_image_mime_from_ext(ext),
+                        width=width,
+                        height=height,
                         url_original=url_path,
-                        url_thumb=url_path,
+                        url_thumb=thumb_url_path,
                     )
                     created.append(
                         {
                             "asset_id": aid,
                             "name": display_name,
                             "folder_path": folder_path,
+                            "width": width,
+                            "height": height,
                             "url_original": url_path,
-                            "url_thumb": url_path,
+                            "url_thumb": thumb_url_path,
                         }
                     )
         except HTTPException:
@@ -597,7 +727,12 @@ if HAS_MULTIPART:
         await file.close()
         if not created:
             raise HTTPException(status_code=400, detail="No supported image files found in zip")
-        return {"created_count": len(created), "created": created[:200], "skipped_count": len(skipped)}
+        return {
+            "created_count": len(created),
+            "created": created[:200],
+            "skipped_count": len(skipped),
+            "skipped": skipped[:200],
+        }
 else:
     @app.post("/api/assets/upload")
     async def upload_asset_unavailable(req: Request):
@@ -628,6 +763,14 @@ def delete_asset_api(asset_id: str, req: Request):
         try:
             if local_path.exists():
                 local_path.unlink()
+        except Exception:
+            pass
+    thumb_rel = str(target.get("url_thumb") or "")
+    if thumb_rel.startswith("/uploads/"):
+        thumb_local_path = UPLOADS_DIR / thumb_rel.replace("/uploads/", "", 1)
+        try:
+            if thumb_local_path.exists():
+                thumb_local_path.unlink()
         except Exception:
             pass
     return {"ok": True}

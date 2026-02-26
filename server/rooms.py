@@ -342,6 +342,8 @@ class RoomManager:
             return False
         if shape.locked:
             return False
+        if room.state.allow_all_move:
+            return True
         return bool(shape.creator_id and shape.creator_id == client_id)
 
     def can_edit_asset(self, room: Room, user_id: Optional[int], client_id: str, asset: AssetInstance) -> bool:

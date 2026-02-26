@@ -1880,6 +1880,7 @@
     if (isGM()) return true;
     if (state.lockdown) return false;
     if (shape.locked) return false;
+    if (state.allow_all_move) return true;
     return !!(shape.creator_id && shape.creator_id === myId());
   }
 
@@ -5285,7 +5286,11 @@
       const out = await apiUploadAssetZip(file, String(assetTagsInputEl?.value || "").trim());
       if (assetZipInputEl) assetZipInputEl.value = "";
       await refreshAssetsPanel();
-      log(`ZIP imported: ${out.created_count || 0} assets`);
+      const createdCount = Number(out?.created_count || 0);
+      const skippedCount = Number(out?.skipped_count || 0);
+      log(`ZIP imported: ${createdCount} assets, skipped ${skippedCount}`);
+      const skipped = Array.isArray(out?.skipped) ? out.skipped.slice(0, 8) : [];
+      if (skipped.length) log(`Skipped examples: ${skipped.join(", ")}`);
     } catch (e) {
       log(`ASSET ZIP ERROR: ${e.message || e}`);
     }

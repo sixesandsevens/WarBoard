@@ -3,3 +3,4 @@ uvicorn[standard]
 sqlmodel
 passlib[argon2,bcrypt]
 python-multipart
+Pillow
