@@ -1502,7 +1502,11 @@
         refreshUI();
         break;
       case "text_set_content":
-        textPanelTargetShapeId = (selectedShapeId && state.shapes.get(selectedShapeId)?.type === "text") ? selectedShapeId : null;
+        textPanelTargetShapeId = (
+          selectedShapeId &&
+          state.shapes.get(selectedShapeId)?.type === "text" &&
+          canEditShapeLocal(state.shapes.get(selectedShapeId))
+        ) ? selectedShapeId : null;
         openToolTextPanel();
         break;
       case "text_size_16":
@@ -1527,9 +1531,9 @@
         break;
       }
       case "text_color_custom":
-        if (selectedShapeId && isGM()) {
+        if (selectedShapeId) {
           const sh = state.shapes.get(selectedShapeId);
-          if (sh) {
+          if (sh && canEditShapeLocal(sh)) {
             send("SHAPE_UPDATE", { id: selectedShapeId, color: String(colorEl.value || "#ffffff"), commit: true });
             break;
           }
@@ -1619,6 +1623,14 @@
     if (state.lockdown) return false;
     if (token.locked) return false;
     return !!(token.creator_id && token.creator_id === myId());
+  }
+
+  function canEditShapeLocal(shape) {
+    if (!shape) return false;
+    if (isGM()) return true;
+    if (state.lockdown) return false;
+    if (shape.locked) return false;
+    return !!(shape.creator_id && shape.creator_id === myId());
   }
 
   function setSelection(ids = [], primaryId = null) {
@@ -4297,9 +4309,9 @@
   });
   const applyTextDraft = () => {
     const v = String(toolTextInput?.value || "").trim();
-    if (textPanelTargetShapeId && isGM()) {
+    if (textPanelTargetShapeId) {
       const sh = state.shapes.get(textPanelTargetShapeId);
-      if (sh && sh.type === "text") {
+      if (sh && sh.type === "text" && canEditShapeLocal(sh)) {
         const next = v || sh.text || "Text";
         send("SHAPE_UPDATE", { id: textPanelTargetShapeId, text: next, commit: true });
       }
@@ -4932,7 +4944,11 @@
     if (shapeHit) {
       selectedShapeId = shapeHit;
       selectedTokenId = null;
-      // Select shape; no browser prompts from context click.
+      const sh = state.shapes.get(shapeHit);
+      closeTokenMenu();
+      if (sh?.type === "text" && canEditShapeLocal(sh)) {
+        showContextMenu(textCtx, e.clientX, e.clientY);
+      }
       requestRender();
       return;
     }
@@ -4971,6 +4987,13 @@
         requestRender();
         return;
       }
+      const shapeHit = hit ? null : hitTestShape(wpos.x, wpos.y);
+      if (shapeHit) {
+        selectedShapeId = shapeHit;
+        selectedTokenId = null;
+        requestRender();
+        return;
+      }
       isPanning = true;
       panStart = { sx: e.clientX, sy: e.clientY, camX: cam.x, camY: cam.y };
       return;
@@ -4984,9 +5007,9 @@
       const hit = hitTestToken(wpos.x, wpos.y);
       const shapeHitRaw = hit ? null : hitTestShape(wpos.x, wpos.y);
       let shapeHit = shapeHitRaw;
-      if (!hit && !shapeHit && selectedShapeId && isGM()) {
+      if (!hit && !shapeHit && selectedShapeId) {
         const selectedShape = state.shapes.get(selectedShapeId);
-        if (selectedShape && shapeSelectionBoxContainsPoint(selectedShape, wpos.x, wpos.y)) {
+        if (canEditShapeLocal(selectedShape) && shapeSelectionBoxContainsPoint(selectedShape, wpos.x, wpos.y)) {
           shapeHit = selectedShapeId;
         }
       }
@@ -5011,17 +5034,24 @@
           const tok = state.tokens.get(id);
           if (tok) dragStartTokenPositions.set(id, { x: tok.x, y: tok.y });
         }
-      } else if (shapeHit && isGM()) {
+      } else if (shapeHit) {
         selectedTokenId = null;
         selectedShapeId = shapeHit;
-        draggingShapeId = shapeHit;
-        draggingTokenId = null;
-        draggingTokenIds = [];
-        dragMoveStartWorld = null;
-        dragStartTokenPositions.clear();
         const sh = state.shapes.get(shapeHit);
-        if (sh) {
+        if (canEditShapeLocal(sh)) {
+          draggingShapeId = shapeHit;
+          draggingTokenId = null;
+          draggingTokenIds = [];
+          dragMoveStartWorld = null;
+          dragStartTokenPositions.clear();
           shapeDragOrigin = { wx: wpos.x, wy: wpos.y, x1: sh.x1, y1: sh.y1, x2: sh.x2, y2: sh.y2 };
+        } else {
+          draggingShapeId = null;
+          draggingTokenId = null;
+          draggingTokenIds = [];
+          dragMoveStartWorld = null;
+          dragStartTokenPositions.clear();
+          shapeDragOrigin = null;
         }
       } else {
         selectedTokenId = null;

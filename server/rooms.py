@@ -327,6 +327,15 @@ class RoomManager:
             return False
         return bool(shape.creator_id and shape.creator_id == client_id)
 
+    def can_edit_shape(self, room: Room, user_id: Optional[int], client_id: str, shape: Shape) -> bool:
+        if self._is_gm(room, user_id, client_id):
+            return True
+        if room.state.lockdown:
+            return False
+        if shape.locked:
+            return False
+        return bool(shape.creator_id and shape.creator_id == client_id)
+
     async def apply_event(self, room_id: str, room: Room, event: WireEvent, client_id: str, user_id: Optional[int] = None) -> WireEvent:
         t = event.type
         p = event.payload
@@ -726,8 +735,8 @@ class RoomManager:
             shape = room.state.shapes.get(sid)
             if not shape:
                 return WireEvent(type="ERROR", payload={"message": "Unknown shape", "id": sid})
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can edit shapes"})
+            if not self.can_edit_shape(room, user_id, client_id, shape):
+                return WireEvent(type="ERROR", payload={"message": "Not allowed to edit shape", "id": sid})
 
             if bool(p.get("commit", False)):
                 self._push_history(room)
