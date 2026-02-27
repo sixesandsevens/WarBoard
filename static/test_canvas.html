@@ -623,12 +623,18 @@
       <div class="ctx-title">Asset</div>
       <div class="ctx-item" data-action="asset_duplicate">Duplicate</div>
       <div class="ctx-sep"></div>
-      <div class="ctx-item" data-action="asset_resize_up">Resize +1 grid</div>
-      <div class="ctx-item" data-action="asset_resize_down">Resize -1 grid</div>
-      <div class="ctx-sep"></div>
-      <div class="ctx-item" data-action="asset_rotate_cw">Rotate +15°</div>
-      <div class="ctx-item" data-action="asset_rotate_ccw">Rotate -15°</div>
-      <div class="ctx-item" data-action="asset_rotate_reset">Reset rotation</div>
+      <div style="padding:8px 10px; display:flex; flex-direction:column; gap:6px;">
+        <label style="font-size:12px; opacity:.9; display:flex; justify-content:space-between; gap:8px;">
+          <span>Scale</span>
+          <span id="assetScaleValue">100%</span>
+        </label>
+        <input id="assetScaleSlider" type="range" min="5" max="400" step="1" value="100">
+        <label style="font-size:12px; opacity:.9; display:flex; justify-content:space-between; gap:8px; margin-top:4px;">
+          <span>Rotation</span>
+          <span id="assetRotateValue">0°</span>
+        </label>
+        <input id="assetRotateSlider" type="range" min="-180" max="180" step="1" value="0">
+      </div>
       <div class="ctx-sep"></div>
       <div class="ctx-item" data-action="asset_flip_x">Flip horizontal</div>
       <div class="ctx-item" data-action="asset_flip_y">Flip vertical</div>
@@ -937,6 +943,10 @@
   const textCtx = document.getElementById("textCtx");
   const rulerCtx = document.getElementById("rulerCtx");
   const assetCtx = document.getElementById("assetCtx");
+  const assetScaleSliderEl = document.getElementById("assetScaleSlider");
+  const assetScaleValueEl = document.getElementById("assetScaleValue");
+  const assetRotateSliderEl = document.getElementById("assetRotateSlider");
+  const assetRotateValueEl = document.getElementById("assetRotateValue");
   const toolColorPanel = document.getElementById("toolColorPanel");
   const toolColorTitle = document.getElementById("toolColorTitle");
   const toolColorPicker = document.getElementById("toolColorPicker");
@@ -2205,6 +2215,32 @@
     state.assets.set(assetId, next);
     requestRender();
     send("ASSET_INSTANCE_UPDATE", { id: assetId, ...patch, commit: !!commit });
+  }
+
+  function normalizeAngleDeg(rad) {
+    const raw = Number(rad || 0) * (180 / Math.PI);
+    let out = ((raw + 180) % 360 + 360) % 360 - 180;
+    if (Object.is(out, -0)) out = 0;
+    return out;
+  }
+
+  function syncAssetCtxSliders() {
+    const a = state.assets.get(selectedAssetId || "");
+    const enabled = !!a;
+    if (assetScaleSliderEl) assetScaleSliderEl.disabled = !enabled;
+    if (assetRotateSliderEl) assetRotateSliderEl.disabled = !enabled;
+    if (!enabled) {
+      if (assetScaleValueEl) assetScaleValueEl.textContent = "--";
+      if (assetRotateValueEl) assetRotateValueEl.textContent = "--";
+      return;
+    }
+    const sx = Math.abs(signedAssetScale(a.scale_x, 1));
+    const scalePct = Math.round(clamp(sx * 100, 5, 400));
+    const rotDeg = Math.round(clamp(normalizeAngleDeg(a.rotation || 0), -180, 180));
+    if (assetScaleSliderEl) assetScaleSliderEl.value = String(scalePct);
+    if (assetRotateSliderEl) assetRotateSliderEl.value = String(rotDeg);
+    if (assetScaleValueEl) assetScaleValueEl.textContent = `${scalePct}%`;
+    if (assetRotateValueEl) assetRotateValueEl.textContent = `${rotDeg}°`;
   }
 
   function setSelection(ids = [], primaryId = null) {
@@ -6648,6 +6684,50 @@
       handleCtxAction(action);
     });
   }
+  if (assetScaleSliderEl) {
+    assetScaleSliderEl.addEventListener("input", () => {
+      const a = state.assets.get(selectedAssetId || "");
+      if (!a || !canEditAssetLocal(a)) return;
+      const pct = clamp(Number(assetScaleSliderEl.value || "100"), 5, 400);
+      const nextAbs = clamp(pct / 100, 0.05, 10);
+      const sx = signedAssetScale(a.scale_x, 1);
+      const sy = signedAssetScale(a.scale_y, 1);
+      const signX = sx < 0 ? -1 : 1;
+      const signY = sy < 0 ? -1 : 1;
+      applyAssetUpdate(a.id, { scale_x: signX * nextAbs, scale_y: signY * nextAbs }, false);
+      if (assetScaleValueEl) assetScaleValueEl.textContent = `${Math.round(pct)}%`;
+    });
+    assetScaleSliderEl.addEventListener("change", () => {
+      const a = state.assets.get(selectedAssetId || "");
+      if (!a || !canEditAssetLocal(a)) return;
+      const pct = clamp(Number(assetScaleSliderEl.value || "100"), 5, 400);
+      const nextAbs = clamp(pct / 100, 0.05, 10);
+      const sx = signedAssetScale(a.scale_x, 1);
+      const sy = signedAssetScale(a.scale_y, 1);
+      const signX = sx < 0 ? -1 : 1;
+      const signY = sy < 0 ? -1 : 1;
+      applyAssetUpdate(a.id, { scale_x: signX * nextAbs, scale_y: signY * nextAbs }, true);
+      syncAssetCtxSliders();
+    });
+  }
+  if (assetRotateSliderEl) {
+    assetRotateSliderEl.addEventListener("input", () => {
+      const a = state.assets.get(selectedAssetId || "");
+      if (!a || !canEditAssetLocal(a)) return;
+      const deg = clamp(Number(assetRotateSliderEl.value || "0"), -180, 180);
+      const rad = deg * (Math.PI / 180);
+      applyAssetUpdate(a.id, { rotation: rad }, false);
+      if (assetRotateValueEl) assetRotateValueEl.textContent = `${Math.round(deg)}°`;
+    });
+    assetRotateSliderEl.addEventListener("change", () => {
+      const a = state.assets.get(selectedAssetId || "");
+      if (!a || !canEditAssetLocal(a)) return;
+      const deg = clamp(Number(assetRotateSliderEl.value || "0"), -180, 180);
+      const rad = deg * (Math.PI / 180);
+      applyAssetUpdate(a.id, { rotation: rad }, true);
+      syncAssetCtxSliders();
+    });
+  }
   window.addEventListener("mousedown", (e) => {
     if (!isClickInsideAnyCtxMenu(e.target)) hideAllCtx();
     if (!isClickInsideToolPanel(e.target)) hideToolPanels();
@@ -7313,6 +7393,7 @@
       if (a && (canEditAssetLocal(a) || canDeleteAssetLocal(a))) {
         const lockItem = assetCtx?.querySelector('[data-action="asset_lock_toggle"]');
         if (lockItem) lockItem.style.display = isGM() ? "flex" : "none";
+        syncAssetCtxSliders();
         showContextMenu(assetCtx, e.clientX, e.clientY);
       }
       requestRender();
@@ -7374,6 +7455,7 @@
         if (a && (canEditAssetLocal(a) || canDeleteAssetLocal(a))) {
           const lockItem = assetCtx?.querySelector('[data-action="asset_lock_toggle"]');
           if (lockItem) lockItem.style.display = isGM() ? "flex" : "none";
+          syncAssetCtxSliders();
           showContextMenu(assetCtx, e.clientX, e.clientY);
         }
         requestRender();
