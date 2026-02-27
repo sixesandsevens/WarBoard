@@ -28,6 +28,9 @@ Thumbs.db
 /data/*.db-wal
 /data/*.db-shm
 /data/uploads/
+# Private packs (do not commit)
+data/private_packs/
+data/private_import/
 
 # Runtime sqlite artifacts
 /data/*.db-wal
