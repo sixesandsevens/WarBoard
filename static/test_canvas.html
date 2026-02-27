@@ -10,8 +10,8 @@
       position: relative;
       display:flex; align-items:center; justify-content:flex-start; gap:10px;
       background:#0f0f0f; border-bottom:1px solid #222;
-      overflow-x: auto;
-      white-space: nowrap;
+      flex-wrap: wrap;
+      overflow-x: hidden;
     }
     .top-left, .top-right {
       display:flex;
@@ -6362,9 +6362,11 @@
     connectWS(true);
   }
 
-  document.getElementById("connect").onclick = () => connectWS(false);
+  const connectBtnEl = document.getElementById("connect");
+  if (connectBtnEl) connectBtnEl.onclick = () => connectWS(false);
 
-  document.getElementById("spawn").onclick = () => {
+  const spawnBtnEl = document.getElementById("spawn");
+  if (spawnBtnEl) spawnBtnEl.onclick = () => {
     dragSpawn = {
       kind: "token",
       name: "Token",
@@ -6378,11 +6380,13 @@
     requestRender();
   };
 
-  document.getElementById("undo").onclick = () => send("UNDO", {});
-  document.getElementById("redo").onclick = () => send("REDO", {});
+  const undoBtnEl = document.getElementById("undo");
+  if (undoBtnEl) undoBtnEl.onclick = () => send("UNDO", {});
+  const redoBtnEl = document.getElementById("redo");
+  if (redoBtnEl) redoBtnEl.onclick = () => send("REDO", {});
 
-  drawerToggle.onclick = () => drawer.classList.toggle("hidden");
-  drawerClose.onclick = () => drawer.classList.add("hidden");
+  if (drawerToggle) drawerToggle.onclick = () => drawer.classList.toggle("hidden");
+  if (drawerClose) drawerClose.onclick = () => drawer.classList.add("hidden");
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       activateDrawerTab(btn.dataset.tab, true);
@@ -6442,14 +6446,14 @@
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
     btn.addEventListener("mouseleave", hideTooltip);
   });
-  sessionPill.addEventListener("click", openSessionModal);
+  if (sessionPill) sessionPill.addEventListener("click", openSessionModal);
   if (logToggleEl && logWrapEl) {
     logToggleEl.addEventListener("click", () => {
       setLogCollapsed(!logWrapEl.classList.contains("collapsed"));
     });
   }
-  sessionModalClose.addEventListener("click", closeSessionModal);
-  sessionModalBackdrop.addEventListener("click", closeSessionModal);
+  if (sessionModalClose) sessionModalClose.addEventListener("click", closeSessionModal);
+  if (sessionModalBackdrop) sessionModalBackdrop.addEventListener("click", closeSessionModal);
   if (mapPreviewClose) mapPreviewClose.addEventListener("click", closeMapPreview);
   if (mapPreviewBackdrop) mapPreviewBackdrop.addEventListener("click", closeMapPreview);
   if (mapPreviewSetBgBtn) mapPreviewSetBgBtn.addEventListener("click", () => {
@@ -6495,7 +6499,7 @@
     }
     window.open(url, "_blank", "noopener,noreferrer");
   });
-  sessionLoginBtn.addEventListener("click", async () => {
+  if (sessionLoginBtn) sessionLoginBtn.addEventListener("click", async () => {
     const username = sessionAuthUserEl.value.trim();
     const password = sessionAuthPassEl.value;
     if (!username || !password) {
@@ -6514,7 +6518,7 @@
       log(`LOGIN ERROR: ${e.message || e}`);
     }
   });
-  sessionRegisterBtn.addEventListener("click", async () => {
+  if (sessionRegisterBtn) sessionRegisterBtn.addEventListener("click", async () => {
     const username = sessionAuthUserEl.value.trim();
     const password = sessionAuthPassEl.value;
     if (!username || !password) {
@@ -6533,10 +6537,10 @@
       log(`REGISTER ERROR: ${e.message || e}`);
     }
   });
-  sessionOpenLobbyBtn.addEventListener("click", () => {
+  if (sessionOpenLobbyBtn) sessionOpenLobbyBtn.addEventListener("click", () => {
     location.href = "/static/app.html";
   });
-  sessionLogoutBtn.addEventListener("click", async () => {
+  if (sessionLogoutBtn) sessionLogoutBtn.addEventListener("click", async () => {
     try {
       await apiPost("/api/auth/logout", {});
     } catch (e) {}
@@ -6549,7 +6553,7 @@
     refreshSessionModalAuth();
     updateSessionPill();
   });
-  sessionConnectBtn.addEventListener("click", () => {
+  if (sessionConnectBtn) sessionConnectBtn.addEventListener("click", () => {
     roomEl.value = sessionRoomEl.value.trim() || "demo";
     if (!me || !me.username) {
       log("Connect blocked: log in first.");
@@ -6559,7 +6563,7 @@
     connectWS(true);
     closeSessionModal();
   });
-  sessionDisconnectBtn.addEventListener("click", () => {
+  if (sessionDisconnectBtn) sessionDisconnectBtn.addEventListener("click", () => {
     if (ws && (ws.readyState === 0 || ws.readyState === 1 || ws.readyState === WebSocket.OPEN)) {
       try { ws.close(); } catch {}
     }
@@ -6570,7 +6574,7 @@
     }
     updateSessionPill();
   });
-  [sessionRoomEl, sessionClientEl].forEach((inp) => {
+  [sessionRoomEl, sessionClientEl].filter(Boolean).forEach((inp) => {
     inp.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -6608,15 +6612,15 @@
     }
     refreshToolContextChecks();
   };
-  toolColorPicker.addEventListener("input", applyToolColor);
-  toolColorPicker.addEventListener("change", applyToolColor);
-  toolSizeSlider.addEventListener("input", () => {
+  if (toolColorPicker) toolColorPicker.addEventListener("input", applyToolColor);
+  if (toolColorPicker) toolColorPicker.addEventListener("change", applyToolColor);
+  if (toolSizeSlider) toolSizeSlider.addEventListener("input", () => {
     const next = clamp(Number(toolSizeSlider.value || "3"), 1, 30);
     sizeEl.value = String(Math.round(next));
     toolSizeValue.textContent = String(Math.round(next));
     refreshToolContextChecks();
   });
-  mapCtx.addEventListener("mousemove", (e) => {
+  if (mapCtx) mapCtx.addEventListener("mousemove", (e) => {
     const row = e.target.closest(".ctx-item.has-sub");
     if (!row) {
       scheduleCtxSubHide(120);
@@ -6629,8 +6633,8 @@
     if (sub === "layers") showSubMenu(mapCtxLayers, row);
     if (sub === "clear") showSubMenu(mapCtxClear, row);
   });
-  mapCtx.addEventListener("mouseleave", () => scheduleCtxSubHide(120));
-  [mapCtxBg, mapCtxLayers, mapCtxClear].forEach((sub) => {
+  if (mapCtx) mapCtx.addEventListener("mouseleave", () => scheduleCtxSubHide(120));
+  [mapCtxBg, mapCtxLayers, mapCtxClear].filter(Boolean).forEach((sub) => {
     sub.addEventListener("mouseenter", () => clearCtxSubHideTimer());
     sub.addEventListener("mouseleave", () => scheduleCtxSubHide(120));
   });
@@ -6651,24 +6655,32 @@
     hideTooltip();
   });
 
-  document.getElementById("gmPanelBtn").onclick = () => {
+  const gmPanelBtnEl = document.getElementById("gmPanelBtn");
+  if (gmPanelBtnEl) gmPanelBtnEl.onclick = () => {
     activateDrawerTab("players", true);
     refreshGmUI();
   };
-  document.getElementById("gmPanelClose").onclick = () => { drawer.classList.add("hidden"); };
-  document.getElementById("roomsPanelBtn").onclick = async () => {
+  const gmPanelCloseBtnEl = document.getElementById("gmPanelClose");
+  if (gmPanelCloseBtnEl) gmPanelCloseBtnEl.onclick = () => { drawer.classList.add("hidden"); };
+  const roomsPanelBtnEl = document.getElementById("roomsPanelBtn");
+  if (roomsPanelBtnEl) roomsPanelBtnEl.onclick = async () => {
     activateDrawerTab("rooms", true);
     await refreshRoomsPanel();
     await refreshSnapshotsPanel();
   };
-  document.getElementById("roomsPanelClose").onclick = () => { drawer.classList.add("hidden"); };
-  document.getElementById("libraryPanelBtn").onclick = async () => {
+  const roomsPanelCloseBtnEl = document.getElementById("roomsPanelClose");
+  if (roomsPanelCloseBtnEl) roomsPanelCloseBtnEl.onclick = () => { drawer.classList.add("hidden"); };
+  const libraryPanelBtnEl = document.getElementById("libraryPanelBtn");
+  if (libraryPanelBtnEl) libraryPanelBtnEl.onclick = async () => {
     activateDrawerTab("tokens", true);
     await refreshPacks();
   };
-  document.getElementById("libraryPanelClose").onclick = () => { drawer.classList.add("hidden"); };
-  document.getElementById("refreshPacksBtn").onclick = () => refreshPacks();
-  document.getElementById("assetPanelClose").onclick = () => { drawer.classList.add("hidden"); };
+  const libraryPanelCloseBtnEl = document.getElementById("libraryPanelClose");
+  if (libraryPanelCloseBtnEl) libraryPanelCloseBtnEl.onclick = () => { drawer.classList.add("hidden"); };
+  const refreshPacksBtnEl = document.getElementById("refreshPacksBtn");
+  if (refreshPacksBtnEl) refreshPacksBtnEl.onclick = () => refreshPacks();
+  const assetPanelCloseBtnEl = document.getElementById("assetPanelClose");
+  if (assetPanelCloseBtnEl) assetPanelCloseBtnEl.onclick = () => { drawer.classList.add("hidden"); };
   if (drawerContentEl) drawerContentEl.addEventListener("scroll", maybeLoadMoreAssets, { passive: true });
   if (assetRefreshBtnEl) assetRefreshBtnEl.onclick = () => refreshAssetsPanel();
   if (assetSearchInputEl) assetSearchInputEl.addEventListener("input", () => {
