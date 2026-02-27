@@ -2388,6 +2388,7 @@
       btn.oncontextmenu = async (e) => {
         e.preventDefault();
         if (!isGM()) return;
+        if (a.readonly) return;
         if (!confirm(`Delete asset '${a.name || "asset"}'?`)) return;
         try {
           await apiDeleteAsset(String(a.asset_id || a.id || ""));

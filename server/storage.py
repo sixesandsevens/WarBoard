@@ -87,6 +87,36 @@ class AssetRow(SQLModel, table=True):
     created_at: str
 
 
+class PrivatePackRow(SQLModel, table=True):
+    pack_id: Optional[int] = Field(default=None, primary_key=True)
+    slug: str = Field(index=True, unique=True)
+    name: str
+    owner_user_id: int = Field(index=True)
+    created_at: str
+    root_rel: str
+    thumb_rel: str
+
+
+class PrivatePackEntitlementRow(SQLModel, table=True):
+    pack_id: int = Field(primary_key=True)
+    user_id: int = Field(primary_key=True)
+    granted_at: str
+
+
+class PrivatePackAssetRow(SQLModel, table=True):
+    asset_id: str = Field(primary_key=True)
+    pack_id: int = Field(index=True)
+    name: str
+    folder_path: str = ""
+    tags_json: str = "[]"
+    mime: str
+    width: int
+    height: int
+    url_original: str
+    url_thumb: str
+    created_at: str
+
+
 def _sqlite_conn() -> sqlite3.Connection:
     # engine.url is like sqlite:////path/to/db
     url = str(engine.url)
@@ -493,6 +523,149 @@ def list_assets_for_user(user_id: int, q: str = "", tag: str = "", folder: str =
         )
     out.sort(key=lambda a: str(a.get("created_at", "")), reverse=True)
     return out
+
+
+def create_private_pack(
+    owner_user_id: int,
+    slug: str,
+    name: str,
+    root_rel: str,
+    thumb_rel: str,
+) -> PrivatePackRow:
+    now = utc_now_iso()
+    with Session(engine) as s:
+        existing = s.exec(select(PrivatePackRow).where(PrivatePackRow.slug == slug)).first()
+        if existing:
+            raise ValueError("Private pack slug already exists")
+        row = PrivatePackRow(
+            slug=slug,
+            name=name,
+            owner_user_id=owner_user_id,
+            created_at=now,
+            root_rel=root_rel,
+            thumb_rel=thumb_rel,
+        )
+        s.add(row)
+        s.commit()
+        s.refresh(row)
+        return row
+
+
+def get_private_pack_by_slug(slug: str) -> Optional[PrivatePackRow]:
+    with Session(engine) as s:
+        return s.exec(select(PrivatePackRow).where(PrivatePackRow.slug == slug)).first()
+
+
+def grant_private_pack_access(pack_id: int, user_id: int) -> None:
+    now = utc_now_iso()
+    with Session(engine) as s:
+        row = s.get(PrivatePackEntitlementRow, (pack_id, user_id))
+        if row:
+            row.granted_at = now
+            s.add(row)
+        else:
+            s.add(PrivatePackEntitlementRow(pack_id=pack_id, user_id=user_id, granted_at=now))
+        s.commit()
+
+
+def revoke_private_pack_access(pack_id: int, user_id: int) -> None:
+    with Session(engine) as s:
+        row = s.get(PrivatePackEntitlementRow, (pack_id, user_id))
+        if not row:
+            return
+        s.delete(row)
+        s.commit()
+
+
+def _pack_ids_for_user(user_id: int) -> set[int]:
+    with Session(engine) as s:
+        owned = s.exec(select(PrivatePackRow.pack_id).where(PrivatePackRow.owner_user_id == user_id)).all()
+        entitled = s.exec(
+            select(PrivatePackEntitlementRow.pack_id).where(PrivatePackEntitlementRow.user_id == user_id)
+        ).all()
+    return {int(pid) for pid in [*owned, *entitled] if pid is not None}
+
+
+def list_private_packs_for_user(user_id: int) -> List[Dict[str, object]]:
+    pack_ids = _pack_ids_for_user(user_id)
+    if not pack_ids:
+        return []
+    with Session(engine) as s:
+        packs = s.exec(select(PrivatePackRow).where(PrivatePackRow.pack_id.in_(pack_ids))).all()
+    out: List[Dict[str, object]] = []
+    for p in packs:
+        out.append(
+            {
+                "pack_id": p.pack_id,
+                "slug": p.slug,
+                "name": p.name,
+                "owner_user_id": p.owner_user_id,
+                "created_at": p.created_at,
+                "root_rel": p.root_rel,
+                "thumb_rel": p.thumb_rel,
+            }
+        )
+    out.sort(key=lambda p: str(p.get("created_at", "")), reverse=True)
+    return out
+
+
+def list_pack_assets_for_user(user_id: int, q: str = "", tag: str = "", folder: str = "") -> List[Dict[str, object]]:
+    qn = (q or "").strip().lower()
+    tn = (tag or "").strip().lower()
+    fn = (folder or "").strip().strip("/").lower()
+    pack_ids = _pack_ids_for_user(user_id)
+    if not pack_ids:
+        return []
+
+    with Session(engine) as s:
+        packs = s.exec(select(PrivatePackRow).where(PrivatePackRow.pack_id.in_(pack_ids))).all()
+        slug_by_pack_id = {int(p.pack_id): p.slug for p in packs if p.pack_id is not None}
+        rows = s.exec(select(PrivatePackAssetRow).where(PrivatePackAssetRow.pack_id.in_(pack_ids))).all()
+
+    out: List[Dict[str, object]] = []
+    for row in rows:
+        try:
+            tags = [str(t).strip() for t in (json.loads(row.tags_json or "[]") or []) if str(t).strip()]
+        except Exception:
+            tags = []
+        if qn and qn not in (row.name or "").lower() and not any(qn in t.lower() for t in tags):
+            continue
+        if tn and not any(tn == t.lower() for t in tags):
+            continue
+        if fn and str(row.folder_path or "").strip("/").lower() != fn:
+            continue
+        out.append(
+            {
+                "asset_id": row.asset_id,
+                "name": row.name,
+                "folder_path": row.folder_path or "",
+                "tags": tags,
+                "mime": row.mime,
+                "width": row.width,
+                "height": row.height,
+                "url_original": row.url_original,
+                "url_thumb": row.url_thumb,
+                "created_at": row.created_at,
+                "readonly": True,
+                "source": "pack",
+                "pack_slug": slug_by_pack_id.get(int(row.pack_id), ""),
+            }
+        )
+    out.sort(key=lambda a: str(a.get("created_at", "")), reverse=True)
+    return out
+
+
+def list_all_assets_for_user(user_id: int, q: str = "", tag: str = "", folder: str = "") -> List[Dict[str, object]]:
+    uploads = []
+    for a in list_assets_for_user(user_id, q=q, tag=tag, folder=folder):
+        item = dict(a)
+        item["readonly"] = False
+        item["source"] = "upload"
+        uploads.append(item)
+    packs = list_pack_assets_for_user(user_id, q=q, tag=tag, folder=folder)
+    merged = [*uploads, *packs]
+    merged.sort(key=lambda a: str(a.get("created_at", "")), reverse=True)
+    return merged
 
 
 def get_asset_for_user(asset_id: str, user_id: int) -> Optional[AssetRow]:

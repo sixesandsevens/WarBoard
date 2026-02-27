@@ -50,6 +50,7 @@ from .storage import (
     get_user_by_username,
     init_db,
     is_member,
+    list_all_assets_for_user,
     list_assets_for_user,
     list_rooms_for_user,
     list_snapshots,
@@ -68,6 +69,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 PACKS_DIR = BASE_DIR / "packs"
 STATIC_DIR = BASE_DIR / "static"
 UPLOADS_DIR = BASE_DIR / "data" / "uploads"
+PRIVATE_PACKS_DIR = Path(
+    os.getenv("PRIVATE_PACKS_DIR", str(Path(os.getenv("DATA_DIR", "./data")) / "private_packs"))
+)
 BG_UPLOADS_DIR = UPLOADS_DIR / "backgrounds"
 ASSET_UPLOADS_DIR = UPLOADS_DIR / "assets"
 MAX_BACKGROUND_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -111,6 +115,7 @@ EXT_TO_IMAGE_MIME = {
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
 app.mount("/packs", StaticFiles(directory=str(PACKS_DIR), check_dir=False), name="packs")
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR), check_dir=False), name="uploads")
+app.mount("/private-packs", StaticFiles(directory=str(PRIVATE_PACKS_DIR), check_dir=False), name="private-packs")
 
 rm = RoomManager()
 HEARTBEAT_TIMEOUT_SECONDS = 35.0
@@ -337,6 +342,7 @@ async def _startup() -> None:
     init_db()
     BG_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     ASSET_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    PRIVATE_PACKS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ----------------------------- Auth middleware --------------------------------
@@ -543,7 +549,7 @@ def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = ""):
     user = _require_user(req)
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
-    return {"assets": list_assets_for_user(user.user_id, q=q, tag=tag, folder=folder)}
+    return {"assets": list_all_assets_for_user(user.user_id, q=q, tag=tag, folder=folder)}
 
 
 if HAS_MULTIPART:
