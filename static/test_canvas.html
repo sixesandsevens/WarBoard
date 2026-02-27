@@ -3043,7 +3043,7 @@
   }
 
   function applyAssetFilterPresetForSource(sourceValue = null, announce = false) {
-    const source = String(sourceValue ?? assetState.packFilter || "all");
+    const source = String(sourceValue ?? assetState.packFilter ?? "all");
     const key = assetFilterSourceKey(source);
     const preset = assetState.filterPresets[key];
     if (preset && typeof preset === "object") {
