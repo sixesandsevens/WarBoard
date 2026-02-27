@@ -460,6 +460,29 @@
         </div>
       </div>
     </div>
+    <div id="mapPreviewBackdrop" class="modal-backdrop hidden"></div>
+    <div id="mapPreviewModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Map preview" style="width:min(820px, calc(100vw - 24px)); left:12px; top:56px; max-height:calc(100vh - 80px); overflow:auto;">
+      <div class="modal-header">
+        <div id="mapPreviewTitle" class="modal-title">Map Preview</div>
+        <button id="mapPreviewClose" class="modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="width:100%; border-radius:10px; overflow:hidden; border:1px solid rgba(255,255,255,0.14); background:#111;">
+          <img id="mapPreviewImage" alt="Map preview" style="display:block; width:100%; max-height:52vh; object-fit:contain; background:#111;">
+        </div>
+        <div id="mapPreviewMeta" class="hint" style="margin-top:8px;"></div>
+        <div id="mapPreviewPath" class="hint"></div>
+        <div class="modal-actions" style="flex-wrap:wrap;">
+          <button id="mapPreviewSetBgBtn" class="primary">Set as Background</button>
+          <button id="mapPreviewClearBgBtn" class="ghost">Clear BG</button>
+          <button id="mapPreviewFitBtn" class="ghost">Fit to View</button>
+          <button id="mapPreviewOverlayBtn" class="ghost">Use as Overlay</button>
+          <button id="mapPreviewSpawnBtn" class="ghost">Place Piece</button>
+          <button id="mapPreviewCopyUrlBtn" class="ghost">Copy URL</button>
+          <button id="mapPreviewOpenTabBtn" class="ghost">Open</button>
+        </div>
+      </div>
+    </div>
     <div id="drawer" class="drawer hidden">
       <div class="drawer-header">
         <span>WarBoard</span>
@@ -728,6 +751,71 @@
         <input id="assetSearchInput" placeholder="Search assets..." style="flex:1; min-width:180px;">
         <button id="assetPlaceModeBtn" class="ghost" type="button" title="When enabled, clicking asset cards starts drag-place instead of spawning at center.">Place Mode: On</button>
       </div>
+      <div id="assetSearchChips" style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;"></div>
+      <div id="assetSearchHint" style="margin-top:4px; font-size:11px; opacity:.8;"></div>
+      <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <label style="font-size:12px;">View
+          <select id="assetViewMode">
+            <option value="pieces">Pieces</option>
+            <option value="maps">Maps</option>
+            <option value="unknown">Unknown</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <label style="font-size:12px;">Pack
+          <select id="assetPackFilter">
+            <option value="all">All Packs</option>
+          </select>
+        </label>
+        <label style="font-size:12px;">Type
+          <select id="assetTypeFilter">
+            <option value="all">All Files</option>
+            <option value="png">PNG</option>
+            <option value="webp">WebP</option>
+            <option value="jpg">JPG</option>
+            <option value="gif">GIF</option>
+          </select>
+        </label>
+        <label style="font-size:12px;">Alpha
+          <select id="assetAlphaFilter">
+            <option value="all">Any</option>
+            <option value="yes">Has Alpha</option>
+            <option value="no">No Alpha</option>
+          </select>
+        </label>
+        <label style="font-size:12px;">Size
+          <select id="assetSizeFilter">
+            <option value="all">Any</option>
+            <option value="tiny">Tiny (≤256)</option>
+            <option value="small">Small (≤512)</option>
+            <option value="medium">Medium (≤1024)</option>
+            <option value="large">Large (≤2048)</option>
+            <option value="huge">Huge (&gt;2048)</option>
+          </select>
+        </label>
+        <label style="font-size:12px;">Sort
+          <select id="assetSortMode">
+            <option value="recent">Recently Used</option>
+            <option value="newest">Newest</option>
+            <option value="largest">Largest</option>
+            <option value="name">Name (A-Z)</option>
+          </select>
+        </label>
+        <label style="font-size:12px; display:flex; align-items:center; gap:4px;">
+          <input id="assetDebugNet" type="checkbox">
+          Debug net
+        </label>
+      </div>
+      <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <label style="font-size:12px;">Saved Set
+          <select id="assetSetSelect" style="min-width:180px;">
+            <option value="">(no saved sets)</option>
+          </select>
+        </label>
+        <button id="assetSetApplyBtn" type="button">Apply</button>
+        <button id="assetSetSaveBtn" type="button">Save Set</button>
+        <button id="assetSetDeleteBtn" type="button">Delete</button>
+      </div>
       <div id="assetFolderTree" style="margin-top:6px; max-height:180px; overflow:auto; border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:6px; font-size:12px;"></div>
       <div id="assetGrid" style="
         margin-top:8px;
@@ -880,6 +968,19 @@
   const assetZipUploadBtnEl = document.getElementById("assetZipUploadBtn");
   const assetRefreshBtnEl = document.getElementById("assetRefreshBtn");
   const assetSearchInputEl = document.getElementById("assetSearchInput");
+  const assetSearchChipsEl = document.getElementById("assetSearchChips");
+  const assetSearchHintEl = document.getElementById("assetSearchHint");
+  const assetViewModeEl = document.getElementById("assetViewMode");
+  const assetPackFilterEl = document.getElementById("assetPackFilter");
+  const assetTypeFilterEl = document.getElementById("assetTypeFilter");
+  const assetAlphaFilterEl = document.getElementById("assetAlphaFilter");
+  const assetSizeFilterEl = document.getElementById("assetSizeFilter");
+  const assetSortModeEl = document.getElementById("assetSortMode");
+  const assetDebugNetEl = document.getElementById("assetDebugNet");
+  const assetSetSelectEl = document.getElementById("assetSetSelect");
+  const assetSetApplyBtnEl = document.getElementById("assetSetApplyBtn");
+  const assetSetSaveBtnEl = document.getElementById("assetSetSaveBtn");
+  const assetSetDeleteBtnEl = document.getElementById("assetSetDeleteBtn");
   const assetPlaceModeBtnEl = document.getElementById("assetPlaceModeBtn");
   const assetFolderTreeEl = document.getElementById("assetFolderTree");
   const assetGridEl = document.getElementById("assetGrid");
@@ -898,6 +999,20 @@
   const sessionModal = document.getElementById("sessionModal");
   const sessionModalBackdrop = document.getElementById("sessionModalBackdrop");
   const sessionModalClose = document.getElementById("sessionModalClose");
+  const mapPreviewModal = document.getElementById("mapPreviewModal");
+  const mapPreviewBackdrop = document.getElementById("mapPreviewBackdrop");
+  const mapPreviewClose = document.getElementById("mapPreviewClose");
+  const mapPreviewTitleEl = document.getElementById("mapPreviewTitle");
+  const mapPreviewImageEl = document.getElementById("mapPreviewImage");
+  const mapPreviewMetaEl = document.getElementById("mapPreviewMeta");
+  const mapPreviewPathEl = document.getElementById("mapPreviewPath");
+  const mapPreviewSetBgBtn = document.getElementById("mapPreviewSetBgBtn");
+  const mapPreviewClearBgBtn = document.getElementById("mapPreviewClearBgBtn");
+  const mapPreviewFitBtn = document.getElementById("mapPreviewFitBtn");
+  const mapPreviewOverlayBtn = document.getElementById("mapPreviewOverlayBtn");
+  const mapPreviewSpawnBtn = document.getElementById("mapPreviewSpawnBtn");
+  const mapPreviewCopyUrlBtn = document.getElementById("mapPreviewCopyUrlBtn");
+  const mapPreviewOpenTabBtn = document.getElementById("mapPreviewOpenTabBtn");
   const sessionModalTitleEl = document.getElementById("sessionModalTitle");
   const sessionStatusTextEl = document.getElementById("sessionStatusText");
   const sessionAuthBoxEl = document.getElementById("sessionAuthBox");
@@ -949,10 +1064,55 @@
     logEl.scrollTop = logEl.scrollHeight;
   }
 
+  function toast(msg) {
+    const el = document.createElement("div");
+    el.textContent = String(msg || "");
+    el.style.position = "fixed";
+    el.style.right = "14px";
+    el.style.top = "78px";
+    el.style.maxWidth = "360px";
+    el.style.padding = "8px 10px";
+    el.style.borderRadius = "8px";
+    el.style.background = "rgba(20,20,20,0.92)";
+    el.style.border = "1px solid rgba(255,255,255,0.16)";
+    el.style.color = "#f0f0f0";
+    el.style.fontSize = "12px";
+    el.style.zIndex = "5000";
+    el.style.boxShadow = "0 6px 20px rgba(0,0,0,0.35)";
+    document.body.appendChild(el);
+    setTimeout(() => {
+      try { el.remove(); } catch (_) {}
+    }, 2600);
+  }
+
   function setLogCollapsed(collapsed) {
     if (logWrapEl) logWrapEl.classList.toggle("collapsed", !!collapsed);
     if (logToggleEl) logToggleEl.textContent = collapsed ? "Maximize" : "Minimize";
   }
+
+  // Guardrail: if this logs during initial room connect, we've reintroduced eager library loading.
+  const _nativeFetch = window.fetch.bind(window);
+  function _assetNetDebugEnabled() {
+    try {
+      return localStorage.getItem(ASSET_DEBUG_NET_KEY) === "1";
+    } catch (_) {
+      return false;
+    }
+  }
+  function _assetsTabActiveNow() {
+    const tab = document.getElementById("tab-assets");
+    return !!tab && tab.classList.contains("active");
+  }
+  window.fetch = function patchedFetch(input, init) {
+    const url = typeof input === "string" ? input : String(input?.url || "");
+    if (_assetNetDebugEnabled()) {
+      const isAssetLib = url.includes("src=assetlib");
+      if (isAssetLib && !_assetsTabActiveNow()) {
+        console.warn("[asset-net-debug] request while assets tab closed:", url);
+      }
+    }
+    return _nativeFetch(input, init);
+  };
 
   function apiUrl(path, includeGm = false) {
     const url = new URL(path, window.location.origin);
@@ -1091,6 +1251,19 @@
       return apiAssetFileUrl(rec.asset_id);
     }
     return String(rec?.url_thumb || rec?.url_original || rec?.image_url || "");
+  }
+
+  function withAssetLibSrc(url) {
+    const raw = String(url || "").trim();
+    if (!raw) return raw;
+    try {
+      const u = new URL(raw, window.location.origin);
+      u.searchParams.set("src", "assetlib");
+      return u.pathname + u.search + u.hash;
+    } catch (_) {
+      const sep = raw.includes("?") ? "&" : "?";
+      return `${raw}${sep}src=assetlib`;
+    }
   }
 
   async function fetchPackAssetBlobUrl(assetId) {
@@ -2165,6 +2338,53 @@
     sessionModalBackdrop.classList.add("hidden");
   }
 
+  function openMapPreview(asset) {
+    const normalized = normalizePackBackedRecord(asset || {});
+    const name = String(normalized?.name || "Asset").trim() || "Asset";
+    const width = Math.max(0, Number(normalized?.width || 0));
+    const height = Math.max(0, Number(normalized?.height || 0));
+    const dims = width > 0 && height > 0 ? `${width}x${height}` : "unknown size";
+    const ext = assetFileExt(normalized).toUpperCase() || "IMG";
+    const alpha = assetHasAlphaGuess(normalized) ? "alpha" : "opaque";
+    const slug = String(normalized?.pack_slug || "").trim() || "uploads";
+    const folder = String(normalized?.folder_path || "/");
+    const src = withAssetLibSrc(assetPreviewUrl(normalized));
+    const loadSeq = ++mapPreviewLoadSeq;
+    mapPreviewAsset = normalized;
+    mapPreviewSourceUrl = src || "";
+    if (mapPreviewTitleEl) mapPreviewTitleEl.textContent = name;
+    if (mapPreviewMetaEl) mapPreviewMetaEl.textContent = `${dims} • ${ext} • ${alpha} • ${slug}`;
+    if (mapPreviewPathEl) mapPreviewPathEl.textContent = folder;
+    if (mapPreviewImageEl) {
+      mapPreviewImageEl.onload = () => {
+        if (loadSeq !== mapPreviewLoadSeq) return;
+      };
+      mapPreviewImageEl.onerror = () => {
+        if (loadSeq !== mapPreviewLoadSeq) return;
+        toast("Map preview failed to load.");
+      };
+      mapPreviewImageEl.src = src || ASSET_THUMB_PLACEHOLDER;
+    }
+    const gm = isGM();
+    if (mapPreviewSetBgBtn) mapPreviewSetBgBtn.disabled = !gm;
+    if (mapPreviewClearBgBtn) mapPreviewClearBgBtn.disabled = !gm;
+    if (mapPreviewBackdrop) mapPreviewBackdrop.classList.remove("hidden");
+    if (mapPreviewModal) mapPreviewModal.classList.remove("hidden");
+  }
+
+  function closeMapPreview() {
+    mapPreviewLoadSeq += 1;
+    mapPreviewAsset = null;
+    mapPreviewSourceUrl = "";
+    if (mapPreviewModal) mapPreviewModal.classList.add("hidden");
+    if (mapPreviewBackdrop) mapPreviewBackdrop.classList.add("hidden");
+    if (mapPreviewImageEl) {
+      mapPreviewImageEl.onload = null;
+      mapPreviewImageEl.onerror = null;
+      mapPreviewImageEl.src = "";
+    }
+  }
+
   function updateSessionPill() {
     const connected = online && !!(ws && ws.readyState === 1);
     const roomText = (state.room_id || roomEl.value.trim() || "demo");
@@ -2420,6 +2640,531 @@
     }
   }
 
+  function assetFileExt(asset) {
+    const mime = String(asset?.mime || "").toLowerCase();
+    if (mime === "image/jpeg") return "jpg";
+    if (mime === "image/png") return "png";
+    if (mime === "image/webp") return "webp";
+    if (mime === "image/gif") return "gif";
+    const raw = String(asset?.url_original || asset?.image_url || "");
+    const m = raw.match(/\.([a-z0-9]+)(?:$|[?#])/i);
+    if (!m) return "";
+    const ext = String(m[1] || "").toLowerCase();
+    return ext === "jpeg" ? "jpg" : ext;
+  }
+
+  function assetHasAlphaGuess(asset) {
+    const ext = assetFileExt(asset);
+    if (ext === "png" || ext === "webp" || ext === "gif") return true;
+    if (ext === "jpg") return false;
+    return false;
+  }
+
+  function assetSizeBucket(asset) {
+    const w = Math.max(0, Number(asset?.width || 0));
+    const h = Math.max(0, Number(asset?.height || 0));
+    const m = Math.max(w, h);
+    if (m <= 256) return "tiny";
+    if (m <= 512) return "small";
+    if (m <= 1024) return "medium";
+    if (m <= 2048) return "large";
+    return "huge";
+  }
+
+  function assetFilterSourceKey(value) {
+    const v = String(value || "all").trim();
+    if (!v || v === "all") return "all";
+    if (v === "upload") return "upload";
+    return `pack:${v}`;
+  }
+
+  function assetOverrideKey(asset) {
+    const source = String(asset?.source || "").trim().toLowerCase();
+    const aid = String(asset?.asset_id || "").trim();
+    const packId = String(asset?.pack_id || "").trim();
+    const packSlug = String(asset?.pack_slug || "").trim();
+    if (source === "upload" && aid) return `upload:${aid}`;
+    if (source === "pack" && aid) return `private:${packId || packSlug || "unknown"}:${aid}`;
+    if (source === "pack") {
+      const pathish = String(asset?.file || asset?.url_original || asset?.image_url || "").trim();
+      if (pathish) return `pack:${packId || packSlug || "unknown"}:${pathish}`;
+    }
+    if (aid) return `asset:${aid}`;
+    const fallback = String(asset?.url_original || asset?.image_url || "").trim();
+    return fallback ? `url:${fallback}` : "";
+  }
+
+  function assetLegacyOverrideKeys(asset) {
+    const keys = [];
+    const source = String(asset?.source || "").trim().toLowerCase();
+    const aid = String(asset?.asset_id || "").trim();
+    const packSlugLower = String(asset?.pack_slug || "").trim().toLowerCase();
+    if (source === "upload" && aid) keys.push(`upload:${aid}`);
+    if (source === "pack" && aid) keys.push(`private:${packSlugLower || "unknown"}:${aid}`);
+    if (source === "pack") {
+      const pathishLower = String(asset?.file || asset?.url_original || asset?.image_url || "").trim().toLowerCase();
+      if (pathishLower) keys.push(`pack:${packSlugLower || "unknown"}:${pathishLower}`);
+    }
+    const fallbackLower = String(asset?.url_original || asset?.image_url || "").trim().toLowerCase();
+    if (fallbackLower) keys.push(`url:${fallbackLower}`);
+    return keys;
+  }
+
+  function getAssetKindOverride(asset) {
+    const key = assetOverrideKey(asset);
+    if (key) {
+      const raw = String(assetState.kindOverride[key] || "").trim().toLowerCase();
+      if (raw === "map" || raw === "piece" || raw === "unknown") return raw;
+    }
+    for (const legacyKey of assetLegacyOverrideKeys(asset)) {
+      if (!legacyKey || (key && legacyKey === key)) continue;
+      const raw = String(assetState.kindOverride[legacyKey] || "").trim().toLowerCase();
+      if (raw !== "map" && raw !== "piece" && raw !== "unknown") continue;
+      if (key) {
+        assetState.kindOverride[key] = raw;
+        delete assetState.kindOverride[legacyKey];
+        persistAssetKindOverrides();
+      }
+      return raw;
+    }
+    return "";
+  }
+
+  function persistAssetKindOverrides() {
+    try {
+      localStorage.setItem(ASSET_KIND_OVERRIDE_KEY, JSON.stringify(assetState.kindOverride));
+    } catch (_) {}
+  }
+
+  function setAssetKindOverride(asset, nextKind) {
+    const key = assetOverrideKey(asset);
+    if (!key) return;
+    const kind = String(nextKind || "").trim().toLowerCase();
+    if (kind === "map" || kind === "piece" || kind === "unknown") {
+      assetState.kindOverride[key] = kind;
+    } else {
+      delete assetState.kindOverride[key];
+    }
+    persistAssetKindOverrides();
+    renderAssetGrid();
+  }
+
+  function assetKind(asset) {
+    const override = getAssetKindOverride(asset);
+    if (override) return override;
+    const name = `${asset?.name || ""} ${asset?.folder_path || ""}`.toLowerCase();
+    const w = Math.max(0, Number(asset?.width || 0));
+    const h = Math.max(0, Number(asset?.height || 0));
+    const area = w * h;
+    const hasAlpha = assetHasAlphaGuess(asset);
+    if (!hasAlpha && (Math.max(w, h) >= 1500 || area >= 2_000_000)) return "map";
+    if (/\b(map|battlemap|scene|terrain)\b/.test(name)) return "map";
+    if (hasAlpha && Math.max(w, h) <= 1500) return "piece";
+    if (/\b(tile|wall|prop|token|tree|rock|door|piece|object|debris)\b/.test(name)) return "piece";
+    return "unknown";
+  }
+
+  function parseAssetSearch(rawSearch) {
+    const raw = String(rawSearch || "").trim();
+    const out = {
+      textTerms: [],
+      tags: [],
+      pack: "",
+      type: "",
+      alpha: "",
+      tokens: [],
+      raw,
+    };
+    if (!raw) return out;
+    for (const token of raw.split(/\s+/)) {
+      if (!token) continue;
+      const m = token.match(/^([a-z]+):(.*)$/i);
+      if (!m) {
+        out.textTerms.push(token.toLowerCase());
+        continue;
+      }
+      const key = String(m[1] || "").toLowerCase();
+      const value = String(m[2] || "").trim().toLowerCase();
+      if (!value) continue;
+      if (key === "tag") out.tags.push(value);
+      else if (key === "pack") out.pack = value;
+      else if (key === "type") out.type = value === "jpeg" ? "jpg" : value;
+      else if (key === "alpha") out.alpha = value;
+      else out.textTerms.push(token.toLowerCase());
+      if (key === "tag" || key === "pack" || key === "type" || key === "alpha") {
+        out.tokens.push({ key, value, raw: `${key}:${value}` });
+      }
+    }
+    return out;
+  }
+
+  function updateAssetSearchFromParsed(parsed, removeIdx = -1) {
+    const out = [];
+    if (parsed && Array.isArray(parsed.tokens)) {
+      parsed.tokens.forEach((t, idx) => {
+        if (idx === removeIdx) return;
+        out.push(`${t.key}:${t.value}`);
+      });
+    }
+    if (parsed && Array.isArray(parsed.textTerms)) out.push(...parsed.textTerms);
+    assetState.searchInput = out.join(" ").trim();
+    assetState.search = assetState.searchInput;
+    if (assetSearchInputEl) assetSearchInputEl.value = assetState.searchInput;
+  }
+
+  function renderAssetSearchMeta(parsed, conflictHints = []) {
+    if (assetSearchChipsEl) {
+      const chips = [];
+      const toks = Array.isArray(parsed?.tokens) ? parsed.tokens : [];
+      toks.forEach((t, idx) => {
+        chips.push(`
+          <button type="button" data-asset-chip-idx="${idx}" style="font-size:11px; border:1px solid rgba(255,255,255,0.22); background:rgba(255,255,255,0.06); color:#eee; border-radius:999px; padding:2px 8px;">
+            ${escapeHtml(`${t.key}:${t.value}`)} ×
+          </button>
+        `);
+      });
+      assetSearchChipsEl.innerHTML = chips.join("");
+      assetSearchChipsEl.querySelectorAll("[data-asset-chip-idx]").forEach((btn) => {
+        btn.onclick = () => {
+          const idx = Number(btn.getAttribute("data-asset-chip-idx"));
+          updateAssetSearchFromParsed(parsed, idx);
+          renderAssetGrid();
+        };
+      });
+    }
+    if (assetSearchHintEl) {
+      const hints = [];
+      if (Array.isArray(conflictHints) && conflictHints.length) {
+        hints.push(`Conflicts: ${conflictHints.join(" | ")} (query tokens override UI filters).`);
+      }
+      hints.push("Search tokens: tag:, pack:, type:, alpha:");
+      assetSearchHintEl.textContent = hints.join(" ");
+    }
+  }
+
+  function closeAssetKindMenus(exceptMenu = null) {
+    if (!assetGridEl) return;
+    assetGridEl.querySelectorAll("[data-asset-kind-menu]").forEach((menu) => {
+      if (exceptMenu && menu === exceptMenu) return;
+      menu.style.display = "none";
+    });
+  }
+
+  function assetSearchScore(asset, parsed) {
+    if (!parsed || (!parsed.raw && !parsed.textTerms.length && !parsed.tags.length)) return 0;
+    const name = String(asset?.name || "").toLowerCase();
+    const folder = String(asset?.folder_path || "").toLowerCase();
+    const tags = Array.isArray(asset?.tags) ? asset.tags.map((x) => String(x).toLowerCase()) : [];
+    const pack = String(asset?.pack_slug || "").toLowerCase();
+    if (parsed.pack && !pack.includes(parsed.pack)) return -1;
+    if (parsed.type) {
+      const ext = assetFileExt(asset);
+      if (ext !== parsed.type) return -1;
+    }
+    if (parsed.alpha) {
+      const hasAlpha = assetHasAlphaGuess(asset);
+      if ((parsed.alpha === "yes" || parsed.alpha === "true") && !hasAlpha) return -1;
+      if ((parsed.alpha === "no" || parsed.alpha === "false") && hasAlpha) return -1;
+    }
+    for (const tag of parsed.tags) {
+      if (!tags.some((t) => t.includes(tag))) return -1;
+    }
+    let score = 0;
+    for (const term of parsed.textTerms) {
+      let termScore = 0;
+      if (name === term) termScore = Math.max(termScore, 120);
+      else if (name.startsWith(term)) termScore = Math.max(termScore, 90);
+      else if (name.includes(term)) termScore = Math.max(termScore, 70);
+      if (tags.some((t) => t === term)) termScore = Math.max(termScore, 85);
+      else if (tags.some((t) => t.includes(term))) termScore = Math.max(termScore, 65);
+      if (folder.includes(term)) termScore = Math.max(termScore, 45);
+      if (pack.includes(term)) termScore = Math.max(termScore, 25);
+      if (!termScore) return -1;
+      score += termScore;
+    }
+    if (!parsed.textTerms.length && (parsed.tags.length || parsed.pack || parsed.type || parsed.alpha)) score += 1;
+    return score;
+  }
+
+  function assetUsageKey(asset) {
+    return String(asset?.asset_id || asset?.id || asset?.url_original || asset?.image_url || "");
+  }
+
+  function setAssetAsBackground(asset) {
+    const url = String(asset?.url_original || asset?.image_url || "").trim();
+    if (!url) {
+      log("ASSET ERROR: missing URL for background");
+      toast("Background URL missing for this asset.");
+      return;
+    }
+    markAssetRecentlyUsed(asset);
+    send("ROOM_SETTINGS", { background_mode: "url", background_url: url });
+    log(`Background set: ${String(asset?.name || "Asset")}`);
+  }
+
+  function clearRoomBackground() {
+    send("ROOM_SETTINGS", { background_mode: "solid", background_url: null });
+    log("Background cleared.");
+  }
+
+  function fitRectToView(width, height, fill = 0.88) {
+    const w = Math.max(1, Number(width || 0));
+    const h = Math.max(1, Number(height || 0));
+    if (w < 1 || h < 1) return false;
+    const vw = Math.max(1, canvas.clientWidth || canvas.width || 1);
+    const vh = Math.max(1, canvas.clientHeight || canvas.height || 1);
+    const z = clamp(Math.min(vw / w, vh / h) * clamp(fill, 0.2, 0.98), 0.08, 8);
+    cam.z = z;
+    cam.x = (vw - (w * z)) / 2;
+    cam.y = (vh - (h * z)) / 2;
+    requestRender();
+    return true;
+  }
+
+  function fitBackgroundToView(asset = null) {
+    const width = Math.max(0, Number(asset?.width || bgImage?.naturalWidth || 0));
+    const height = Math.max(0, Number(asset?.height || bgImage?.naturalHeight || 0));
+    if (!fitRectToView(width, height, 0.88)) {
+      log("FIT VIEW ERROR: background dimensions unavailable");
+      toast("Cannot fit view: background dimensions unavailable.");
+      return;
+    }
+    log(`Fit view to ${width}x${height}`);
+  }
+
+  function spawnOverlayAsset(assetRef) {
+    const normalized = normalizePackBackedRecord(assetRef || {});
+    markAssetRecentlyUsed(normalized);
+    const id = makeId();
+    const center = screenToWorld((canvas.clientWidth || canvas.width || 0) / 2, (canvas.clientHeight || canvas.height || 0) / 2);
+    const base = ui.gridSize;
+    const width = Math.max(8, Number(normalized.width || base));
+    const height = Math.max(8, Number(normalized.height || base));
+    const overlay = {
+      id,
+      asset_id: normalized.asset_id || normalized.id || null,
+      source: normalized.source || null,
+      pack_slug: normalized.pack_slug || null,
+      mime: normalized.mime || null,
+      ext: normalized.ext || null,
+      image_url: normalized.url_original || normalized.image_url || "",
+      x: center.x,
+      y: center.y,
+      width,
+      height,
+      scale_x: 1,
+      scale_y: 1,
+      rotation: 0,
+      opacity: 1,
+      layer: -100,
+      locked: true,
+      creator_id: myId(),
+      is_overlay: true,
+    };
+    if (online) {
+      state.assets.set(id, overlay);
+      state.draw_order.assets = state.draw_order.assets.filter((aid) => aid !== id);
+      state.draw_order.assets.push(id);
+      requestRender();
+    }
+    send("ASSET_INSTANCE_CREATE", overlay);
+    log(`Overlay placed: ${String(normalized.name || "Asset")}`);
+  }
+
+  function markAssetRecentlyUsed(asset) {
+    const key = assetUsageKey(asset);
+    if (!key) return;
+    assetState.recentUsed[key] = Date.now();
+    const entries = Object.entries(assetState.recentUsed).sort((a, b) => Number(b[1]) - Number(a[1]));
+    assetState.recentUsed = Object.fromEntries(entries.slice(0, 1000));
+    assetState.recentVersion += 1;
+    try {
+      localStorage.setItem(ASSET_RECENT_USAGE_KEY, JSON.stringify(assetState.recentUsed));
+    } catch (_) {}
+    if (assetState.sortMode === "recent" && isAssetsTabActive()) {
+      renderAssetGrid();
+    }
+  }
+
+  function refreshAssetFilterOptions() {
+    if (!assetPackFilterEl) return;
+    const current = String(assetState.packFilter || "all");
+    const packs = new Set();
+    let uploadCount = 0;
+    for (const item of assetState.items) {
+      const slug = String(item.pack_slug || "").trim();
+      if (slug) packs.add(slug);
+      else uploadCount += 1;
+    }
+    const sortedPacks = Array.from(packs).sort((a, b) => a.localeCompare(b));
+    const options = [
+      `<option value="all">All Packs</option>`,
+      `<option value="upload">Uploads${uploadCount ? ` (${uploadCount})` : ""}</option>`,
+      ...sortedPacks.map((slug) => `<option value="${escapeHtml(slug)}">${escapeHtml(slug)}</option>`),
+    ];
+    assetPackFilterEl.innerHTML = options.join("");
+    if (current === "all" || current === "upload" || packs.has(current)) {
+      assetPackFilterEl.value = current;
+    } else {
+      assetPackFilterEl.value = "all";
+      assetState.packFilter = "all";
+    }
+  }
+
+  function persistAssetFilterPresets() {
+    try {
+      localStorage.setItem(ASSET_FILTER_PRESET_KEY, JSON.stringify(assetState.filterPresets));
+    } catch (_) {}
+  }
+
+  function saveAssetFilterPreset(sourceValue = null) {
+    const key = assetFilterSourceKey(sourceValue ?? assetState.packFilter);
+    assetState.filterPresets[key] = {
+      viewMode: String(assetState.viewMode || "pieces"),
+      typeFilter: String(assetState.typeFilter || "all"),
+      alphaFilter: String(assetState.alphaFilter || "all"),
+      sizeFilter: String(assetState.sizeFilter || "all"),
+      sortMode: String(assetState.sortMode || "recent"),
+      folder: String(assetState.folder || ""),
+    };
+    persistAssetFilterPresets();
+  }
+
+  function syncAssetFilterControls() {
+    if (assetViewModeEl) assetViewModeEl.value = assetState.viewMode;
+    if (assetPackFilterEl) assetPackFilterEl.value = assetState.packFilter;
+    if (assetTypeFilterEl) assetTypeFilterEl.value = assetState.typeFilter;
+    if (assetAlphaFilterEl) assetAlphaFilterEl.value = assetState.alphaFilter;
+    if (assetSizeFilterEl) assetSizeFilterEl.value = assetState.sizeFilter;
+    if (assetSortModeEl) assetSortModeEl.value = assetState.sortMode;
+    if (assetSearchInputEl && assetSearchInputEl.value !== assetState.searchInput) assetSearchInputEl.value = assetState.searchInput;
+  }
+
+  function applyAssetFilterPresetForSource(sourceValue = null, announce = false) {
+    const source = String(sourceValue ?? assetState.packFilter || "all");
+    const key = assetFilterSourceKey(source);
+    const preset = assetState.filterPresets[key];
+    if (preset && typeof preset === "object") {
+      assetState.viewMode = String(preset.viewMode || "pieces");
+      assetState.typeFilter = String(preset.typeFilter || "all");
+      assetState.alphaFilter = String(preset.alphaFilter || "all");
+      assetState.sizeFilter = String(preset.sizeFilter || "all");
+      assetState.sortMode = String(preset.sortMode || "recent");
+      assetState.folder = String(preset.folder || "");
+      if (announce) {
+        toast(`Restored filters for ${source === "upload" ? "Uploads" : source === "all" ? "All Packs" : `Pack: ${source}`}.`);
+      }
+    } else {
+      assetState.viewMode = source === "upload" ? "pieces" : "all";
+      assetState.typeFilter = "all";
+      assetState.alphaFilter = "all";
+      assetState.sizeFilter = "all";
+      assetState.sortMode = "recent";
+      assetState.folder = "";
+    }
+    syncAssetFilterControls();
+    renderAssetFolderTree();
+  }
+
+  function getCurrentAssetFilterSnapshot() {
+    return {
+      searchInput: String(assetState.searchInput || ""),
+      viewMode: String(assetState.viewMode || "pieces"),
+      packFilter: String(assetState.packFilter || "all"),
+      typeFilter: String(assetState.typeFilter || "all"),
+      alphaFilter: String(assetState.alphaFilter || "all"),
+      sizeFilter: String(assetState.sizeFilter || "all"),
+      sortMode: String(assetState.sortMode || "recent"),
+      folder: String(assetState.folder || ""),
+    };
+  }
+
+  function persistAssetSavedSets() {
+    try {
+      localStorage.setItem(ASSET_SAVED_SETS_KEY, JSON.stringify(assetState.savedSets || []));
+    } catch (_) {}
+  }
+
+  function renderAssetSavedSets() {
+    if (!assetSetSelectEl) return;
+    const rows = Array.isArray(assetState.savedSets) ? assetState.savedSets : [];
+    if (!rows.length) {
+      assetSetSelectEl.innerHTML = `<option value="">(no saved sets)</option>`;
+      assetState.selectedSetId = "";
+      return;
+    }
+    assetSetSelectEl.innerHTML = [`<option value="">(choose)</option>`, ...rows.map((row) => (
+      `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`
+    ))].join("");
+    const hasSelected = rows.some((row) => row.id === assetState.selectedSetId);
+    assetSetSelectEl.value = hasSelected ? assetState.selectedSetId : "";
+  }
+
+  function applyAssetFilterSnapshot(snapshot, shouldRender = true) {
+    if (!snapshot || typeof snapshot !== "object") return;
+    const normalizeEnum = (value, allowed, fallback) => {
+      const raw = String(value || fallback).trim().toLowerCase();
+      return allowed.includes(raw) ? raw : fallback;
+    };
+    const normalizePackFilter = (value) => {
+      const raw = String(value || "all").trim();
+      if (!raw || raw === "all" || raw === "upload") return raw || "all";
+      const present = new Set();
+      for (const item of assetState.items || []) {
+        const slug = String(item?.pack_slug || "").trim();
+        if (slug) present.add(slug);
+      }
+      if (present.has(raw)) return raw;
+      toast(`Pack '${raw}' is unavailable. Falling back to All Packs.`);
+      return "all";
+    };
+    const searchInput = String(snapshot.searchInput || "").replace(/\s+/g, " ").trim();
+    const folder = String(snapshot.folder || "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+    assetState.searchInput = searchInput;
+    assetState.search = searchInput;
+    assetState.viewMode = normalizeEnum(snapshot.viewMode, ["pieces", "maps", "unknown", "all"], "pieces");
+    assetState.packFilter = normalizePackFilter(snapshot.packFilter);
+    assetState.typeFilter = normalizeEnum(snapshot.typeFilter, ["all", "png", "webp", "jpg", "gif"], "all");
+    assetState.alphaFilter = normalizeEnum(snapshot.alphaFilter, ["all", "yes", "no"], "all");
+    assetState.sizeFilter = normalizeEnum(snapshot.sizeFilter, ["all", "tiny", "small", "medium", "large", "huge"], "all");
+    assetState.sortMode = normalizeEnum(snapshot.sortMode, ["recent", "newest", "largest", "name"], "recent");
+    assetState.folder = folder;
+    syncAssetFilterControls();
+    renderAssetFolderTree();
+    if (shouldRender) renderAssetGrid();
+  }
+
+  function saveAssetSet(nameInput = "") {
+    const name = String(nameInput || "").trim();
+    if (!name) return false;
+    const existing = (assetState.savedSets || []).find((row) => row.name.toLowerCase() === name.toLowerCase());
+    const entry = {
+      id: existing?.id || makeId(),
+      name,
+      filters: getCurrentAssetFilterSnapshot(),
+    };
+    const next = (assetState.savedSets || []).filter((row) => row.id !== entry.id);
+    next.push(entry);
+    next.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+    assetState.savedSets = next.slice(0, 200);
+    assetState.selectedSetId = entry.id;
+    persistAssetSavedSets();
+    renderAssetSavedSets();
+    return true;
+  }
+
+  function deleteSelectedAssetSet() {
+    const id = String(assetState.selectedSetId || "");
+    if (!id) return false;
+    const before = (assetState.savedSets || []).length;
+    assetState.savedSets = (assetState.savedSets || []).filter((row) => row.id !== id);
+    assetState.selectedSetId = "";
+    if ((assetState.savedSets || []).length === before) return false;
+    persistAssetSavedSets();
+    renderAssetSavedSets();
+    return true;
+  }
+
   function renderAssetGrid() {
     if (!assetGridEl) return;
     if (!assetState.loaded) {
@@ -2427,15 +3172,79 @@
       return;
     }
     const q = (assetState.search || "").trim().toLowerCase();
+    const parsedSearch = parseAssetSearch(assetState.search);
     const folder = (assetState.folder || "").trim();
-    const rows = assetState.items.filter((a) => {
+    const viewMode = String(assetState.viewMode || "pieces");
+    const packFilterUi = String(assetState.packFilter || "all");
+    const typeFilterUi = String(assetState.typeFilter || "all");
+    const alphaFilterUi = String(assetState.alphaFilter || "all");
+    const sizeFilter = String(assetState.sizeFilter || "all");
+    const sortMode = String(assetState.sortMode || "recent");
+    const conflictHints = [];
+    const packFilter = parsedSearch.pack ? `query:${parsedSearch.pack}` : packFilterUi;
+    const typeFilter = parsedSearch.type || typeFilterUi;
+    let alphaFilter = alphaFilterUi;
+    if (parsedSearch.alpha) {
+      const a = parsedSearch.alpha;
+      alphaFilter = (a === "yes" || a === "true" || a === "1") ? "yes" : (a === "no" || a === "false" || a === "0") ? "no" : alphaFilterUi;
+    }
+    if (parsedSearch.type && typeFilterUi !== "all" && parsedSearch.type !== typeFilterUi) {
+      conflictHints.push(`type:${parsedSearch.type} vs UI type=${typeFilterUi}`);
+    }
+    if (parsedSearch.alpha && alphaFilterUi !== "all" && alphaFilter !== alphaFilterUi) {
+      conflictHints.push(`alpha:${parsedSearch.alpha} vs UI alpha=${alphaFilterUi}`);
+    }
+    if (parsedSearch.pack && packFilterUi !== "all") {
+      conflictHints.push(`pack:${parsedSearch.pack} vs UI pack=${packFilterUi}`);
+    }
+    renderAssetSearchMeta(parsedSearch, conflictHints);
+    const ranked = [];
+    for (const a of assetState.items) {
       const fp = String(a.folder_path || "");
-      if (folder && fp !== folder) return false;
-      if (!q) return true;
-      const tags = Array.isArray(a.tags) ? a.tags.join(" ").toLowerCase() : "";
-      return String(a.name || "").toLowerCase().includes(q) || tags.includes(q) || fp.toLowerCase().includes(q);
+      if (folder && fp !== folder) continue;
+      const slug = String(a.pack_slug || "").trim();
+      if (packFilter === "upload" && slug) continue;
+      if (packFilter.startsWith("query:")) {
+        const qPack = packFilter.slice("query:".length).trim().toLowerCase();
+        const hay = (slug || "uploads").toLowerCase();
+        if (!hay.includes(qPack)) continue;
+      } else if (packFilter !== "all" && packFilter !== "upload" && slug !== packFilter) continue;
+      const kind = assetKind(a);
+      if (viewMode === "maps" && kind !== "map") continue;
+      if (viewMode === "pieces" && kind !== "piece") continue;
+      if (viewMode === "unknown" && kind !== "unknown") continue;
+      const ext = assetFileExt(a);
+      if (typeFilter !== "all" && ext !== typeFilter) continue;
+      const hasAlpha = assetHasAlphaGuess(a);
+      if (alphaFilter === "yes" && !hasAlpha) continue;
+      if (alphaFilter === "no" && hasAlpha) continue;
+      if (sizeFilter !== "all" && assetSizeBucket(a) !== sizeFilter) continue;
+      const score = assetSearchScore(a, parsedSearch);
+      if (score < 0) continue;
+      ranked.push({ asset: a, score });
+    }
+    ranked.sort((ra, rb) => {
+      if (q) {
+        if (rb.score !== ra.score) return rb.score - ra.score;
+      }
+      const a = ra.asset;
+      const b = rb.asset;
+      if (sortMode === "name") {
+        return String(a.name || "").localeCompare(String(b.name || ""));
+      }
+      if (sortMode === "largest") {
+        const areaA = Math.max(0, Number(a.width || 0)) * Math.max(0, Number(a.height || 0));
+        const areaB = Math.max(0, Number(b.width || 0)) * Math.max(0, Number(b.height || 0));
+        if (areaA !== areaB) return areaB - areaA;
+      } else if (sortMode === "recent") {
+        const ra = Number(assetState.recentUsed[assetUsageKey(a)] || 0);
+        const rb = Number(assetState.recentUsed[assetUsageKey(b)] || 0);
+        if (ra !== rb) return rb - ra;
+      }
+      return String(b.created_at || "").localeCompare(String(a.created_at || ""));
     });
-    const filterKey = `${q}\n${folder}\n${rows.length}`;
+    const rows = ranked.map((r) => r.asset);
+    const filterKey = `${q}\n${folder}\n${viewMode}\n${packFilter}\n${typeFilter}\n${alphaFilter}\n${sizeFilter}\n${sortMode}\n${rows.length}\n${assetState.recentVersion}`;
     if (assetState.filterKey !== filterKey) {
       assetState.filterKey = filterKey;
       assetState.renderCount = assetState.pageSize;
@@ -2443,60 +3252,196 @@
     const visibleCount = Math.min(rows.length, Math.max(assetState.pageSize, assetState.renderCount));
     const visibleRows = rows.slice(0, visibleCount);
     assetState.hasMore = visibleCount < rows.length;
+    const isMapWorkflow = viewMode === "maps";
+    const isAllWorkflow = viewMode === "all";
+    if (isMapWorkflow) {
+      assetGridEl.style.gridTemplateColumns = "repeat(auto-fill, minmax(220px, 1fr))";
+    } else if (isAllWorkflow) {
+      assetGridEl.style.gridTemplateColumns = "repeat(auto-fill, minmax(140px, 1fr))";
+    } else {
+      assetGridEl.style.gridTemplateColumns = "repeat(auto-fill, minmax(110px, 1fr))";
+    }
     if (!rows.length) {
       assetGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">(no assets)</div>`;
+      assetState.lastRenderKey = filterKey;
+      assetState.lastRenderedCount = 0;
       return;
     }
-    assetGridEl.innerHTML = visibleRows.map((a, idx) => {
-      const previewUrl = assetPreviewUrl(a);
+    const renderCardsHtml = (chunkRows, offset) => chunkRows.map((a, localIdx) => {
+      const idx = offset + localIdx;
+      const previewUrl = withAssetLibSrc(assetPreviewUrl(a));
       const escapedPreview = escapeHtml(previewUrl);
       const thumbAttrs = previewUrl
         ? `src="${ASSET_THUMB_PLACEHOLDER}" data-src="${escapedPreview}" loading="lazy"`
         : `src="${ASSET_THUMB_PLACEHOLDER}" loading="lazy"`;
+      const width = Math.max(1, Number(a?.width || 0));
+      const height = Math.max(1, Number(a?.height || 0));
+      const previewAspect = (width > 0 && height > 0) ? `${width}/${height}` : "1/1";
+      const ext = assetFileExt(a).toUpperCase() || "IMG";
+      const dimsLabel = (width > 0 && height > 0) ? `${width}x${height}` : "unknown size";
+      const alphaLabel = assetHasAlphaGuess(a) ? "alpha" : "opaque";
+      const packLabel = String(a.pack_slug || "").trim() || "uploads";
+      const kind = assetKind(a);
+      const kindBadge = kind === "map" ? "MAP" : kind === "piece" ? "PCS" : "?";
+      const kindBadgeBg = kind === "map" ? "rgba(10,132,255,0.9)" : kind === "piece" ? "rgba(52,199,89,0.9)" : "rgba(255,149,0,0.92)";
+      if (isMapWorkflow) {
+        const setBgDisabled = isGM() ? "" : "disabled";
+        return `
+      <div
+        data-asset-card="1"
+        data-asset-idx="${idx}"
+        title="${escapeHtml(String(a.name || "Asset"))} (Shift+Right-click: classify)"
+        style="padding:8px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.03); color:#eee; border-radius:8px;">
+        <div style="width:100%; aspect-ratio:${previewAspect}; border-radius:8px; overflow:hidden; background:#1a1a1a; display:flex; align-items:center; justify-content:center; position:relative;">
+          <img class="asset-thumb" ${thumbAttrs} alt="${escapeHtml(String(a.name || "Asset"))}" style="width:100%; height:100%; object-fit:cover;">
+          <button type="button" data-asset-action="kind-open" data-asset-idx="${idx}" title="Classification" style="position:absolute; top:6px; left:6px; font-size:12px; line-height:1; color:#fff; background:rgba(0,0,0,0.65); border:1px solid rgba(255,255,255,0.35); border-radius:6px; padding:2px 6px;">⋯</button>
+          <div data-asset-kind-menu style="display:none; position:absolute; top:30px; left:6px; z-index:6; background:rgba(0,0,0,0.92); border:1px solid rgba(255,255,255,0.22); border-radius:8px; padding:4px; min-width:130px;">
+            <button type="button" data-asset-action="kind-map" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Map</button>
+            <button type="button" data-asset-action="kind-piece" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Piece</button>
+            <button type="button" data-asset-action="kind-unknown" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Unknown</button>
+            <button type="button" data-asset-action="kind-auto" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Auto (clear)</button>
+          </div>
+          <span title="Kind: ${escapeHtml(kind)}" style="position:absolute; top:6px; right:6px; font-size:10px; font-weight:700; color:#fff; background:${kindBadgeBg}; padding:2px 6px; border-radius:999px;">${kindBadge}</span>
+        </div>
+        <div style="margin-top:8px; font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.name || "Asset"))}</div>
+        <div style="font-size:11px; opacity:.8; margin-top:2px;">${escapeHtml(dimsLabel)} • ${escapeHtml(ext)} • ${escapeHtml(alphaLabel)}</div>
+        <div style="font-size:11px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.folder_path || "/"))} • ${escapeHtml(packLabel)}</div>
+        <div style="display:flex; gap:6px; margin-top:8px;">
+          <button type="button" data-asset-action="preview" data-asset-idx="${idx}" style="flex:1; padding:4px 6px;">Preview</button>
+          <button type="button" data-asset-action="set-bg" data-asset-idx="${idx}" ${setBgDisabled} style="flex:1; padding:4px 6px;">Set as Background</button>
+        </div>
+        <div style="display:flex; gap:6px; margin-top:6px;">
+          <button type="button" data-asset-action="clear-bg" data-asset-idx="${idx}" ${setBgDisabled} style="flex:1; padding:4px 6px;">Clear BG</button>
+          <button type="button" data-asset-action="fit-bg" data-asset-idx="${idx}" style="flex:1; padding:4px 6px;">Fit to View</button>
+          <button type="button" data-asset-action="overlay" data-asset-idx="${idx}" style="flex:1; padding:4px 6px;">Use as Overlay</button>
+          <button type="button" data-asset-action="spawn" data-asset-idx="${idx}" style="flex:1; padding:4px 6px;">Place Piece</button>
+        </div>
+      </div>
+    `;
+      }
       return `
       <button
+        data-asset-card="1"
         data-asset-idx="${idx}"
         style="padding:6px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.03); color:#eee; text-align:center;"
-        title="${escapeHtml(String(a.name || "Asset"))}">
-        <div style="width:100%; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#1a1a1a; display:flex; align-items:center; justify-content:center;">
+        title="${escapeHtml(String(a.name || "Asset"))} (Shift+Right-click: classify)">
+        <div style="width:100%; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#1a1a1a; display:flex; align-items:center; justify-content:center; position:relative;">
           <img class="asset-thumb" ${thumbAttrs} alt="${escapeHtml(String(a.name || "Asset"))}" style="width:100%; height:100%; object-fit:cover;">
+          <button type="button" data-asset-action="kind-open" data-asset-idx="${idx}" title="Classification" style="position:absolute; top:6px; left:6px; font-size:12px; line-height:1; color:#fff; background:rgba(0,0,0,0.65); border:1px solid rgba(255,255,255,0.35); border-radius:6px; padding:2px 6px;">⋯</button>
+          <div data-asset-kind-menu style="display:none; position:absolute; top:30px; left:6px; z-index:6; background:rgba(0,0,0,0.92); border:1px solid rgba(255,255,255,0.22); border-radius:8px; padding:4px; min-width:130px;">
+            <button type="button" data-asset-action="kind-map" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Map</button>
+            <button type="button" data-asset-action="kind-piece" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Piece</button>
+            <button type="button" data-asset-action="kind-unknown" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Unknown</button>
+            <button type="button" data-asset-action="kind-auto" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Auto (clear)</button>
+          </div>
+          <span title="Kind: ${escapeHtml(kind)}" style="position:absolute; top:6px; right:6px; font-size:10px; font-weight:700; color:#fff; background:${kindBadgeBg}; padding:2px 6px; border-radius:999px;">${kindBadge}</span>
         </div>
         <div style="margin-top:6px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.name || "Asset"))}</div>
         <div style="font-size:10px; opacity:.75; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.folder_path || "/"))}</div>
       </button>
     `;
-    }).join("") + (assetState.hasMore ? `<div style="opacity:.7; grid-column:1/-1; text-align:center; padding:4px 0;">Scroll to load more…</div>` : "");
+    }).join("");
+    const appendOnly = assetState.lastRenderKey === filterKey && visibleCount > assetState.lastRenderedCount && assetState.lastRenderedCount > 0;
+    const footerHtml = assetState.hasMore ? `<div data-asset-more="1" style="opacity:.7; grid-column:1/-1; text-align:center; padding:4px 0;">Scroll to load more…</div>` : "";
+    if (appendOnly) {
+      const oldHint = assetGridEl.querySelector("[data-asset-more='1']");
+      if (oldHint) oldHint.remove();
+      assetGridEl.insertAdjacentHTML("beforeend", renderCardsHtml(visibleRows.slice(assetState.lastRenderedCount), assetState.lastRenderedCount));
+      if (footerHtml) assetGridEl.insertAdjacentHTML("beforeend", footerHtml);
+    } else {
+      assetGridEl.innerHTML = renderCardsHtml(visibleRows, 0) + footerHtml;
+    }
+    assetState.lastRenderKey = filterKey;
+    assetState.lastRenderedCount = visibleCount;
     observeAssetThumbs();
-    assetGridEl.querySelectorAll("button[data-asset-idx]").forEach((btn) => {
-      const idx = Number(btn.getAttribute("data-asset-idx"));
+    assetGridEl.querySelectorAll("[data-asset-card='1']").forEach((card) => {
+      const idx = Number(card.getAttribute("data-asset-idx"));
       const a = visibleRows[idx];
       if (!a) return;
-      btn.onclick = () => {
-        if (assetSuppressCardClick) {
-          assetSuppressCardClick = false;
-          return;
-        }
-        if (assetState.placeMode) {
+      if (!isMapWorkflow) {
+        card.onclick = () => {
+          if (assetSuppressCardClick) {
+            assetSuppressCardClick = false;
+            return;
+          }
+          if (assetState.placeMode) {
+            dragSpawn = { ...a, kind: "asset" };
+            dragSpawnWorld = null;
+            dragSpawnOverCanvas = false;
+            updateCanvasCursor();
+            markAssetRecentlyUsed(a);
+            return;
+          }
+          spawnPackAsset(a);
+        };
+        card.onpointerdown = (e) => {
+          if (!assetState.placeMode) return;
+          if (e.button !== 0) return;
+          assetSuppressCardClick = true;
           dragSpawn = { ...a, kind: "asset" };
           dragSpawnWorld = null;
           dragSpawnOverCanvas = false;
           updateCanvasCursor();
+          markAssetRecentlyUsed(a);
+          e.preventDefault();
+        };
+      } else {
+        card.onclick = () => {
+          if (assetSuppressCardClick) {
+            assetSuppressCardClick = false;
+            return;
+          }
+          openMapPreview(a);
+        };
+      }
+      {
+        let pressTimer = null;
+        let longPressed = false;
+        const clearPress = () => {
+          if (pressTimer) {
+            clearTimeout(pressTimer);
+            pressTimer = null;
+          }
+        };
+        card.addEventListener("pointerdown", (e) => {
+          if (e.pointerType !== "touch" || e.button !== 0) return;
+          if (e.target && e.target.closest && e.target.closest("button[data-asset-action]")) return;
+          clearPress();
+          longPressed = false;
+          pressTimer = setTimeout(() => {
+            const menu = card.querySelector("[data-asset-kind-menu]");
+            if (!menu) return;
+            longPressed = true;
+            assetSuppressCardClick = true;
+            closeAssetKindMenus(menu);
+            menu.style.display = "block";
+          }, 420);
+        });
+        card.addEventListener("pointerup", () => {
+          clearPress();
+          if (longPressed) assetSuppressCardClick = true;
+        });
+        card.addEventListener("pointercancel", clearPress);
+        card.addEventListener("pointerleave", clearPress);
+      }
+      card.oncontextmenu = async (e) => {
+        e.preventDefault();
+        if (e.shiftKey) {
+          const current = assetKind(a);
+          const raw = prompt("Kind override: map / piece / unknown / auto", current) || "";
+          const next = raw.trim().toLowerCase();
+          if (!next) return;
+          if (next === "auto" || next === "clear" || next === "default") {
+            setAssetKindOverride(a, "");
+            return;
+          }
+          if (next === "map" || next === "piece" || next === "unknown") {
+            setAssetKindOverride(a, next);
+            return;
+          }
+          log(`ASSET KIND ERROR: '${raw}' is not valid`);
           return;
         }
-        spawnPackAsset(a);
-      };
-      btn.onpointerdown = (e) => {
-        if (!assetState.placeMode) return;
-        if (e.button !== 0) return;
-        assetSuppressCardClick = true;
-        dragSpawn = { ...a, kind: "asset" };
-        dragSpawnWorld = null;
-        dragSpawnOverCanvas = false;
-        updateCanvasCursor();
-        e.preventDefault();
-      };
-      btn.oncontextmenu = async (e) => {
-        e.preventDefault();
         if (!isGM()) return;
         if (a.readonly) return;
         if (!confirm(`Delete asset '${a.name || "asset"}'?`)) return;
@@ -2505,6 +3450,68 @@
           await refreshAssetsPanel();
         } catch (err) {
           log(`ASSET DELETE ERROR: ${err.message || err}`);
+        }
+      };
+    });
+    assetGridEl.querySelectorAll("button[data-asset-action]").forEach((btn) => {
+      const idx = Number(btn.getAttribute("data-asset-idx"));
+      const action = String(btn.getAttribute("data-asset-action") || "");
+      const a = visibleRows[idx];
+      if (!a) return;
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const card = btn.closest("[data-asset-card='1']");
+        const menu = card ? card.querySelector("[data-asset-kind-menu]") : null;
+        if (action === "kind-open") {
+          if (!menu) return;
+          const opening = menu.style.display !== "block";
+          closeAssetKindMenus(opening ? menu : null);
+          menu.style.display = opening ? "block" : "none";
+          return;
+        }
+        if (action === "kind-map") {
+          setAssetKindOverride(a, "map");
+          closeAssetKindMenus();
+          return;
+        }
+        if (action === "kind-piece") {
+          setAssetKindOverride(a, "piece");
+          closeAssetKindMenus();
+          return;
+        }
+        if (action === "kind-unknown") {
+          setAssetKindOverride(a, "unknown");
+          closeAssetKindMenus();
+          return;
+        }
+        if (action === "kind-auto") {
+          setAssetKindOverride(a, "");
+          closeAssetKindMenus();
+          return;
+        }
+        if (action === "preview") {
+          openMapPreview(a);
+          return;
+        }
+        if (action === "set-bg") {
+          setAssetAsBackground(a);
+          return;
+        }
+        if (action === "clear-bg") {
+          clearRoomBackground();
+          return;
+        }
+        if (action === "fit-bg") {
+          fitBackgroundToView(a);
+          return;
+        }
+        if (action === "overlay") {
+          spawnOverlayAsset(a);
+          return;
+        }
+        if (action === "spawn") {
+          spawnPackAsset(a);
         }
       };
     });
@@ -2570,11 +3577,14 @@
     if (assetState.loading) return;
     assetState.loading = true;
     try {
-      const data = await apiGet(`/api/assets`);
+      const data = await apiGet(`/api/assets?src=assetlib`);
       assetState.items = Array.isArray(data.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];
       assetState.loaded = true;
       assetState.filterKey = "";
       assetState.renderCount = assetState.pageSize;
+      refreshAssetFilterOptions();
+      applyAssetFilterPresetForSource(assetState.packFilter);
+      renderAssetSavedSets();
       renderAssetFolderTree();
       renderAssetGrid();
     } catch (e) {
@@ -2689,6 +3699,7 @@
 
   function spawnPackAsset(packToken, x = null, y = null) {
     const normalized = normalizePackBackedRecord(packToken || {});
+    markAssetRecentlyUsed(normalized);
     const id = makeId();
     let wx = x;
     let wy = y;
@@ -2811,10 +3822,90 @@
     tokens: [],
     search: "",
   };
+  const ASSET_RECENT_USAGE_KEY = "warboard:v1:asset_recent_usage";
+  const ASSET_KIND_OVERRIDE_KEY = "warboard:v1:asset_kind_override";
+  const ASSET_FILTER_PRESET_KEY = "warboard:v1:asset_filter_preset";
+  const ASSET_DEBUG_NET_KEY = "warboard:v1:asset_debug_net";
+  const ASSET_SAVED_SETS_KEY = "warboard:v1:asset_saved_sets";
+  function loadAssetRecentUsage() {
+    try {
+      const raw = localStorage.getItem(ASSET_RECENT_USAGE_KEY);
+      if (!raw) return {};
+      const data = JSON.parse(raw);
+      if (!data || typeof data !== "object") return {};
+      return data;
+    } catch (_) {
+      return {};
+    }
+  }
+  function loadAssetKindOverrides() {
+    try {
+      const raw = localStorage.getItem(ASSET_KIND_OVERRIDE_KEY);
+      if (!raw) return {};
+      const data = JSON.parse(raw);
+      if (!data || typeof data !== "object") return {};
+      return data;
+    } catch (_) {
+      return {};
+    }
+  }
+  function loadAssetFilterPresets() {
+    try {
+      const raw = localStorage.getItem(ASSET_FILTER_PRESET_KEY);
+      if (!raw) return {};
+      const data = JSON.parse(raw);
+      if (!data || typeof data !== "object") return {};
+      return data;
+    } catch (_) {
+      return {};
+    }
+  }
+  function loadAssetDebugNet() {
+    try {
+      return localStorage.getItem(ASSET_DEBUG_NET_KEY) === "1";
+    } catch (_) {
+      return false;
+    }
+  }
+  function loadAssetSavedSets() {
+    try {
+      const raw = localStorage.getItem(ASSET_SAVED_SETS_KEY);
+      if (!raw) return [];
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data)) return [];
+      return data
+        .map((item) => {
+          const id = String(item?.id || "").trim();
+          const name = String(item?.name || "").trim();
+          const filters = item?.filters && typeof item.filters === "object" ? item.filters : null;
+          if (!id || !name || !filters) return null;
+          return { id, name, filters };
+        })
+        .filter(Boolean)
+        .slice(0, 200);
+    } catch (_) {
+      return [];
+    }
+  }
   const assetState = {
     items: [],
     search: "",
+    searchInput: "",
+    searchDebounceMs: 160,
     folder: "",
+    viewMode: "pieces",
+    packFilter: "all",
+    typeFilter: "all",
+    alphaFilter: "all",
+    sizeFilter: "all",
+    sortMode: "recent",
+    recentUsed: loadAssetRecentUsage(),
+    recentVersion: 0,
+    kindOverride: loadAssetKindOverrides(),
+    filterPresets: loadAssetFilterPresets(),
+    debugNet: loadAssetDebugNet(),
+    savedSets: loadAssetSavedSets(),
+    selectedSetId: "",
     placeMode: true,
     loaded: false,
     loading: false,
@@ -2822,10 +3913,16 @@
     renderCount: 200,
     hasMore: false,
     filterKey: "",
+    lastRenderKey: "",
+    lastRenderedCount: 0,
   };
   const ASSET_THUMB_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
   let assetThumbObserver = null;
+  let assetSearchDebounceTimer = null;
   let assetSuppressCardClick = false;
+  let mapPreviewAsset = null;
+  let mapPreviewSourceUrl = "";
+  let mapPreviewLoadSeq = 0;
   const expandedAssetFolders = new Set([""]);
 
   function myId() { return cidEl.value.trim(); }
@@ -3326,7 +4423,9 @@
     };
     img.onerror = () => {
       bgImageStatus = "error";
-      log("BG failed to load");
+      const msg = `Background failed to load: ${next}`;
+      log(msg);
+      toast(msg);
       requestRender();
     };
     img.src = next;
@@ -3888,6 +4987,36 @@
     if (activeShapePreview) drawOneShape(activeShapePreview, true);
   }
 
+  function drawAssetStatusBadges(center, w, h, asset) {
+    if (cam.z < 0.35) return;
+    const badges = [];
+    if (asset?.locked) badges.push({ label: "LOCK", color: "rgba(255,80,80,0.92)", width: 38 });
+    if (asset?.is_overlay) badges.push({ label: "OVR", color: "rgba(90,120,255,0.92)", width: 31 });
+    if (!badges.length) return;
+    const startX = center.x - (w / 2) + 6;
+    let x = startX;
+    let y = center.y - (h / 2) + 6;
+    const fontPx = 11;
+    const bh = fontPx + 5;
+    ctx.save();
+    ctx.font = `${fontPx}px system-ui, sans-serif`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    for (const badge of badges) {
+      const bw = badge.width;
+      if (x + bw > center.x + (w / 2) - 4) {
+        x = startX;
+        y += bh + 4;
+      }
+      ctx.fillStyle = badge.color;
+      ctx.fillRect(x, y, bw, bh);
+      ctx.fillStyle = "rgba(255,255,255,0.98)";
+      ctx.fillText(badge.label, x + 5, y + 2);
+      x += bw + 4;
+    }
+    ctx.restore();
+  }
+
   function drawAssets() {
     if (!state.layer_visibility.assets) return;
     const ids = [...(state.draw_order.assets || [])];
@@ -3926,6 +5055,7 @@
         ctx.strokeRect(-w / 2, -h / 2, w, h);
       }
       ctx.restore();
+      drawAssetStatusBadges(s, w, h, a);
     }
   }
 
@@ -5317,6 +6447,51 @@
   }
   sessionModalClose.addEventListener("click", closeSessionModal);
   sessionModalBackdrop.addEventListener("click", closeSessionModal);
+  if (mapPreviewClose) mapPreviewClose.addEventListener("click", closeMapPreview);
+  if (mapPreviewBackdrop) mapPreviewBackdrop.addEventListener("click", closeMapPreview);
+  if (mapPreviewSetBgBtn) mapPreviewSetBgBtn.addEventListener("click", () => {
+    if (!mapPreviewAsset) return;
+    setAssetAsBackground(mapPreviewAsset);
+  });
+  if (mapPreviewClearBgBtn) mapPreviewClearBgBtn.addEventListener("click", () => {
+    clearRoomBackground();
+  });
+  if (mapPreviewFitBtn) mapPreviewFitBtn.addEventListener("click", () => {
+    fitBackgroundToView(mapPreviewAsset || null);
+  });
+  if (mapPreviewOverlayBtn) mapPreviewOverlayBtn.addEventListener("click", () => {
+    if (!mapPreviewAsset) return;
+    spawnOverlayAsset(mapPreviewAsset);
+  });
+  if (mapPreviewSpawnBtn) mapPreviewSpawnBtn.addEventListener("click", () => {
+    if (!mapPreviewAsset) return;
+    spawnPackAsset(mapPreviewAsset);
+  });
+  if (mapPreviewCopyUrlBtn) mapPreviewCopyUrlBtn.addEventListener("click", async () => {
+    const url = String(mapPreviewSourceUrl || "").trim();
+    if (!url) {
+      toast("No preview URL available.");
+      return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        toast("Preview URL copied.");
+      } else {
+        throw new Error("Clipboard API unavailable");
+      }
+    } catch (_) {
+      prompt("Copy preview URL", url);
+    }
+  });
+  if (mapPreviewOpenTabBtn) mapPreviewOpenTabBtn.addEventListener("click", () => {
+    const url = String(mapPreviewSourceUrl || "").trim();
+    if (!url) {
+      toast("No preview URL available.");
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  });
   sessionLoginBtn.addEventListener("click", async () => {
     const username = sessionAuthUserEl.value.trim();
     const password = sessionAuthPassEl.value;
@@ -5469,6 +6644,7 @@
   window.addEventListener("mousedown", (e) => {
     if (!isClickInsideAnyCtxMenu(e.target)) hideAllCtx();
     if (!isClickInsideToolPanel(e.target)) hideToolPanels();
+    if (!e.target.closest("[data-asset-card='1']")) closeAssetKindMenus();
     hideTooltip();
   });
 
@@ -5493,8 +6669,125 @@
   if (drawerContentEl) drawerContentEl.addEventListener("scroll", maybeLoadMoreAssets, { passive: true });
   if (assetRefreshBtnEl) assetRefreshBtnEl.onclick = () => refreshAssetsPanel();
   if (assetSearchInputEl) assetSearchInputEl.addEventListener("input", () => {
-    assetState.search = assetSearchInputEl.value || "";
-    renderAssetGrid();
+    assetState.searchInput = assetSearchInputEl.value || "";
+    if (assetSearchDebounceTimer) clearTimeout(assetSearchDebounceTimer);
+    assetSearchDebounceTimer = setTimeout(() => {
+      assetState.search = assetState.searchInput;
+      renderAssetGrid();
+    }, assetState.searchDebounceMs);
+  });
+  if (assetViewModeEl) {
+    assetViewModeEl.value = assetState.viewMode;
+    assetViewModeEl.addEventListener("change", () => {
+      assetState.viewMode = String(assetViewModeEl.value || "pieces");
+      saveAssetFilterPreset();
+      renderAssetGrid();
+    });
+  }
+  if (assetPackFilterEl) {
+    assetPackFilterEl.value = assetState.packFilter;
+    assetPackFilterEl.addEventListener("change", () => {
+      const prev = String(assetState.packFilter || "all");
+      saveAssetFilterPreset();
+      assetState.packFilter = String(assetPackFilterEl.value || "all");
+      applyAssetFilterPresetForSource(assetState.packFilter, prev !== assetState.packFilter);
+      renderAssetGrid();
+    });
+  }
+  if (assetTypeFilterEl) {
+    assetTypeFilterEl.value = assetState.typeFilter;
+    assetTypeFilterEl.addEventListener("change", () => {
+      assetState.typeFilter = String(assetTypeFilterEl.value || "all");
+      saveAssetFilterPreset();
+      renderAssetGrid();
+    });
+  }
+  if (assetAlphaFilterEl) {
+    assetAlphaFilterEl.value = assetState.alphaFilter;
+    assetAlphaFilterEl.addEventListener("change", () => {
+      assetState.alphaFilter = String(assetAlphaFilterEl.value || "all");
+      saveAssetFilterPreset();
+      renderAssetGrid();
+    });
+  }
+  if (assetSizeFilterEl) {
+    assetSizeFilterEl.value = assetState.sizeFilter;
+    assetSizeFilterEl.addEventListener("change", () => {
+      assetState.sizeFilter = String(assetSizeFilterEl.value || "all");
+      saveAssetFilterPreset();
+      renderAssetGrid();
+    });
+  }
+  if (assetSortModeEl) {
+    assetSortModeEl.value = assetState.sortMode;
+    assetSortModeEl.addEventListener("change", () => {
+      assetState.sortMode = String(assetSortModeEl.value || "recent");
+      saveAssetFilterPreset();
+      renderAssetGrid();
+    });
+  }
+  if (assetDebugNetEl) {
+    assetDebugNetEl.checked = !!assetState.debugNet;
+    assetDebugNetEl.addEventListener("change", () => {
+      assetState.debugNet = !!assetDebugNetEl.checked;
+      try {
+        localStorage.setItem(ASSET_DEBUG_NET_KEY, assetState.debugNet ? "1" : "0");
+      } catch (_) {}
+      log(`Asset network debug ${assetState.debugNet ? "enabled" : "disabled"}.`);
+    });
+  }
+  if (assetSetSelectEl) {
+    renderAssetSavedSets();
+    assetSetSelectEl.addEventListener("change", () => {
+      assetState.selectedSetId = String(assetSetSelectEl.value || "");
+    });
+  }
+  if (assetSetApplyBtnEl) assetSetApplyBtnEl.addEventListener("click", () => {
+    const id = String(assetState.selectedSetId || assetSetSelectEl?.value || "");
+    if (!id) {
+      toast("Select a saved set first.");
+      return;
+    }
+    const row = (assetState.savedSets || []).find((item) => item.id === id);
+    if (!row) {
+      toast("Saved set was not found.");
+      renderAssetSavedSets();
+      return;
+    }
+    applyAssetFilterSnapshot(row.filters, true);
+    toast(`Applied set: ${row.name}`);
+  });
+  if (assetSetSaveBtnEl) assetSetSaveBtnEl.addEventListener("click", () => {
+    const fallback = (() => {
+      const existing = (assetState.savedSets || []).find((row) => row.id === assetState.selectedSetId);
+      return existing ? existing.name : "";
+    })();
+    const name = prompt("Save set name", fallback) || "";
+    if (!name.trim()) return;
+    if (!saveAssetSet(name)) {
+      toast("Could not save set.");
+      return;
+    }
+    toast(`Saved set: ${name.trim()}`);
+  });
+  if (assetSetDeleteBtnEl) assetSetDeleteBtnEl.addEventListener("click", () => {
+    const id = String(assetState.selectedSetId || assetSetSelectEl?.value || "");
+    if (!id) {
+      toast("Select a saved set first.");
+      return;
+    }
+    const row = (assetState.savedSets || []).find((item) => item.id === id);
+    if (!row) {
+      toast("Saved set was not found.");
+      renderAssetSavedSets();
+      return;
+    }
+    if (!confirm(`Delete saved set '${row.name}'?`)) return;
+    if (!deleteSelectedAssetSet()) {
+      toast("Delete failed.");
+      return;
+    }
+    toast(`Deleted set: ${row.name}`);
   });
   if (assetPlaceModeBtnEl) {
     const syncPlaceModeBtn = () => {
@@ -5519,6 +6812,7 @@
     const selectBtn = e.target.closest("[data-folder-select]");
     if (selectBtn) {
       assetState.folder = String(selectBtn.getAttribute("data-folder-select") || "");
+      saveAssetFilterPreset();
       renderAssetFolderTree();
       renderAssetGrid();
     }
@@ -5851,6 +7145,10 @@
     const isTyping = tag === "input" || tag === "textarea" || tag === "select" || (e.target && e.target.isContentEditable);
     if (e.key === "Escape" && !sessionModal.classList.contains("hidden")) {
       closeSessionModal();
+      return;
+    }
+    if (e.key === "Escape" && mapPreviewModal && !mapPreviewModal.classList.contains("hidden")) {
+      closeMapPreview();
       return;
     }
     if (!isTyping) {
