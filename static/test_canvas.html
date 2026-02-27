@@ -8,22 +8,24 @@
     #top {
       padding: 10px;
       position: relative;
-      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      display:flex; align-items:center; justify-content:flex-start; gap:10px;
       background:#0f0f0f; border-bottom:1px solid #222;
+      overflow-x: auto;
+      white-space: nowrap;
     }
     .top-left, .top-right {
       display:flex;
       align-items:center;
       gap:8px;
       min-width: 0;
+      flex: 0 0 auto;
     }
     .top-center {
-      position: absolute;
-      left: 50%;
-      transform: translateX(-50%);
+      position: static;
       display: flex;
       align-items: center;
       gap: 8px;
+      flex: 0 0 auto;
     }
     input, select { padding: 6px; }
     button { padding: 6px 10px; cursor:pointer; }
@@ -6392,6 +6394,7 @@
   } catch (e) {
     console.error("mountDrawerPanels failed", e);
     log(`UI INIT ERROR: ${e?.message || e}`);
+    toast(`UI init error: ${e?.message || e}`);
   }
   [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler].forEach((btn) => {
     if (!btn) return;
