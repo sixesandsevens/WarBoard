@@ -46,6 +46,9 @@ from .storage import (
     delete_session,
     ensure_room_join_code,
     get_room_meta,
+    get_pack_asset_by_asset_id,
+    get_private_pack_by_id,
+    get_asset_for_user,
     get_user_by_sid,
     get_user_by_username,
     init_db,
@@ -62,6 +65,7 @@ from .storage import (
     update_user_last_room,
     update_user_password_hash,
     update_room_name,
+    user_has_pack_access,
 )
 
 app = FastAPI(title="WarBoard")
@@ -110,12 +114,17 @@ EXT_TO_IMAGE_MIME = {
     ".webp": "image/webp",
     ".gif": "image/gif",
 }
+MIME_TO_IMAGE_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 # Static assets (still routed through FastAPI so middleware can protect them)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
 app.mount("/packs", StaticFiles(directory=str(PACKS_DIR), check_dir=False), name="packs")
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR), check_dir=False), name="uploads")
-app.mount("/private-packs", StaticFiles(directory=str(PRIVATE_PACKS_DIR), check_dir=False), name="private-packs")
 
 rm = RoomManager()
 HEARTBEAT_TIMEOUT_SECONDS = 35.0
@@ -550,6 +559,50 @@ def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = ""):
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
     return {"assets": list_all_assets_for_user(user.user_id, q=q, tag=tag, folder=folder)}
+
+
+@app.get("/api/assets/file/{asset_id}")
+def get_asset_file_api(asset_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+
+    upload = get_asset_for_user(asset_id, user.user_id)
+    if upload:
+        rel = str(upload.url_original or "")
+        if not rel.startswith("/uploads/"):
+            raise HTTPException(status_code=404, detail="Asset file not found")
+        file_path = UPLOADS_DIR / rel.replace("/uploads/", "", 1)
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail="Asset file not found")
+        return FileResponse(
+            str(file_path),
+            media_type=upload.mime or _image_mime_from_ext(file_path.suffix),
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
+
+    pack_asset = get_pack_asset_by_asset_id(asset_id)
+    if not pack_asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if not user_has_pack_access(user.user_id, int(pack_asset.pack_id)):
+        raise HTTPException(status_code=403, detail="Not entitled to this pack asset")
+    pack = get_private_pack_by_id(int(pack_asset.pack_id))
+    if not pack:
+        raise HTTPException(status_code=404, detail="Pack not found")
+
+    ext = Path(str(pack_asset.url_original or "")).suffix.lower()
+    if not ext:
+        ext = MIME_TO_IMAGE_EXT.get(str(pack_asset.mime or "").lower(), "")
+    if not ext:
+        ext = ".bin"
+    file_path = PRIVATE_PACKS_DIR / str(pack.slug) / "originals" / f"{asset_id}{ext}"
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Asset file not found")
+    return FileResponse(
+        str(file_path),
+        media_type=pack_asset.mime or _image_mime_from_ext(ext),
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 if HAS_MULTIPART:

@@ -1057,7 +1057,91 @@
     }
   }
 
-  function tokenImage(url) {
+  function apiAssetFileUrl(assetId) {
+    return `/api/assets/file/${encodeURIComponent(String(assetId || ""))}`;
+  }
+
+  function extractLegacyPrivatePackAssetId(url) {
+    const m = String(url || "").match(/^\/private-packs\/[^/]+\/originals\/([A-Za-z0-9_-]+)\.[A-Za-z0-9]+$/);
+    return m ? m[1] : "";
+  }
+
+  function normalizePackBackedRecord(raw) {
+    if (!raw || typeof raw !== "object") return raw;
+    const out = { ...raw };
+    const currentAssetId = String(out.asset_id || "").trim();
+    const legacyAssetId = currentAssetId || extractLegacyPrivatePackAssetId(out.image_url || out.url_original || out.url);
+    if (legacyAssetId && !out.asset_id) out.asset_id = legacyAssetId;
+    const sourceRaw = String(out.source || "").trim().toLowerCase();
+    if (sourceRaw === "pack" || (legacyAssetId && sourceRaw !== "upload")) out.source = "pack";
+    if (out.source === "pack" && out.asset_id) {
+      out.image_url = apiAssetFileUrl(out.asset_id);
+      if (out.url_original) out.url_original = apiAssetFileUrl(out.asset_id);
+    } else if (!out.image_url && out.url) {
+      out.image_url = out.url;
+    }
+    if (Object.prototype.hasOwnProperty.call(out, "url")) delete out.url;
+    return out;
+  }
+
+  function assetPreviewUrl(asset) {
+    const rec = normalizePackBackedRecord(asset);
+    if (rec && typeof rec === "object" && String(rec.source || "").toLowerCase() === "pack" && rec.asset_id) {
+      return apiAssetFileUrl(rec.asset_id);
+    }
+    return String(rec?.url_thumb || rec?.url_original || rec?.image_url || "");
+  }
+
+  async function fetchPackAssetBlobUrl(assetId) {
+    const key = String(assetId || "").trim();
+    if (!key) throw new Error("Missing pack asset id");
+    if (packAssetBlobUrlCache.has(key)) return packAssetBlobUrlCache.get(key);
+    if (packAssetBlobFetches.has(key)) return packAssetBlobFetches.get(key);
+    const pending = (async () => {
+      const res = await fetch(apiAssetFileUrl(key), { credentials: "include" });
+      if (!res.ok) throw new Error(`Asset fetch failed (${res.status})`);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      packAssetBlobUrlCache.set(key, blobUrl);
+      return blobUrl;
+    })();
+    packAssetBlobFetches.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      packAssetBlobFetches.delete(key);
+    }
+  }
+
+  function tokenImage(source) {
+    const rec = normalizePackBackedRecord(source);
+    if (rec && typeof rec === "object") {
+      const sourceType = String(rec.source || "").toLowerCase();
+      const assetId = String(rec.asset_id || "").trim();
+      if (sourceType === "pack" && assetId) {
+        const key = `pack:${assetId}`;
+        if (tokenImageCache.has(key)) return tokenImageCache.get(key);
+        const img = new Image();
+        img.decoding = "async";
+        img.loading = "eager";
+        img.onload = () => requestRender();
+        img.onerror = () => requestRender();
+        tokenImageCache.set(key, img);
+        const existingBlobUrl = packAssetBlobUrlCache.get(assetId);
+        if (existingBlobUrl) {
+          img.src = existingBlobUrl;
+        } else {
+          fetchPackAssetBlobUrl(assetId)
+            .then((blobUrl) => {
+              if (tokenImageCache.get(key) === img) img.src = blobUrl;
+            })
+            .catch(() => requestRender());
+        }
+        return img;
+      }
+      source = String(rec.image_url || rec.url_original || "");
+    }
+    const url = String(source || "").trim();
     if (!url) return null;
     if (tokenImageCache.has(url)) return tokenImageCache.get(url);
     const img = new Image();
@@ -1071,7 +1155,7 @@
   }
 
   function drawTokenImageClippedCircle(t, s, r) {
-    const img = tokenImage(t.image_url || "");
+    const img = tokenImage(t);
     if (!img || !img.complete || img.naturalWidth <= 0 || img.naturalHeight <= 0) return false;
     const iw = img.naturalWidth;
     const ih = img.naturalHeight;
@@ -2353,7 +2437,7 @@
         style="padding:6px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.03); color:#eee; text-align:center;"
         title="${escapeHtml(String(a.name || "Asset"))}">
         <div style="width:100%; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#1a1a1a; display:flex; align-items:center; justify-content:center;">
-          <img src="${escapeHtml(String(a.url_thumb || a.url_original || ""))}" alt="${escapeHtml(String(a.name || "Asset"))}" style="width:100%; height:100%; object-fit:cover;">
+          <img src="${escapeHtml(assetPreviewUrl(a))}" alt="${escapeHtml(String(a.name || "Asset"))}" style="width:100%; height:100%; object-fit:cover;">
         </div>
         <div style="margin-top:6px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.name || "Asset"))}</div>
         <div style="font-size:10px; opacity:.75; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.folder_path || "/"))}</div>
@@ -2460,7 +2544,7 @@
   async function refreshAssetsPanel() {
     try {
       const data = await apiGet(`/api/assets`);
-      assetState.items = Array.isArray(data.assets) ? data.assets : [];
+      assetState.items = Array.isArray(data.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];
       renderAssetFolderTree();
       renderAssetGrid();
     } catch (e) {
@@ -2471,6 +2555,7 @@
   }
 
   function spawnPackToken(packToken, x = null, y = null) {
+    const normalized = normalizePackBackedRecord(packToken || {});
     const id = makeId();
     let wx = x;
     let wy = y;
@@ -2486,10 +2571,15 @@
       id,
       x: wx,
       y: wy,
-      name: packToken.name || "Token",
-      color: packToken.color || "#ffffff",
-      image_url: packToken.image_url || null,
-      size_scale: clamp(Number(packToken.size_scale ?? ui.tokenSpawnScale), 0.25, 4),
+      name: normalized.name || "Token",
+      color: normalized.color || "#ffffff",
+      image_url: normalized.image_url || null,
+      asset_id: normalized.asset_id || null,
+      source: normalized.source || null,
+      pack_slug: normalized.pack_slug || null,
+      mime: normalized.mime || null,
+      ext: normalized.ext || null,
+      size_scale: clamp(Number(normalized.size_scale ?? ui.tokenSpawnScale), 0.25, 4),
       owner_id: null,
       locked: false,
       badges: [],
@@ -2503,6 +2593,7 @@
   }
 
   function spawnPackAsset(packToken, x = null, y = null) {
+    const normalized = normalizePackBackedRecord(packToken || {});
     const id = makeId();
     let wx = x;
     let wy = y;
@@ -2514,18 +2605,22 @@
       wy = snap(centerWorld.y + (Math.random() * 80 - 40));
     }
     const base = ui.gridSize;
-    const width = Math.max(8, Number(packToken.width || base));
-    const height = Math.max(8, Number(packToken.height || base));
+    const width = Math.max(8, Number(normalized.width || base));
+    const height = Math.max(8, Number(normalized.height || base));
     const asset = {
       id,
-      asset_id: packToken.asset_id || packToken.id || null,
-      image_url: packToken.url_original || packToken.image_url || "",
+      asset_id: normalized.asset_id || normalized.id || null,
+      source: normalized.source || null,
+      pack_slug: normalized.pack_slug || null,
+      mime: normalized.mime || null,
+      ext: normalized.ext || null,
+      image_url: normalized.url_original || normalized.image_url || "",
       x: wx,
       y: wy,
       width,
       height,
-      scale_x: clamp(Number(packToken.size_scale ?? 1), 0.05, 10),
-      scale_y: clamp(Number(packToken.size_scale ?? 1), 0.05, 10),
+      scale_x: clamp(Number(normalized.size_scale ?? 1), 0.05, 10),
+      scale_y: clamp(Number(normalized.size_scale ?? 1), 0.05, 10),
       rotation: 0,
       opacity: 1,
       layer: 0,
@@ -2642,6 +2737,30 @@
     refreshGmUI();
   }
 
+  function collectReferencedPackAssetIds() {
+    const keep = new Set();
+    const scan = (item) => {
+      if (!item || typeof item !== "object") return;
+      const source = String(item.source || "").toLowerCase();
+      const aid = String(item.asset_id || "").trim();
+      if (source === "pack" && aid) keep.add(aid);
+    };
+    for (const t of state.tokens.values()) scan(t);
+    for (const a of state.assets.values()) scan(a);
+    scan(dragSpawn);
+    return keep;
+  }
+
+  function pruneUnusedPackBlobUrls() {
+    const keep = collectReferencedPackAssetIds();
+    for (const [assetId, blobUrl] of packAssetBlobUrlCache.entries()) {
+      if (keep.has(assetId)) continue;
+      try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+      packAssetBlobUrlCache.delete(assetId);
+      tokenImageCache.delete(`pack:${assetId}`);
+    }
+  }
+
   const cam = { x: 80, y: 60, z: 1 };
   const ui = { gridSize: 50, snap: true, showGrid: true, feetPerSq: 5, tokenSpawnScale: 1.0, textDraft: "Text", textFontSize: 24 };
 
@@ -2708,6 +2827,8 @@
   let bgImageStatus = "idle";
   const bgCache = new Map();
   const tokenImageCache = new Map();
+  const packAssetBlobUrlCache = new Map();
+  const packAssetBlobFetches = new Map();
   const TERRAIN_MACRO_TILE = 1024;
   const TERRAIN_MICRO_TILE = 512;
   const TERRAIN_BREAKUP_TILE = 1536;
@@ -3683,7 +3804,7 @@
       const angle = Number(a.rotation || 0);
       const sxSign = signedAssetScale(a.scale_x, 1) < 0 ? -1 : 1;
       const sySign = signedAssetScale(a.scale_y, 1) < 0 ? -1 : 1;
-      const img = tokenImage(a.image_url || "");
+      const img = tokenImage(a);
       ctx.save();
       ctx.translate(s.x, s.y);
       if (angle) ctx.rotate(angle);
@@ -3853,7 +3974,7 @@
       ctx.save();
       ctx.globalAlpha = 0.7;
       if (dragSpawn.url_original || dragSpawn.image_url) {
-        const img = tokenImage(dragSpawn.url_original || dragSpawn.image_url);
+        const img = tokenImage(dragSpawn);
         if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
           ctx.drawImage(img, s.x - w / 2, s.y - h / 2, w, h);
         } else {
@@ -3875,7 +3996,7 @@
     const r = tokenRadiusWorld(dragSpawn) * cam.z;
     ctx.save();
     ctx.globalAlpha = 0.7;
-    const imageDrawn = drawTokenImageClippedCircle({ image_url: dragSpawn.image_url }, s, r);
+    const imageDrawn = drawTokenImageClippedCircle(dragSpawn, s, r);
     if (!imageDrawn) {
       ctx.beginPath();
       ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
@@ -4009,14 +4130,15 @@
 
     state.tokens.clear();
     for (const [id, t] of Object.entries(s.tokens || {})) {
-      state.tokens.set(id, { ...t, badges: normalizedBadgeList(t?.badges) });
+      const normalized = normalizePackBackedRecord(t);
+      state.tokens.set(id, { ...normalized, badges: normalizedBadgeList(normalized?.badges) });
     }
     state.strokes.clear();
     for (const [id, st] of Object.entries(s.strokes || {})) state.strokes.set(id, st);
     state.shapes.clear();
     for (const [id, sh] of Object.entries(s.shapes || {})) state.shapes.set(id, sh);
     state.assets.clear();
-    for (const [id, a] of Object.entries(s.assets || {})) state.assets.set(id, a);
+    for (const [id, a] of Object.entries(s.assets || {})) state.assets.set(id, normalizePackBackedRecord(a));
     state.draw_order = {
       strokes: Array.isArray(s.draw_order?.strokes) ? s.draw_order.strokes.filter((id) => state.strokes.has(id)) : [],
       shapes: Array.isArray(s.draw_order?.shapes) ? s.draw_order.shapes.filter((id) => state.shapes.has(id)) : [],
@@ -4034,6 +4156,7 @@
     players.add(myId());
     if (state.gm_id) players.add(state.gm_id);
     refreshGmUI();
+    pruneUnusedPackBlobUrls();
     requestRender();
   }
 
@@ -4263,6 +4386,7 @@
       if (selectedTokenId === payload.id) selectedTokenId = null;
       if (hoveredTokenId === payload.id) hoveredTokenId = null;
       refreshGmUI();
+      pruneUnusedPackBlobUrls();
       requestRender();
       scheduleOfflineSave();
       return;
@@ -4372,7 +4496,7 @@
     if (type === "ASSET_INSTANCE_CREATE") {
       const p = payload;
       if (p?.id) {
-        const next = { ...p };
+        const next = normalizePackBackedRecord(p);
         if (!next.creator_id) next.creator_id = myId();
         state.assets.set(p.id, next);
         state.draw_order.assets = state.draw_order.assets.filter((id) => id !== p.id);
@@ -4387,7 +4511,7 @@
       const p = payload;
       if (p?.id) {
         const current = state.assets.get(p.id) || {};
-        const next = { ...current, ...p };
+        const next = normalizePackBackedRecord({ ...current, ...p });
         if (!next.creator_id) next.creator_id = myId();
         state.assets.set(p.id, next);
         if (!state.draw_order.assets.includes(p.id)) state.draw_order.assets.push(p.id);
@@ -4406,6 +4530,7 @@
         draggingAssetId = null;
         assetDragOrigin = null;
       }
+      pruneUnusedPackBlobUrls();
       requestRender();
       scheduleOfflineSave();
       return;
@@ -4444,6 +4569,7 @@
       if (!selectedTokenId && selectedTokenIds.size) selectedTokenId = Array.from(selectedTokenIds)[0];
       if (strokeIds.length || shapeIds.length || tokenIds.length) {
         refreshGmUI();
+        pruneUnusedPackBlobUrls();
         requestRender();
         scheduleOfflineSave();
       }
@@ -4452,7 +4578,10 @@
 
     if (type === "TOKEN_CREATE") {
       const p = payload;
-      if (p?.id) state.tokens.set(p.id, { ...(state.tokens.get(p.id) || {}), ...p, badges: normalizedBadgeList(p?.badges) });
+      if (p?.id) {
+        const normalized = normalizePackBackedRecord({ ...(state.tokens.get(p.id) || {}), ...p });
+        state.tokens.set(p.id, { ...normalized, badges: normalizedBadgeList(normalized?.badges) });
+      }
       refreshGmUI();
       requestRender();
       scheduleOfflineSave();
@@ -4555,6 +4684,7 @@
     dragSpawn = null;
     dragSpawnWorld = null;
     dragSpawnOverCanvas = false;
+    pruneUnusedPackBlobUrls();
     requestRender();
   }
 
@@ -4688,7 +4818,10 @@
 
       if (ev.type === "TOKEN_CREATE") {
         const p = ev.payload;
-        if (p?.id) state.tokens.set(p.id, { ...(state.tokens.get(p.id) || {}), ...p, badges: normalizedBadgeList(p?.badges) });
+        if (p?.id) {
+          const normalized = normalizePackBackedRecord({ ...(state.tokens.get(p.id) || {}), ...p });
+          state.tokens.set(p.id, { ...normalized, badges: normalizedBadgeList(normalized?.badges) });
+        }
         refreshGmUI();
         requestRender();
         return;
@@ -4756,6 +4889,7 @@
         if (!selectedTokenId && selectedTokenIds.size) selectedTokenId = Array.from(selectedTokenIds)[0];
         if (hoveredTokenId === ev.payload.id) hoveredTokenId = null;
         refreshGmUI();
+        pruneUnusedPackBlobUrls();
         requestRender();
         return;
       }
@@ -4836,7 +4970,7 @@
       if (ev.type === "ASSET_INSTANCE_CREATE") {
         const p = ev.payload;
         if (p?.id) {
-          state.assets.set(p.id, p);
+          state.assets.set(p.id, normalizePackBackedRecord(p));
           state.draw_order.assets = state.draw_order.assets.filter((id) => id !== p.id);
           state.draw_order.assets.push(p.id);
         }
@@ -4847,7 +4981,7 @@
       if (ev.type === "ASSET_INSTANCE_UPDATE") {
         const p = ev.payload;
         if (p?.id) {
-          state.assets.set(p.id, { ...(state.assets.get(p.id) || {}), ...p });
+          state.assets.set(p.id, normalizePackBackedRecord({ ...(state.assets.get(p.id) || {}), ...p }));
           if (!state.draw_order.assets.includes(p.id)) state.draw_order.assets.push(p.id);
         }
         requestRender();
@@ -4863,6 +4997,7 @@
           draggingAssetId = null;
           assetDragOrigin = null;
         }
+        pruneUnusedPackBlobUrls();
         requestRender();
         return;
       }
@@ -4923,6 +5058,7 @@
         if (!selectedTokenId && selectedTokenIds.size) selectedTokenId = Array.from(selectedTokenIds)[0];
         if (strokeIds.length || shapeIds.length || tokenIds.length) {
           refreshGmUI();
+          pruneUnusedPackBlobUrls();
           requestRender();
         }
         return;

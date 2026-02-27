@@ -556,6 +556,27 @@ def get_private_pack_by_slug(slug: str) -> Optional[PrivatePackRow]:
         return s.exec(select(PrivatePackRow).where(PrivatePackRow.slug == slug)).first()
 
 
+def get_private_pack_by_id(pack_id: int) -> Optional[PrivatePackRow]:
+    with Session(engine) as s:
+        return s.get(PrivatePackRow, pack_id)
+
+
+def get_pack_asset_by_asset_id(asset_id: str) -> Optional[PrivatePackAssetRow]:
+    with Session(engine) as s:
+        return s.get(PrivatePackAssetRow, asset_id)
+
+
+def user_has_pack_access(user_id: int, pack_id: int) -> bool:
+    with Session(engine) as s:
+        pack = s.get(PrivatePackRow, pack_id)
+        if not pack:
+            return False
+        if int(pack.owner_user_id) == int(user_id):
+            return True
+        entitlement = s.get(PrivatePackEntitlementRow, (pack_id, user_id))
+        return entitlement is not None
+
+
 def grant_private_pack_access(pack_id: int, user_id: int) -> None:
     now = utc_now_iso()
     with Session(engine) as s:
@@ -643,8 +664,8 @@ def list_pack_assets_for_user(user_id: int, q: str = "", tag: str = "", folder: 
                 "mime": row.mime,
                 "width": row.width,
                 "height": row.height,
-                "url_original": row.url_original,
-                "url_thumb": row.url_thumb,
+                "url_original": f"/api/assets/file/{row.asset_id}",
+                "url_thumb": f"/api/assets/file/{row.asset_id}",
                 "created_at": row.created_at,
                 "readonly": True,
                 "source": "pack",

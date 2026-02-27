@@ -45,6 +45,11 @@ class Token(BaseModel):
     name: str = "Token"
     color: str = "#ffffff"
     image_url: Optional[str] = None
+    asset_id: Optional[str] = None
+    source: Optional[Literal["upload", "pack"]] = None
+    pack_slug: Optional[str] = None
+    mime: Optional[str] = None
+    ext: Optional[str] = None
     size_scale: float = 1.0
     owner_id: Optional[str] = None
     group_id: Optional[str] = None
@@ -88,6 +93,10 @@ class Shape(BaseModel):
 class AssetInstance(BaseModel):
     id: str
     asset_id: Optional[str] = None
+    source: Optional[Literal["upload", "pack"]] = None
+    pack_slug: Optional[str] = None
+    mime: Optional[str] = None
+    ext: Optional[str] = None
     image_url: str
     x: float
     y: float

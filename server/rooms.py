@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
@@ -20,6 +22,7 @@ TOKEN_HIT_BASE_RADIUS = 25.0
 VALID_TOKEN_BADGES = {"downed", "poisoned", "stunned", "burning", "bleeding", "prone"}
 BROADCAST_SEND_TIMEOUT_SECONDS = 5.0
 logger = logging.getLogger("warboard.ws")
+_LEGACY_PRIVATE_PACK_RE = re.compile(r"^/private-packs/[^/]+/originals/([A-Za-z0-9_-]+)\.[A-Za-z0-9]+$")
 
 
 @dataclass
@@ -49,7 +52,7 @@ class RoomManager:
             raw = load_room_state_json(room_id)
             if raw:
                 try:
-                    state = RoomState.model_validate_json(raw)
+                    state = RoomState.model_validate_json(self._migrate_legacy_asset_refs(raw))
                 except Exception:
                     # fallback if json is corrupted
                     state = RoomState(room_id=room_id)
@@ -63,6 +66,57 @@ class RoomManager:
             room = Room(state=state)
             self._rooms[room_id] = room
             return room
+
+    def _migrate_legacy_asset_refs(self, raw: str) -> str:
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return raw
+        if not isinstance(data, dict):
+            return raw
+        changed = False
+
+        tokens = data.get("tokens")
+        if isinstance(tokens, dict):
+            for token in tokens.values():
+                if not isinstance(token, dict):
+                    continue
+                legacy_url = str(token.get("url") or "").strip()
+                if not token.get("image_url") and legacy_url:
+                    token["image_url"] = legacy_url
+                    changed = True
+                if not token.get("asset_id") and legacy_url:
+                    m = _LEGACY_PRIVATE_PACK_RE.match(legacy_url)
+                    if m:
+                        token["asset_id"] = m.group(1)
+                        token["source"] = "pack"
+                        token["image_url"] = f"/api/assets/file/{m.group(1)}"
+                        changed = True
+                if "url" in token:
+                    token.pop("url", None)
+                    changed = True
+
+        assets = data.get("assets")
+        if isinstance(assets, dict):
+            for asset in assets.values():
+                if not isinstance(asset, dict):
+                    continue
+                image_url = str(asset.get("image_url") or "").strip()
+                if not image_url:
+                    continue
+                if not asset.get("asset_id"):
+                    m = _LEGACY_PRIVATE_PACK_RE.match(image_url)
+                    if m:
+                        asset["asset_id"] = m.group(1)
+                        asset["source"] = "pack"
+                        asset["image_url"] = f"/api/assets/file/{m.group(1)}"
+                        changed = True
+        if not changed:
+            return raw
+        try:
+            return json.dumps(data)
+        except Exception:
+            return raw
 
     async def is_room_active(self, room_id: str) -> bool:
         async with self._lock:
@@ -404,13 +458,24 @@ class RoomManager:
                 badges = sorted({str(b).strip() for b in badges if str(b).strip() in VALID_TOKEN_BADGES})
             else:
                 badges = []
+            source_raw = str(p.get("source") or "").strip().lower()
+            source = source_raw if source_raw in ("upload", "pack") else None
+            pack_asset_id = str(p.get("asset_id") or "").strip() or None
+            image_url = str(p.get("image_url")) if p.get("image_url") else None
+            if source == "pack" and pack_asset_id:
+                image_url = f"/api/assets/file/{pack_asset_id}"
             token = Token(
                 id=p.get("id"),
                 x=float(p.get("x", 0)),
                 y=float(p.get("y", 0)),
                 name=p.get("name", "Token"),
                 color=p.get("color", "#ffffff"),
-                image_url=str(p.get("image_url")) if p.get("image_url") else None,
+                image_url=image_url,
+                asset_id=pack_asset_id,
+                source=source,
+                pack_slug=str(p.get("pack_slug") or "").strip() or None,
+                mime=str(p.get("mime") or "").strip() or None,
+                ext=str(p.get("ext") or "").strip() or None,
                 size_scale=float(p.get("size_scale", 1.0)),
                 owner_id=None,
                 group_id=str(p.get("group_id")) if p.get("group_id") else None,
@@ -831,7 +896,12 @@ class RoomManager:
             if not self._is_gm(room, user_id, client_id) and not room.state.allow_all_move:
                 return WireEvent(type="ERROR", payload={"message": "Not allowed to place assets"})
             aid = str(p.get("id") or "").strip()
+            source_raw = str(p.get("source") or "").strip().lower()
+            source = source_raw if source_raw in ("upload", "pack") else None
+            pack_asset_id = str(p.get("asset_id") or "").strip() or None
             image_url = str(p.get("image_url") or "").strip()
+            if source == "pack" and pack_asset_id:
+                image_url = f"/api/assets/file/{pack_asset_id}"
             if not aid or not image_url:
                 return WireEvent(type="ERROR", payload={"message": "Invalid asset instance"})
             def _clamp_asset_scale(value: float) -> float:
@@ -846,7 +916,11 @@ class RoomManager:
 
             asset = AssetInstance(
                 id=aid,
-                asset_id=str(p.get("asset_id") or "").strip() or None,
+                asset_id=pack_asset_id,
+                source=source,
+                pack_slug=str(p.get("pack_slug") or "").strip() or None,
+                mime=str(p.get("mime") or "").strip() or None,
+                ext=str(p.get("ext") or "").strip() or None,
                 image_url=image_url,
                 x=float(p.get("x", 0)),
                 y=float(p.get("y", 0)),
