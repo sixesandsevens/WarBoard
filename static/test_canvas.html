@@ -636,6 +636,9 @@
         <input id="assetRotateSlider" type="range" min="-180" max="180" step="1" value="0">
       </div>
       <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="asset_layer_front">Bring to front</div>
+      <div class="ctx-item" data-action="asset_layer_back">Send to back</div>
+      <div class="ctx-sep"></div>
       <div class="ctx-item" data-action="asset_flip_x">Flip horizontal</div>
       <div class="ctx-item" data-action="asset_flip_y">Flip vertical</div>
       <div class="ctx-sep"></div>
@@ -1893,6 +1896,30 @@
         if (!a || !canEditAssetLocal(a)) break;
         const sx = signedAssetScale(a.scale_x, 1);
         applyAssetUpdate(a.id, { scale_x: -sx }, true);
+        break;
+      }
+      case "asset_layer_front": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canEditAssetLocal(a)) break;
+        let maxLayer = Number(a.layer || 0);
+        for (const item of state.assets.values()) {
+          const l = Number(item?.layer || 0);
+          if (l > maxLayer) maxLayer = l;
+        }
+        const nextLayer = maxLayer + 1;
+        if (Number(a.layer || 0) !== nextLayer) applyAssetUpdate(a.id, { layer: nextLayer }, true);
+        break;
+      }
+      case "asset_layer_back": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a || !canEditAssetLocal(a)) break;
+        let minLayer = Number(a.layer || 0);
+        for (const item of state.assets.values()) {
+          const l = Number(item?.layer || 0);
+          if (l < minLayer) minLayer = l;
+        }
+        const nextLayer = minLayer - 1;
+        if (Number(a.layer || 0) !== nextLayer) applyAssetUpdate(a.id, { layer: nextLayer }, true);
         break;
       }
       case "asset_flip_y": {
