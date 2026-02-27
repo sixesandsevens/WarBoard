@@ -378,6 +378,8 @@
         <option value="dirt">Dirt/Road</option>
         <option value="snow">Snow</option>
         <option value="desert">Desert</option>
+        <option value="water">Water</option>
+        <option value="volcano">Volcano</option>
       </select>
     </label>
     <button id="regenTerrain">Regenerate Terrain</button>
@@ -2709,7 +2711,7 @@
   const TERRAIN_MACRO_TILE = 1024;
   const TERRAIN_MICRO_TILE = 512;
   const TERRAIN_BREAKUP_TILE = 1536;
-  const TERRAIN_STYLES = new Set(["grassland", "dirt", "snow", "desert"]);
+  const TERRAIN_STYLES = new Set(["grassland", "dirt", "snow", "desert", "water", "volcano"]);
   const BIOME_PALETTES = {
     grassland: {
       base: "#2f5f2a",
@@ -2754,6 +2756,28 @@
       pebbleA: "#8f7550",
       pebbleB: "#6f5a3d",
       shadowShade: [24, 20, 12],
+    },
+    water: {
+      base: "#1f4f6a",
+      speckA: "#2a6788",
+      speckB: "#1a4259",
+      strokeA: "#3779a2",
+      strokeB: "#15384c",
+      stain: "#4f9cc8",
+      pebbleA: "#6aa9c8",
+      pebbleB: "#3e7e9f",
+      shadowShade: [10, 20, 28],
+    },
+    volcano: {
+      base: "#2e2725",
+      speckA: "#3a312f",
+      speckB: "#221d1b",
+      strokeA: "#4a3b36",
+      strokeB: "#1a1412",
+      stain: "#b94621",
+      pebbleA: "#675b55",
+      pebbleB: "#4b433f",
+      shadowShade: [22, 14, 12],
     },
   };
   const terrain = {

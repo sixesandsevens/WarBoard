@@ -563,7 +563,7 @@ class RoomManager:
                     return WireEvent(type="ERROR", payload={"message": "Invalid terrain_seed"})
             if "terrain_style" in p:
                 style = p.get("terrain_style")
-                if style in ("grassland", "dirt", "snow", "desert"):
+                if style in ("grassland", "dirt", "snow", "desert", "water", "volcano"):
                     room.state.terrain_style = style
                 else:
                     return WireEvent(type="ERROR", payload={"message": "Invalid terrain_style"})
