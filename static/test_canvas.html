@@ -883,6 +883,7 @@
   const assetPlaceModeBtnEl = document.getElementById("assetPlaceModeBtn");
   const assetFolderTreeEl = document.getElementById("assetFolderTree");
   const assetGridEl = document.getElementById("assetGrid");
+  const drawerContentEl = document.querySelector(".drawer-content");
 
   const toolEl = document.getElementById("tool");
   const toolBtnMove = document.getElementById("toolBtnMove");
@@ -1210,6 +1211,9 @@
       p.classList.toggle("active", p.id === `tab-${tabId}`);
     });
     if (openDrawer) drawer.classList.remove("hidden");
+    if (tabId === "assets") {
+      ensureAssetPanelReady();
+    }
   }
 
   function normalizePanelForDrawer(panelEl) {
@@ -1651,7 +1655,7 @@
         break;
       case "open_assets":
         activateDrawerTab("assets", true);
-        refreshAssetsPanel();
+        ensureAssetPanelReady();
         break;
       case "asset_duplicate": {
         const a = state.assets.get(selectedAssetId || "");
@@ -2418,6 +2422,10 @@
 
   function renderAssetGrid() {
     if (!assetGridEl) return;
+    if (!assetState.loaded) {
+      assetGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">Open Asset Library to load items.</div>`;
+      return;
+    }
     const q = (assetState.search || "").trim().toLowerCase();
     const folder = (assetState.folder || "").trim();
     const rows = assetState.items.filter((a) => {
@@ -2427,25 +2435,41 @@
       const tags = Array.isArray(a.tags) ? a.tags.join(" ").toLowerCase() : "";
       return String(a.name || "").toLowerCase().includes(q) || tags.includes(q) || fp.toLowerCase().includes(q);
     });
+    const filterKey = `${q}\n${folder}\n${rows.length}`;
+    if (assetState.filterKey !== filterKey) {
+      assetState.filterKey = filterKey;
+      assetState.renderCount = assetState.pageSize;
+    }
+    const visibleCount = Math.min(rows.length, Math.max(assetState.pageSize, assetState.renderCount));
+    const visibleRows = rows.slice(0, visibleCount);
+    assetState.hasMore = visibleCount < rows.length;
     if (!rows.length) {
       assetGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">(no assets)</div>`;
       return;
     }
-    assetGridEl.innerHTML = rows.map((a, idx) => `
+    assetGridEl.innerHTML = visibleRows.map((a, idx) => {
+      const previewUrl = assetPreviewUrl(a);
+      const escapedPreview = escapeHtml(previewUrl);
+      const thumbAttrs = previewUrl
+        ? `src="${ASSET_THUMB_PLACEHOLDER}" data-src="${escapedPreview}" loading="lazy"`
+        : `src="${ASSET_THUMB_PLACEHOLDER}" loading="lazy"`;
+      return `
       <button
         data-asset-idx="${idx}"
         style="padding:6px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.03); color:#eee; text-align:center;"
         title="${escapeHtml(String(a.name || "Asset"))}">
         <div style="width:100%; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#1a1a1a; display:flex; align-items:center; justify-content:center;">
-          <img src="${escapeHtml(assetPreviewUrl(a))}" alt="${escapeHtml(String(a.name || "Asset"))}" style="width:100%; height:100%; object-fit:cover;">
+          <img class="asset-thumb" ${thumbAttrs} alt="${escapeHtml(String(a.name || "Asset"))}" style="width:100%; height:100%; object-fit:cover;">
         </div>
         <div style="margin-top:6px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.name || "Asset"))}</div>
         <div style="font-size:10px; opacity:.75; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.folder_path || "/"))}</div>
       </button>
-    `).join("");
+    `;
+    }).join("") + (assetState.hasMore ? `<div style="opacity:.7; grid-column:1/-1; text-align:center; padding:4px 0;">Scroll to load more…</div>` : "");
+    observeAssetThumbs();
     assetGridEl.querySelectorAll("button[data-asset-idx]").forEach((btn) => {
       const idx = Number(btn.getAttribute("data-asset-idx"));
-      const a = rows[idx];
+      const a = visibleRows[idx];
       if (!a) return;
       btn.onclick = () => {
         if (assetSuppressCardClick) {
@@ -2484,6 +2508,7 @@
         }
       };
     });
+    requestAnimationFrame(maybeLoadMoreAssets);
   }
 
   function buildAssetFolderTree(paths = []) {
@@ -2542,16 +2567,86 @@
   }
 
   async function refreshAssetsPanel() {
+    if (assetState.loading) return;
+    assetState.loading = true;
     try {
       const data = await apiGet(`/api/assets`);
       assetState.items = Array.isArray(data.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];
+      assetState.loaded = true;
+      assetState.filterKey = "";
+      assetState.renderCount = assetState.pageSize;
       renderAssetFolderTree();
       renderAssetGrid();
     } catch (e) {
       assetState.items = [];
+      assetState.loaded = false;
       if (assetGridEl) assetGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Asset load failed</div>`;
       log(`ASSETS ERROR: ${e.message || e}`);
+    } finally {
+      assetState.loading = false;
     }
+  }
+
+  async function ensureAssetPanelReady() {
+    if (assetState.loaded || assetState.loading) {
+      renderAssetFolderTree();
+      renderAssetGrid();
+      return;
+    }
+    await refreshAssetsPanel();
+  }
+
+  function isAssetsTabActive() {
+    const tab = document.getElementById("tab-assets");
+    return !!tab && tab.classList.contains("active");
+  }
+
+  function maybeLoadMoreAssets() {
+    if (!isAssetsTabActive()) return;
+    if (!assetState.loaded || !assetState.hasMore) return;
+    const scroller = drawerContentEl || assetPanel;
+    if (!scroller) return;
+    const remaining = scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight);
+    if (remaining > 280) return;
+    assetState.renderCount += assetState.pageSize;
+    renderAssetGrid();
+  }
+
+  function observeAssetThumbs() {
+    if (!assetGridEl) return;
+    const thumbs = Array.from(assetGridEl.querySelectorAll("img.asset-thumb[data-src]"));
+    if (!thumbs.length) {
+      if (assetThumbObserver) assetThumbObserver.disconnect();
+      return;
+    }
+    if (!("IntersectionObserver" in window)) {
+      for (const img of thumbs) {
+        const src = img.getAttribute("data-src");
+        if (!src) continue;
+        img.src = src;
+        img.removeAttribute("data-src");
+      }
+      return;
+    }
+    if (!assetThumbObserver) {
+      assetThumbObserver = new IntersectionObserver((entries, obs) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const img = entry.target;
+          const src = img.getAttribute("data-src");
+          if (src) img.src = src;
+          img.removeAttribute("data-src");
+          obs.unobserve(img);
+        }
+      }, {
+        root: drawerContentEl || assetPanel || null,
+        rootMargin: "200px 0px",
+        threshold: 0.01,
+      });
+    } else {
+      assetThumbObserver.disconnect();
+    }
+    for (const img of thumbs) assetThumbObserver.observe(img);
   }
 
   function spawnPackToken(packToken, x = null, y = null) {
@@ -2721,7 +2816,15 @@
     search: "",
     folder: "",
     placeMode: true,
+    loaded: false,
+    loading: false,
+    pageSize: 200,
+    renderCount: 200,
+    hasMore: false,
+    filterKey: "",
   };
+  const ASSET_THUMB_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+  let assetThumbObserver = null;
   let assetSuppressCardClick = false;
   const expandedAssetFolders = new Set([""]);
 
@@ -5151,7 +5254,6 @@
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       activateDrawerTab(btn.dataset.tab, true);
-      if (btn.dataset.tab === "assets") refreshAssetsPanel();
       if (btn.dataset.tab === "tokens") refreshPacks();
     });
   });
@@ -5388,6 +5490,7 @@
   document.getElementById("libraryPanelClose").onclick = () => { drawer.classList.add("hidden"); };
   document.getElementById("refreshPacksBtn").onclick = () => refreshPacks();
   document.getElementById("assetPanelClose").onclick = () => { drawer.classList.add("hidden"); };
+  if (drawerContentEl) drawerContentEl.addEventListener("scroll", maybeLoadMoreAssets, { passive: true });
   if (assetRefreshBtnEl) assetRefreshBtnEl.onclick = () => refreshAssetsPanel();
   if (assetSearchInputEl) assetSearchInputEl.addEventListener("input", () => {
     assetState.search = assetSearchInputEl.value || "";
@@ -5705,7 +5808,6 @@
   refreshGmUI();
   snapshotRoomLabelEl.textContent = roomEl.value.trim();
   refreshPacks();
-  refreshAssetsPanel();
 
   function tool() { return toolEl.value; }
   function isShapeTool(v) { return v === "rect" || v === "circle" || v === "line"; }
