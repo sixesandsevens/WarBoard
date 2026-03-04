@@ -11,6 +11,7 @@ import logging
 import os
 import posixpath
 import secrets
+import tempfile
 import time
 import uuid
 import zipfile
@@ -689,96 +690,109 @@ if HAS_MULTIPART:
         fname = str(file.filename or "").lower()
         if not fname.endswith(".zip"):
             raise HTTPException(status_code=400, detail="Expected a .zip file")
-        data = await file.read(MAX_ZIP_UPLOAD_BYTES + 1)
-        if not data:
-            raise HTTPException(status_code=400, detail="Empty upload")
-        if len(data) > MAX_ZIP_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="ZIP too large (max 200MB)")
         shared_tags = [t.strip() for t in tags.split(",") if t.strip()][:20]
         user_dir = ASSET_UPLOADS_DIR / str(user.user_id)
         user_dir.mkdir(parents=True, exist_ok=True)
         created: list[dict[str, object]] = []
         skipped: list[str] = []
         total_uncompressed = 0
+        # Stream upload into a temp file to avoid buffering the full ZIP in RAM
         try:
-            with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                infos = [i for i in zf.infolist() if not i.is_dir()]
-                if len(infos) > MAX_ZIP_ASSET_FILES:
-                    raise HTTPException(status_code=400, detail=f"Too many files in zip (max {MAX_ZIP_ASSET_FILES})")
-                for info in infos:
-                    folder_path, base = _safe_zip_member_path(info.filename)
-                    if not base:
-                        skipped.append(info.filename)
-                        continue
-                    ext = Path(base).suffix.lower()
-                    if ext not in ALLOWED_BACKGROUND_EXTS:
-                        skipped.append(info.filename)
-                        continue
-                    total_uncompressed += max(0, int(info.file_size or 0))
-                    if total_uncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
-                        raise HTTPException(status_code=400, detail="Zip expands beyond allowed size")
-                    if info.file_size > MAX_ASSET_UPLOAD_BYTES:
-                        skipped.append(info.filename)
-                        continue
-                    try:
-                        content = zf.read(info)
-                    except Exception:
-                        skipped.append(info.filename)
-                        continue
-                    try:
-                        width, height, thumb_bytes, thumb_ext = _asset_image_meta_and_thumb(content)
-                    except HTTPException:
-                        skipped.append(info.filename)
-                        continue
-                    aid = uuid.uuid4().hex
-                    thumb_dir = user_dir / "thumbs"
-                    thumb_dir.mkdir(parents=True, exist_ok=True)
-                    out_path = user_dir / f"{aid}{ext}"
-                    thumb_path = thumb_dir / f"{aid}{thumb_ext}"
-                    try:
-                        out_path.write_bytes(content)
-                        thumb_path.write_bytes(thumb_bytes)
-                    except OSError:
+            with tempfile.TemporaryFile() as tmp:
+                bytes_written = 0
+                while True:
+                    chunk = await file.read(65536)
+                    if not chunk:
+                        break
+                    bytes_written += len(chunk)
+                    if bytes_written > MAX_ZIP_UPLOAD_BYTES:
+                        raise HTTPException(status_code=413, detail=f"ZIP too large (max {MAX_ZIP_UPLOAD_BYTES // (1024 * 1024)}MB)")
+                    tmp.write(chunk)
+                if bytes_written == 0:
+                    raise HTTPException(status_code=400, detail="Empty upload")
+                tmp.seek(0)
+                with zipfile.ZipFile(tmp) as zf:
+                    infos = [i for i in zf.infolist() if not i.is_dir()]
+                    if len(infos) > MAX_ZIP_ASSET_FILES:
+                        raise HTTPException(status_code=400, detail=f"Too many files in zip (max {MAX_ZIP_ASSET_FILES})")
+                    for info in infos:
+                        folder_path, base = _safe_zip_member_path(info.filename)
+                        if not base:
+                            skipped.append(info.filename)
+                            continue
+                        ext = Path(base).suffix.lower()
+                        if ext not in ALLOWED_BACKGROUND_EXTS:
+                            skipped.append(info.filename)
+                            continue
+                        total_uncompressed += max(0, int(info.file_size or 0))
+                        if total_uncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
+                            raise HTTPException(status_code=400, detail="Zip expands beyond allowed size")
+                        if info.file_size > MAX_ASSET_UPLOAD_BYTES:
+                            skipped.append(info.filename)
+                            continue
                         try:
-                            if out_path.exists():
-                                out_path.unlink()
+                            content = zf.read(info)
                         except Exception:
-                            pass
+                            skipped.append(info.filename)
+                            continue
+                        # Guard against zip bombs that under-report file_size in headers
+                        if len(content) > MAX_ASSET_UPLOAD_BYTES:
+                            skipped.append(info.filename)
+                            continue
                         try:
-                            if thumb_path.exists():
-                                thumb_path.unlink()
-                        except Exception:
-                            pass
-                        skipped.append(info.filename)
-                        continue
-                    rel = out_path.relative_to(UPLOADS_DIR)
-                    thumb_rel = thumb_path.relative_to(UPLOADS_DIR)
-                    url_path = "/uploads/" + "/".join(rel.parts)
-                    thumb_url_path = "/uploads/" + "/".join(thumb_rel.parts)
-                    display_name = Path(base).stem.replace("_", " ").strip()[:120] or "Asset"
-                    create_asset_record(
-                        asset_id=aid,
-                        uploader_user_id=user.user_id,
-                        name=display_name,
-                        folder_path=folder_path,
-                        tags=shared_tags,
-                        mime=_image_mime_from_ext(ext),
-                        width=width,
-                        height=height,
-                        url_original=url_path,
-                        url_thumb=thumb_url_path,
-                    )
-                    created.append(
-                        {
-                            "asset_id": aid,
-                            "name": display_name,
-                            "folder_path": folder_path,
-                            "width": width,
-                            "height": height,
-                            "url_original": url_path,
-                            "url_thumb": thumb_url_path,
-                        }
-                    )
+                            width, height, thumb_bytes, thumb_ext = _asset_image_meta_and_thumb(content)
+                        except HTTPException:
+                            skipped.append(info.filename)
+                            continue
+                        aid = uuid.uuid4().hex
+                        thumb_dir = user_dir / "thumbs"
+                        thumb_dir.mkdir(parents=True, exist_ok=True)
+                        out_path = user_dir / f"{aid}{ext}"
+                        thumb_path = thumb_dir / f"{aid}{thumb_ext}"
+                        try:
+                            out_path.write_bytes(content)
+                            thumb_path.write_bytes(thumb_bytes)
+                        except OSError:
+                            try:
+                                if out_path.exists():
+                                    out_path.unlink()
+                            except Exception:
+                                pass
+                            try:
+                                if thumb_path.exists():
+                                    thumb_path.unlink()
+                            except Exception:
+                                pass
+                            skipped.append(info.filename)
+                            continue
+                        rel = out_path.relative_to(UPLOADS_DIR)
+                        thumb_rel = thumb_path.relative_to(UPLOADS_DIR)
+                        url_path = "/uploads/" + "/".join(rel.parts)
+                        thumb_url_path = "/uploads/" + "/".join(thumb_rel.parts)
+                        display_name = Path(base).stem.replace("_", " ").strip()[:120] or "Asset"
+                        create_asset_record(
+                            asset_id=aid,
+                            uploader_user_id=user.user_id,
+                            name=display_name,
+                            folder_path=folder_path,
+                            tags=shared_tags,
+                            mime=_image_mime_from_ext(ext),
+                            width=width,
+                            height=height,
+                            url_original=url_path,
+                            url_thumb=thumb_url_path,
+                        )
+                        created.append(
+                            {
+                                "asset_id": aid,
+                                "name": display_name,
+                                "folder_path": folder_path,
+                                "width": width,
+                                "height": height,
+                                "url_original": url_path,
+                                "url_thumb": thumb_url_path,
+                            }
+                        )
         except HTTPException:
             raise
         except Exception as e:

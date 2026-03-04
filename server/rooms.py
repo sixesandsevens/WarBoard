@@ -21,6 +21,9 @@ ERASER_HIT_RADIUS_DEFAULT = 18.0
 TOKEN_HIT_BASE_RADIUS = 25.0
 VALID_TOKEN_BADGES = {"downed", "poisoned", "stunned", "burning", "bleeding", "prone"}
 BROADCAST_SEND_TIMEOUT_SECONDS = 5.0
+MAX_STROKE_POINTS = 10_000
+MAX_CANVAS_COORD = 1_000_000.0
+MAX_STROKE_WIDTH = 100.0
 logger = logging.getLogger("warboard.ws")
 _LEGACY_PRIVATE_PACK_RE = re.compile(r"^/private-packs/[^/]+/originals/([A-Za-z0-9_-]+)\.[A-Za-z0-9]+$")
 
@@ -149,6 +152,9 @@ class RoomManager:
 
             # If empty, save and optionally drop from memory
             if not room.sockets:
+                if room.autosave_task and not room.autosave_task.done():
+                    room.autosave_task.cancel()
+                    room.autosave_task = None
                 await self._flush_save(room_id, room)
                 # Keep it simple: drop to avoid memory creep
                 self._rooms.pop(room_id, None)
@@ -660,13 +666,15 @@ class RoomManager:
             sid = p.get("id")
             pts = p.get("points", [])
             color = p.get("color", "#ffffff")
-            width = float(p.get("width", 3.0))
+            width = max(0.5, min(MAX_STROKE_WIDTH, float(p.get("width", 3.0))))
             layer = p.get("layer", "draw")
             if layer not in ("map", "draw", "notes"):
                 layer = "draw"
 
             if not sid or not isinstance(pts, list) or len(pts) < 2:
                 return WireEvent(type="ERROR", payload={"message": "Invalid stroke"})
+            if len(pts) > MAX_STROKE_POINTS:
+                return WireEvent(type="ERROR", payload={"message": f"Stroke exceeds maximum point count ({MAX_STROKE_POINTS})"})
 
             stroke = Stroke(
                 id=sid,
@@ -803,15 +811,18 @@ class RoomManager:
                     return WireEvent(type="ERROR", payload={"message": "Text is required"})
                 font_size = max(8.0, min(96.0, font_size))
 
+            def _clamp_coord(v: float) -> float:
+                return max(-MAX_CANVAS_COORD, min(MAX_CANVAS_COORD, v))
+
             shape = Shape(
                 id=sid,
                 type=stype,
-                x1=float(p.get("x1", 0)),
-                y1=float(p.get("y1", 0)),
-                x2=float(p.get("x2", 0)),
-                y2=float(p.get("y2", 0)),
+                x1=_clamp_coord(float(p.get("x1", 0))),
+                y1=_clamp_coord(float(p.get("y1", 0))),
+                x2=_clamp_coord(float(p.get("x2", 0))),
+                y2=_clamp_coord(float(p.get("y2", 0))),
                 color=p.get("color", "#ffffff"),
-                width=float(p.get("width", 3.0)),
+                width=max(0.5, min(MAX_STROKE_WIDTH, float(p.get("width", 3.0)))),
                 creator_id=client_id,
                 text=text_val,
                 font_size=font_size,
@@ -839,7 +850,8 @@ class RoomManager:
             changed = False
             for key in ("x1", "y1", "x2", "y2"):
                 if key in p:
-                    setattr(shape, key, float(p.get(key)))
+                    val = max(-MAX_CANVAS_COORD, min(MAX_CANVAS_COORD, float(p.get(key))))
+                    setattr(shape, key, val)
                     changed = True
 
             if "color" in p:
