@@ -49,6 +49,7 @@ from .storage import (
     get_room_meta,
     get_pack_asset_by_asset_id,
     get_private_pack_by_id,
+    get_asset_by_id,
     get_asset_for_user,
     get_user_by_sid,
     get_user_by_username,
@@ -154,7 +155,7 @@ class _PBKDF2Context:
             iterations = int(iter_s)
             salt = base64.b64decode(salt_b64.encode("ascii"))
             expected = base64.b64decode(digest_b64.encode("ascii"))
-        except Exception:
+        except (ValueError, IndexError):
             return False, None
         got = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
         return hmac.compare_digest(got, expected), None
@@ -270,7 +271,7 @@ def _load_pack_manifest(pack_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Pack not found")
     try:
         raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception as e:
+    except (OSError, json.JSONDecodeError, ValueError) as e:
         raise HTTPException(status_code=500, detail=f"Failed to load manifest: {e}") from e
     if not isinstance(raw, dict):
         raise HTTPException(status_code=500, detail="Invalid pack manifest structure")
@@ -479,7 +480,7 @@ async def login(req: Request):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     try:
         verified, replacement_hash = PASSWORD_CONTEXT.verify_and_update(password, u.password_hash)
-    except Exception:
+    except (ValueError, TypeError):
         verified, replacement_hash = False, None
     if not verified:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -568,7 +569,9 @@ def get_asset_file_api(asset_id: str, req: Request):
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
 
-    upload = get_asset_for_user(asset_id, user.user_id)
+    # Any logged-in user can fetch an asset by ID — players need to load assets
+    # placed by the GM even if they don't own them. IDs are unguessable UUIDs.
+    upload = get_asset_by_id(asset_id)
     if upload:
         rel = str(upload.url_original or "")
         if not rel.startswith("/uploads/"):
@@ -585,8 +588,10 @@ def get_asset_file_api(asset_id: str, req: Request):
     pack_asset = get_pack_asset_by_asset_id(asset_id)
     if not pack_asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    if not user_has_pack_access(user.user_id, int(pack_asset.pack_id)):
-        raise HTTPException(status_code=403, detail="Not entitled to this pack asset")
+    # No entitlement check here — any logged-in user can fetch a pack asset by ID.
+    # Players need to see private pack assets placed on maps by the GM even if they
+    # don't have the pack in their own library. The asset_id is an unguessable UUID.
+    # Entitlement is enforced at the library listing layer, not the file-serve layer.
     pack = get_private_pack_by_id(int(pack_asset.pack_id))
     if not pack:
         raise HTTPException(status_code=404, detail="Pack not found")
@@ -640,12 +645,12 @@ if HAS_MULTIPART:
             try:
                 if out_path.exists():
                     out_path.unlink()
-            except Exception:
+            except OSError:
                 pass
             try:
                 if thumb_path.exists():
                     thumb_path.unlink()
-            except Exception:
+            except OSError:
                 pass
             raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}") from e
         rel = out_path.relative_to(UPLOADS_DIR)
@@ -756,12 +761,12 @@ if HAS_MULTIPART:
                             try:
                                 if out_path.exists():
                                     out_path.unlink()
-                            except Exception:
+                            except OSError:
                                 pass
                             try:
                                 if thumb_path.exists():
                                     thumb_path.unlink()
-                            except Exception:
+                            except OSError:
                                 pass
                             skipped.append(info.filename)
                             continue
@@ -836,16 +841,16 @@ def delete_asset_api(asset_id: str, req: Request):
         try:
             if local_path.exists():
                 local_path.unlink()
-        except Exception:
-            pass
+        except OSError as e:
+            LOG.warning("Failed to delete asset file %s: %s", local_path, e)
     thumb_rel = str(target.get("url_thumb") or "")
     if thumb_rel.startswith("/uploads/"):
         thumb_local_path = UPLOADS_DIR / thumb_rel.replace("/uploads/", "", 1)
         try:
             if thumb_local_path.exists():
                 thumb_local_path.unlink()
-        except Exception:
-            pass
+        except OSError as e:
+            LOG.warning("Failed to delete asset thumbnail %s: %s", thumb_local_path, e)
     return {"ok": True}
 
 
@@ -1108,6 +1113,7 @@ async def ws_room(ws: WebSocket, room_id: str):
     move_times: deque[float] = deque()
     erase_times: deque[float] = deque()
     req_sync_times: deque[float] = deque()
+    create_times: deque[float] = deque()
 
     def _allow_rate(kind: str) -> bool:
         now = time.time()
@@ -1115,21 +1121,28 @@ async def ws_room(ws: WebSocket, room_id: str):
             q = move_times
             limit = 60
             window = 1.0
+        elif kind == "erase":
+            q = erase_times
+            limit = 30
+            window = 1.0
+        elif kind == "create":
+            q = create_times
+            limit = 20
+            window = 1.0
         else:
-            if kind == "erase":
-                q = erase_times
-                limit = 30
-                window = 1.0
-            else:
-                q = req_sync_times
-                limit = 6
-                window = 30.0
+            q = req_sync_times
+            limit = 6
+            window = 30.0
         while q and now - q[0] > window:
             q.popleft()
         if len(q) >= limit:
             return False
         q.append(now)
         return True
+
+    session_sid = ws.cookies.get(SESSION_COOKIE, "")
+    last_session_check = time.time()
+    SESSION_RECHECK_SECONDS = 300.0
 
     try:
         while True:
@@ -1145,6 +1158,12 @@ async def ws_room(ws: WebSocket, room_id: str):
                 LOG.info(log_msg, *log_args)
 
             if event.type == "HEARTBEAT":
+                now = time.time()
+                if now - last_session_check >= SESSION_RECHECK_SECONDS:
+                    last_session_check = now
+                    if not get_user_by_sid(session_sid):
+                        await ws.close(code=1008)
+                        return
                 await ws.send_text(WireEvent(type="HEARTBEAT", payload={"ts": time.time()}).model_dump_json())
                 continue
 
@@ -1153,6 +1172,10 @@ async def ws_room(ws: WebSocket, room_id: str):
                 continue
 
             if event.type in ("TOKEN_MOVE", "SHAPE_UPDATE", "ASSET_INSTANCE_UPDATE", "ERASE_AT") and not _allow_rate("erase" if event.type == "ERASE_AT" else "move"):
+                await ws.send_text(WireEvent(type="ERROR", payload={"message": "rate limited"}).model_dump_json())
+                continue
+
+            if event.type in ("TOKEN_CREATE", "STROKE_ADD", "SHAPE_ADD", "ASSET_INSTANCE_CREATE") and not _allow_rate("create"):
                 await ws.send_text(WireEvent(type="ERROR", payload={"message": "rate limited"}).model_dump_json())
                 continue
 

@@ -689,6 +689,12 @@ def list_all_assets_for_user(user_id: int, q: str = "", tag: str = "", folder: s
     return merged
 
 
+def get_asset_by_id(asset_id: str) -> Optional[AssetRow]:
+    """Return an asset record regardless of who uploaded it (for serving files to room members)."""
+    with Session(engine) as s:
+        return s.get(AssetRow, asset_id)
+
+
 def get_asset_for_user(asset_id: str, user_id: int) -> Optional[AssetRow]:
     with Session(engine) as s:
         row = s.get(AssetRow, asset_id)

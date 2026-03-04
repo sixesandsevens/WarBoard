@@ -56,8 +56,8 @@ class RoomManager:
             if raw:
                 try:
                     state = RoomState.model_validate_json(self._migrate_legacy_asset_refs(raw))
-                except Exception:
-                    # fallback if json is corrupted
+                except (ValueError, TypeError):
+                    # fallback if json is corrupted or schema has drifted
                     state = RoomState(room_id=room_id)
             else:
                 state = RoomState(room_id=room_id)
@@ -73,7 +73,7 @@ class RoomManager:
     def _migrate_legacy_asset_refs(self, raw: str) -> str:
         try:
             data = json.loads(raw)
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             return raw
         if not isinstance(data, dict):
             return raw
@@ -118,7 +118,7 @@ class RoomManager:
             return raw
         try:
             return json.dumps(data)
-        except Exception:
+        except (TypeError, ValueError):
             return raw
 
     async def is_room_active(self, room_id: str) -> bool:
