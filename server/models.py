@@ -34,6 +34,8 @@ EventType = Literal[
     "ASSET_INSTANCE_CREATE",
     "ASSET_INSTANCE_UPDATE",
     "ASSET_INSTANCE_DELETE",
+    "TERRAIN_STROKE_ADD",
+    "TERRAIN_STROKE_UNDO",
     "ERROR",
 ]
 
@@ -111,6 +113,25 @@ class AssetInstance(BaseModel):
     locked: bool = False
 
 
+class TerrainStroke(BaseModel):
+    id: str
+    material_id: str
+    op: Literal["paint", "erase"] = "paint"
+    points: List[dict] = Field(default_factory=list)
+    radius: float = 60.0
+    opacity: float = 0.6
+    hardness: float = 0.4
+    created_by: Optional[str] = None
+    created_at: Optional[float] = None
+
+
+class TerrainPaintState(BaseModel):
+    base_material_id: Optional[str] = None
+    materials: Dict[str, dict] = Field(default_factory=dict)
+    strokes: Dict[str, "TerrainStroke"] = Field(default_factory=dict)
+    undo_stack: List[str] = Field(default_factory=list)
+
+
 class RoomState(BaseModel):
     room_id: str
     version: int = 0
@@ -132,6 +153,7 @@ class RoomState(BaseModel):
     shapes: Dict[str, Shape] = Field(default_factory=dict)
     assets: Dict[str, AssetInstance] = Field(default_factory=dict)
     draw_order: Dict[str, List[str]] = Field(default_factory=lambda: {"strokes": [], "shapes": [], "assets": []})
+    terrain_paint: TerrainPaintState = Field(default_factory=TerrainPaintState)
 
 
 class ClientHello(BaseModel):

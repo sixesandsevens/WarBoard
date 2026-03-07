@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Set
 
 from fastapi import WebSocket
 
-from .models import AssetInstance, Point, RoomState, Shape, Stroke, Token, WireEvent
+from .models import AssetInstance, Point, RoomState, Shape, Stroke, TerrainPaintState, TerrainStroke, Token, WireEvent
 from .storage import load_room_state_json, save_room_state_json
 
 
@@ -24,6 +24,8 @@ BROADCAST_SEND_TIMEOUT_SECONDS = 5.0
 MAX_STROKE_POINTS = 10_000
 MAX_CANVAS_COORD = 1_000_000.0
 MAX_STROKE_WIDTH = 100.0
+MAX_TERRAIN_STROKES = 5_000
+MAX_TERRAIN_STROKE_POINTS = 2_000
 logger = logging.getLogger("warboard.ws")
 _LEGACY_PRIVATE_PACK_RE = re.compile(r"^/private-packs/[^/]+/originals/([A-Za-z0-9_-]+)\.[A-Za-z0-9]+$")
 
@@ -425,6 +427,9 @@ class RoomManager:
         if asset.locked:
             return False
         return bool(asset.creator_id and asset.creator_id == client_id)
+
+    def can_paint_terrain(self, room: Room, user_id: Optional[int], client_id: str) -> bool:
+        return self._is_gm(room, user_id, client_id)
 
     async def apply_event(self, room_id: str, room: Room, event: WireEvent, client_id: str, user_id: Optional[int] = None) -> WireEvent:
         t = event.type
@@ -1136,6 +1141,82 @@ class RoomManager:
             room.state.tokens[token_id] = token
             self._mark_dirty(room_id, room)
             return WireEvent(type="TOKEN_BADGE_TOGGLE", payload={"id": token_id, "badges": token.badges})
+
+        if t == "TERRAIN_STROKE_ADD":
+            if not self.can_paint_terrain(room, user_id, client_id):
+                return WireEvent(type="ERROR", payload={"message": "Only GM can paint terrain"})
+
+            sid = str(p.get("id") or "").strip()
+            material_id = str(p.get("material_id") or "").strip()
+            if not sid or not material_id:
+                return WireEvent(type="ERROR", payload={"message": "Missing id or material_id"})
+            if sid in room.state.terrain_paint.strokes:
+                return WireEvent(type="ERROR", payload={"message": "Duplicate terrain stroke id", "id": sid})
+
+            op_raw = str(p.get("op") or "paint").strip()
+            op: str = op_raw if op_raw in ("paint", "erase") else "paint"
+
+            pts = p.get("points", [])
+            if not isinstance(pts, list) or len(pts) < 2:
+                return WireEvent(type="ERROR", payload={"message": "Terrain stroke needs at least 2 points"})
+            if len(pts) > MAX_TERRAIN_STROKE_POINTS:
+                return WireEvent(type="ERROR", payload={"message": f"Terrain stroke exceeds max points ({MAX_TERRAIN_STROKE_POINTS})"})
+
+            if len(room.state.terrain_paint.strokes) >= MAX_TERRAIN_STROKES:
+                return WireEvent(type="ERROR", payload={"message": f"Room terrain stroke limit reached ({MAX_TERRAIN_STROKES})"})
+
+            radius = max(5.0, min(400.0, float(p.get("radius", 60.0))))
+            opacity = max(0.0, min(1.0, float(p.get("opacity", 0.6))))
+            hardness = max(0.0, min(1.0, float(p.get("hardness", 0.4))))
+
+            stroke = TerrainStroke(
+                id=sid,
+                material_id=material_id,
+                op=op,
+                points=[{"x": float(pt["x"]), "y": float(pt["y"])} for pt in pts if "x" in pt and "y" in pt],
+                radius=radius,
+                opacity=opacity,
+                hardness=hardness,
+                created_by=client_id,
+                created_at=time.time(),
+            )
+            if len(stroke.points) < 2:
+                return WireEvent(type="ERROR", payload={"message": "Terrain stroke too short after filtering"})
+
+            room.state.terrain_paint.strokes[sid] = stroke
+            room.state.terrain_paint.undo_stack.append(sid)
+            self._mark_dirty(room_id, room)
+            return WireEvent(
+                type="TERRAIN_STROKE_ADD",
+                payload={
+                    "id": stroke.id,
+                    "material_id": stroke.material_id,
+                    "op": stroke.op,
+                    "points": stroke.points,
+                    "radius": stroke.radius,
+                    "opacity": stroke.opacity,
+                    "hardness": stroke.hardness,
+                    "created_by": stroke.created_by,
+                    "created_at": stroke.created_at,
+                },
+            )
+
+        if t == "TERRAIN_STROKE_UNDO":
+            if not self.can_paint_terrain(room, user_id, client_id):
+                return WireEvent(type="ERROR", payload={"message": "Only GM can undo terrain strokes"})
+
+            count = max(1, int(p.get("count", 1)))
+            removed_ids: List[str] = []
+            for _ in range(count):
+                if not room.state.terrain_paint.undo_stack:
+                    break
+                sid = room.state.terrain_paint.undo_stack.pop()
+                room.state.terrain_paint.strokes.pop(sid, None)
+                removed_ids.append(sid)
+
+            if removed_ids:
+                self._mark_dirty(room_id, room)
+            return WireEvent(type="TERRAIN_STROKE_UNDO", payload={"ids": removed_ids})
 
         # Unknown / not implemented
         return WireEvent(type="ERROR", payload={"message": f"Unhandled event type: {t}"})
