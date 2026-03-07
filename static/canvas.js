@@ -3011,6 +3011,9 @@
         dirt_road: { id: "dirt_road", label: "Dirt Road", style: "dirt",      seedOfs: 505, mode: "micro",      scale: 1.0, zOrder: 2 },
         cobble:    { id: "cobble",    label: "Cobble",    style: "cobble",    seedOfs: 404, mode: "cobble",     scale: 1.0, zOrder: 3, transparentBase: true },
         slime:     { id: "slime",     label: "Water",     style: "water",     seedOfs: 303, mode: "macro_soft", scale: 1.0, zOrder: 4 },
+        sand:      { id: "sand",      label: "Sand",      style: "desert",    seedOfs: 606, mode: "macro_soft", scale: 1.0, zOrder: 5 },
+        snow:      { id: "snow",      label: "Snow",      style: "snow",      seedOfs: 707, mode: "macro_soft", scale: 1.0, zOrder: 6 },
+        volcano:   { id: "volcano",   label: "Volcano",   style: "volcano",   seedOfs: 808, mode: "macro_soft", scale: 1.2, zOrder: 7 },
       },
       strokes: {},
       undo_stack: [],
@@ -3370,12 +3373,15 @@
 
   function mulberry32(seed) {
     let s = seed >>> 0;
-    return function () {
+    const rnd = function () {
       let t = s += 0x6D2B79F5;
       t = Math.imul(t ^ (t >>> 15), t | 1);
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
+    rnd.save    = () => s;
+    rnd.restore = (v) => { s = v >>> 0; };
+    return rnd;
   }
 
   function shadeColor(baseRgb, variance, rnd) {
@@ -3410,13 +3416,23 @@
       const cx = rnd() * tileSize;
       const cy = rnd() * tileSize;
       const r = tileSize * (0.33 + rnd() * 0.27);
-      const g = c.createRadialGradient(cx, cy, r * 0.2, cx, cy, r);
-      g.addColorStop(0, `rgba(0,0,0,${intensity})`);
-      g.addColorStop(1, "rgba(0,0,0,0)");
-      c.fillStyle = g;
-      c.beginPath();
-      c.arc(cx, cy, r, 0, Math.PI * 2);
-      c.fill();
+      const dxs = [0], dys = [0];
+      if (cx - r < 0) dxs.push(tileSize);
+      if (cx + r > tileSize) dxs.push(-tileSize);
+      if (cy - r < 0) dys.push(tileSize);
+      if (cy + r > tileSize) dys.push(-tileSize);
+      for (const dx of dxs) {
+        for (const dy of dys) {
+          const ox = cx + dx, oy = cy + dy;
+          const g = c.createRadialGradient(ox, oy, r * 0.2, ox, oy, r);
+          g.addColorStop(0, `rgba(0,0,0,${intensity})`);
+          g.addColorStop(1, "rgba(0,0,0,0)");
+          c.fillStyle = g;
+          c.beginPath();
+          c.arc(ox, oy, r, 0, Math.PI * 2);
+          c.fill();
+        }
+      }
     }
   }
 
@@ -3449,40 +3465,53 @@
         const szBase = mode === "macro_soft" ? 14 : 8;
         const szRange = mode === "macro_soft" ? 30 : 24;
         const sz = (szBase + rnd() * szRange) * scale;
-        c.fillStyle = rnd() < 0.5 ? palette.speckA : palette.speckB;
+        const speckColor = rnd() < 0.5 ? palette.speckA : palette.speckB;
+        c.fillStyle = speckColor;
         c.fillRect(x, y, sz, sz);
+        if (x + sz > tileSize) c.fillRect(x - tileSize, y, sz, sz);
+        if (y + sz > tileSize) c.fillRect(x, y - tileSize, sz, sz);
+        if (x + sz > tileSize && y + sz > tileSize) c.fillRect(x - tileSize, y - tileSize, sz, sz);
       }
 
-      const patchCount = mode === "macro_soft"
-        ? Math.max(2, Math.round(3 / Math.sqrt(scale)))
-        : Math.max(2, Math.round(3 / Math.sqrt(scale)));
+      const patchCount = Math.max(2, Math.round(3 / Math.sqrt(scale)));
       for (let b = 0; b < patchCount; b++) {
         const cx = rnd() * tileSize;
         const cy = rnd() * tileSize;
         const scaleMin = mode === "macro_soft" ? 0.22 : 0.12;
         const scaleRange = mode === "macro_soft" ? 0.20 : 0.16;
         const r = tileSize * (scaleMin + rnd() * scaleRange) * scale;
-        const g = c.createRadialGradient(cx, cy, r * 0.15, cx, cy, r);
         const stainAlpha = mode === "macro_soft" ? 0.05 : 0.08;
-        g.addColorStop(0, colorWithAlpha(palette.stain, stainAlpha));
-        g.addColorStop(1, colorWithAlpha(palette.stain, 0));
-        c.fillStyle = g;
-        c.beginPath();
-        c.arc(cx, cy, r, 0, Math.PI * 2);
-        c.fill();
-
-        c.globalAlpha = mode === "macro_soft" ? 0.03 : 0.045;
         const edgeCount = Math.max(14, Math.round(36 / Math.sqrt(scale)));
-        for (let k = 0; k < edgeCount; k++) {
-          c.save();
-          c.translate(cx + (rnd() - 0.5) * r * 0.9, cy + (rnd() - 0.5) * r * 0.9);
-          c.rotate(rnd() * Math.PI * 2);
-          c.scale(1 + rnd() * 1.7, 0.6 + rnd() * 0.9);
-          c.fillStyle = palette.stain;
-          c.beginPath();
-          c.arc(0, 0, r * (0.10 + rnd() * 0.20), 0, Math.PI * 2);
-          c.fill();
-          c.restore();
+        const dxs = [0], dys = [0];
+        if (cx - r < 0) dxs.push(tileSize);
+        if (cx + r > tileSize) dxs.push(-tileSize);
+        if (cy - r < 0) dys.push(tileSize);
+        if (cy + r > tileSize) dys.push(-tileSize);
+        const savedRnd = rnd.save();
+        for (const dx of dxs) {
+          for (const dy of dys) {
+            rnd.restore(savedRnd);
+            const ox = cx + dx, oy = cy + dy;
+            const g = c.createRadialGradient(ox, oy, r * 0.15, ox, oy, r);
+            g.addColorStop(0, colorWithAlpha(palette.stain, stainAlpha));
+            g.addColorStop(1, colorWithAlpha(palette.stain, 0));
+            c.fillStyle = g;
+            c.beginPath();
+            c.arc(ox, oy, r, 0, Math.PI * 2);
+            c.fill();
+            c.globalAlpha = mode === "macro_soft" ? 0.03 : 0.045;
+            for (let k = 0; k < edgeCount; k++) {
+              c.save();
+              c.translate(ox + (rnd() - 0.5) * r * 0.9, oy + (rnd() - 0.5) * r * 0.9);
+              c.rotate(rnd() * Math.PI * 2);
+              c.scale(1 + rnd() * 1.7, 0.6 + rnd() * 0.9);
+              c.fillStyle = palette.stain;
+              c.beginPath();
+              c.arc(0, 0, r * (0.10 + rnd() * 0.20), 0, Math.PI * 2);
+              c.fill();
+              c.restore();
+            }
+          }
         }
       }
       c.globalAlpha = 1;
@@ -3495,12 +3524,19 @@
           const y = rnd() * tileSize;
           const len = (5 + rnd() * 10) * scale;
           const ang = rnd() * Math.PI * 2;
-          c.strokeStyle = rnd() < 0.45 ? palette.strokeA : palette.strokeB;
+          const strokeColor = rnd() < 0.45 ? palette.strokeA : palette.strokeB;
+          c.strokeStyle = strokeColor;
           c.lineWidth = 1;
+          const ex = x + Math.cos(ang) * len;
+          const ey = y + Math.sin(ang) * len;
           c.beginPath();
           c.moveTo(x, y);
-          c.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+          c.lineTo(ex, ey);
           c.stroke();
+          if (ex > tileSize) { c.beginPath(); c.moveTo(x - tileSize, y); c.lineTo(ex - tileSize, ey); c.stroke(); }
+          if (ex < 0)        { c.beginPath(); c.moveTo(x + tileSize, y); c.lineTo(ex + tileSize, ey); c.stroke(); }
+          if (ey > tileSize) { c.beginPath(); c.moveTo(x, y - tileSize); c.lineTo(ex, ey - tileSize); c.stroke(); }
+          if (ey < 0)        { c.beginPath(); c.moveTo(x, y + tileSize); c.lineTo(ex, ey + tileSize); c.stroke(); }
         }
         c.globalAlpha = 1;
       }
@@ -3650,12 +3686,19 @@
         const y = rnd() * tileSize;
         const len = (1.3 + rnd() * 3.4) * Math.sqrt(scale);
         const ang = rnd() * Math.PI * 2;
-        c.strokeStyle = rnd() < 0.55 ? palette.strokeA : palette.strokeB;
+        const strokeColor = rnd() < 0.55 ? palette.strokeA : palette.strokeB;
+        c.strokeStyle = strokeColor;
         c.lineWidth = 1;
+        const ex = x + Math.cos(ang) * len;
+        const ey = y + Math.sin(ang) * len;
         c.beginPath();
         c.moveTo(x, y);
-        c.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+        c.lineTo(ex, ey);
         c.stroke();
+        if (ex > tileSize) { c.beginPath(); c.moveTo(x - tileSize, y); c.lineTo(ex - tileSize, ey); c.stroke(); }
+        if (ex < 0)        { c.beginPath(); c.moveTo(x + tileSize, y); c.lineTo(ex + tileSize, ey); c.stroke(); }
+        if (ey > tileSize) { c.beginPath(); c.moveTo(x, y - tileSize); c.lineTo(ex, ey - tileSize); c.stroke(); }
+        if (ey < 0)        { c.beginPath(); c.moveTo(x, y + tileSize); c.lineTo(ex, ey + tileSize); c.stroke(); }
       }
       c.globalAlpha = 1;
 
@@ -3674,22 +3717,33 @@
         const cx = rnd() * tileSize;
         const cy = rnd() * tileSize;
         const members = 2 + Math.floor(rnd() * 6);
-        for (let i = 0; i < members; i++) {
-          const x = cx + (rnd() - 0.5) * 24;
-          const y = cy + (rnd() - 0.5) * 24;
-          const r = (0.9 + rnd() * 2.6) * Math.sqrt(scale);
-
-          c.globalAlpha = 0.18;
-          c.fillStyle = "#000";
-          c.beginPath();
-          c.arc(x + 0.8, y + 0.8, r, 0, Math.PI * 2);
-          c.fill();
-
-          c.globalAlpha = 0.55;
-          c.fillStyle = rnd() < 0.5 ? palette.pebbleA : palette.pebbleB;
-          c.beginPath();
-          c.arc(x, y, r, 0, Math.PI * 2);
-          c.fill();
+        const clusterExtent = 12 + 3.6 * Math.sqrt(scale);
+        const dxs = [0], dys = [0];
+        if (cx - clusterExtent < 0) dxs.push(tileSize);
+        if (cx + clusterExtent > tileSize) dxs.push(-tileSize);
+        if (cy - clusterExtent < 0) dys.push(tileSize);
+        if (cy + clusterExtent > tileSize) dys.push(-tileSize);
+        const savedRnd = rnd.save();
+        for (const dx of dxs) {
+          for (const dy of dys) {
+            rnd.restore(savedRnd);
+            const ocx = cx + dx, ocy = cy + dy;
+            for (let i = 0; i < members; i++) {
+              const x = ocx + (rnd() - 0.5) * 24;
+              const y = ocy + (rnd() - 0.5) * 24;
+              const r = (0.9 + rnd() * 2.6) * Math.sqrt(scale);
+              c.globalAlpha = 0.18;
+              c.fillStyle = "#000";
+              c.beginPath();
+              c.arc(x + 0.8, y + 0.8, r, 0, Math.PI * 2);
+              c.fill();
+              c.globalAlpha = 0.55;
+              c.fillStyle = rnd() < 0.5 ? palette.pebbleA : palette.pebbleB;
+              c.beginPath();
+              c.arc(x, y, r, 0, Math.PI * 2);
+              c.fill();
+            }
+          }
         }
       }
       c.globalAlpha = 1;
@@ -3719,17 +3773,18 @@
   }
 
   // ─── Terrain Mask Subsystem ─────────────────────────────────────────────────
-  const TERRAIN_MASK_TILE_WORLD = 1024;
+  // Must be a multiple of ui.gridSize so tile seams fall exactly on grid lines.
+  // 1000 = 20×50 (default), 40×25, 10×100 — covers all standard grid sizes.
+  const TERRAIN_MASK_TILE_WORLD = 1000;
   const TERRAIN_MASK_TILE_PX    = 512;
 
   const terrainMasks = {
     tiles: new Map(),    // key: `${materialId}:${tx},${ty}` -> canvas
     patterns: new Map(), // materialId -> CanvasPattern
-    tmp: document.createElement("canvas"),
+    disp: null,          // scratch canvas for zoom-correct overlay rendering
+    dispCtx: null,
+    dispPx: 0,
   };
-  terrainMasks.tmp.width  = TERRAIN_MASK_TILE_PX;
-  terrainMasks.tmp.height = TERRAIN_MASK_TILE_PX;
-  const tmpMaskCtx = terrainMasks.tmp.getContext("2d");
 
   function maskKey(materialId, tx, ty) { return `${materialId}:${tx},${ty}`; }
 
@@ -3789,11 +3844,25 @@
         const x = prev.x + dx * t;
         const y = prev.y + dy * t;
         const { tx, ty } = worldToTile(x, y);
-        const tile = getOrCreateMaskTile(material_id, tx, ty);
-        const tileCtx = tile.getContext("2d");
         const { px, py } = worldToTilePx(x, y, tx, ty);
         const radiusPx = (radius / TERRAIN_MASK_TILE_WORLD) * TERRAIN_MASK_TILE_PX;
-        drawBrushDab(tileCtx, px, py, radiusPx, opacity, hardness, op);
+        // Paint the dab on the center tile and any neighboring tiles the radius bleeds into.
+        const dxs = [0], dys = [0];
+        if (px - radiusPx < 0)                  dxs.push(-1);
+        if (px + radiusPx > TERRAIN_MASK_TILE_PX) dxs.push(1);
+        if (py - radiusPx < 0)                  dys.push(-1);
+        if (py + radiusPx > TERRAIN_MASK_TILE_PX) dys.push(1);
+        for (const dtx of dxs) {
+          for (const dty of dys) {
+            const ntx = tx + dtx, nty = ty + dty;
+            const neighborCtx = getOrCreateMaskTile(material_id, ntx, nty).getContext("2d");
+            // Offset the dab center into the neighbor tile's local coordinates.
+            drawBrushDab(neighborCtx,
+              px - dtx * TERRAIN_MASK_TILE_PX,
+              py - dty * TERRAIN_MASK_TILE_PX,
+              radiusPx, opacity, hardness, op);
+          }
+        }
       }
       prev = cur;
     }
@@ -3848,6 +3917,22 @@
     const tx1 = Math.floor(x1 / TERRAIN_MASK_TILE_WORLD) + 1;
     const ty1 = Math.floor(y1 / TERRAIN_MASK_TILE_WORLD) + 1;
 
+    // Ensure display scratch canvas is sized to 1 screen pixel per world unit (capped).
+    // This makes the material pattern render at the same scale and zoom as the background.
+    const neededPx = Math.min(2048, Math.max(256, Math.ceil(TERRAIN_MASK_TILE_WORLD * cam.z)));
+    if (terrainMasks.dispPx !== neededPx) {
+      terrainMasks.disp = document.createElement("canvas");
+      terrainMasks.disp.width = neededPx;
+      terrainMasks.disp.height = neededPx;
+      terrainMasks.dispCtx = terrainMasks.disp.getContext("2d");
+      terrainMasks.dispPx = neededPx;
+    }
+    const dc = terrainMasks.dispCtx;
+    const dp = terrainMasks.dispPx;
+    // Scale pattern so one period covers the full tile — matches the old visual scale
+    // (old code drew a 512px pattern into a 512px canvas then upscaled 2× to world size).
+    const patScale = dp / 512;
+
     ctx.save();
     ctx.translate(cam.x, cam.y);
     ctx.scale(cam.z, cam.z);
@@ -3856,22 +3941,25 @@
     for (const [materialId] of sortedMats) {
       const pattern = ensureMaterialPattern(materialId);
       if (!pattern) continue;
+      // Scale pattern so one tile covers the full dp×dp canvas.
+      pattern.setTransform(new DOMMatrix([patScale, 0, 0, patScale, 0, 0]));
       for (let ty = ty0; ty <= ty1; ty++) {
         for (let tx = tx0; tx <= tx1; tx++) {
           const mask = terrainMasks.tiles.get(maskKey(materialId, tx, ty));
           if (!mask) continue;
-          tmpMaskCtx.clearRect(0, 0, TERRAIN_MASK_TILE_PX, TERRAIN_MASK_TILE_PX);
-          tmpMaskCtx.globalCompositeOperation = "source-over";
-          tmpMaskCtx.fillStyle = pattern;
-          tmpMaskCtx.fillRect(0, 0, TERRAIN_MASK_TILE_PX, TERRAIN_MASK_TILE_PX);
-          tmpMaskCtx.globalCompositeOperation = "destination-in";
-          tmpMaskCtx.drawImage(mask, 0, 0);
-          tmpMaskCtx.globalCompositeOperation = "source-over";
           const wx = tx * TERRAIN_MASK_TILE_WORLD;
           const wy = ty * TERRAIN_MASK_TILE_WORLD;
-          ctx.drawImage(terrainMasks.tmp, wx, wy, TERRAIN_MASK_TILE_WORLD, TERRAIN_MASK_TILE_WORLD);
+          dc.clearRect(0, 0, dp, dp);
+          dc.globalCompositeOperation = "source-over";
+          dc.fillStyle = pattern;
+          dc.fillRect(0, 0, dp, dp);
+          dc.globalCompositeOperation = "destination-in";
+          dc.drawImage(mask, 0, 0, dp, dp);
+          dc.globalCompositeOperation = "source-over";
+          ctx.drawImage(terrainMasks.disp, wx, wy, TERRAIN_MASK_TILE_WORLD, TERRAIN_MASK_TILE_WORLD);
         }
       }
+      pattern.setTransform(new DOMMatrix()); // reset
     }
     ctx.restore();
   }
