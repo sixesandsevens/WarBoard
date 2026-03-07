@@ -1,0 +1,33 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="WarHamster mascot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#c6de72"/>
+      <stop offset="100%" stop-color="#86a936"/>
+    </linearGradient>
+    <radialGradient id="fur" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#c08e59"/>
+      <stop offset="100%" stop-color="#6d4e33"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="96" fill="url(#bg)"/>
+  <circle cx="176" cy="168" r="58" fill="#8b633f"/>
+  <circle cx="336" cy="168" r="58" fill="#8b633f"/>
+  <circle cx="176" cy="168" r="38" fill="#cf8757"/>
+  <circle cx="336" cy="168" r="38" fill="#cf8757"/>
+  <ellipse cx="256" cy="284" rx="156" ry="166" fill="url(#fur)" stroke="#2c2018" stroke-width="10"/>
+  <path d="M130 270 Q256 150 382 270 Q368 188 304 152 Q256 128 208 152 Q144 188 130 270Z" fill="#6a8430" stroke="#2c2018" stroke-width="10"/>
+  <ellipse cx="204" cy="278" rx="23" ry="28" fill="#111"/>
+  <ellipse cx="308" cy="278" rx="23" ry="28" fill="#111"/>
+  <circle cx="210" cy="270" r="7" fill="#f9f0d8"/>
+  <circle cx="314" cy="270" r="7" fill="#f9f0d8"/>
+  <ellipse cx="256" cy="324" rx="70" ry="50" fill="#e9d1a8"/>
+  <ellipse cx="256" cy="314" rx="20" ry="15" fill="#e35b4e"/>
+  <path d="M214 344 Q256 370 298 344" fill="none" stroke="#2c2018" stroke-width="8" stroke-linecap="round"/>
+  <rect x="326" y="318" width="84" height="120" rx="14" fill="#a9823e" stroke="#2c2018" stroke-width="8" transform="rotate(-16 326 318)"/>
+  <line x1="352" y1="324" x2="334" y2="434" stroke="#2c2018" stroke-width="6"/>
+  <line x1="378" y1="331" x2="360" y2="441" stroke="#2c2018" stroke-width="6"/>
+  <line x1="404" y1="338" x2="386" y2="448" stroke="#2c2018" stroke-width="6"/>
+  <circle cx="130" cy="344" r="42" fill="#b8d65c" stroke="#2c2018" stroke-width="8"/>
+  <line x1="130" y1="306" x2="130" y2="382" stroke="#6a8430" stroke-width="6"/>
+  <path d="M60 470 Q256 410 452 470" fill="none" stroke="#4c6120" stroke-width="14" opacity="0.35"/>
+</svg>

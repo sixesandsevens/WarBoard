@@ -26,7 +26,7 @@ MAX_CANVAS_COORD = 1_000_000.0
 MAX_STROKE_WIDTH = 100.0
 MAX_TERRAIN_STROKES = 5_000
 MAX_TERRAIN_STROKE_POINTS = 2_000
-logger = logging.getLogger("warboard.ws")
+logger = logging.getLogger("warhamster.ws")
 _LEGACY_PRIVATE_PACK_RE = re.compile(r"^/private-packs/[^/]+/originals/([A-Za-z0-9_-]+)\.[A-Za-z0-9]+$")
 
 

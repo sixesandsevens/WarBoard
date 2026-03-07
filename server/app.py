@@ -70,7 +70,7 @@ from .storage import (
     user_has_pack_access,
 )
 
-app = FastAPI(title="WarBoard")
+app = FastAPI(title="WarHamster")
 BASE_DIR = Path(__file__).resolve().parent.parent
 PACKS_DIR = BASE_DIR / "packs"
 STATIC_DIR = BASE_DIR / "static"
@@ -130,7 +130,8 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR), check_dir=False), 
 
 rm = RoomManager()
 HEARTBEAT_TIMEOUT_SECONDS = 35.0
-SESSION_COOKIE = "warboard_sid"
+SESSION_COOKIE = "warhamster_sid"
+LEGACY_SESSION_COOKIE = "warboard_sid"
 
 
 class _PBKDF2Context:
@@ -166,7 +167,7 @@ PASSWORD_CONTEXT = (
     if CryptContext is not None
     else _PBKDF2Context()
 )
-LOG = logging.getLogger("warboard.ws")
+LOG = logging.getLogger("warhamster.ws")
 HAS_MULTIPART = importlib.util.find_spec("multipart") is not None
 
 
@@ -301,7 +302,7 @@ def _manifest_etag(manifest_path: Path) -> str:
 
 
 def _get_user_from_request(req: Request):
-    sid = req.cookies.get(SESSION_COOKIE, "")
+    sid = req.cookies.get(SESSION_COOKIE, "") or req.cookies.get(LEGACY_SESSION_COOKIE, "")
     return get_user_by_sid(sid)
 
 
@@ -313,7 +314,7 @@ def _require_user(req: Request):
 
 
 def _ws_user(ws: WebSocket):
-    sid = ws.cookies.get(SESSION_COOKIE, "")
+    sid = ws.cookies.get(SESSION_COOKIE, "") or ws.cookies.get(LEGACY_SESSION_COOKIE, "")
     return get_user_by_sid(sid)
 
 
@@ -504,11 +505,12 @@ async def login(req: Request):
 
 @app.post("/api/auth/logout")
 def logout(req: Request):
-    sid = req.cookies.get(SESSION_COOKIE, "")
+    sid = req.cookies.get(SESSION_COOKIE, "") or req.cookies.get(LEGACY_SESSION_COOKIE, "")
     if sid:
         delete_session(sid)
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(SESSION_COOKIE, path="/")
+    resp.delete_cookie(LEGACY_SESSION_COOKIE, path="/")
     return resp
 
 
@@ -907,7 +909,7 @@ def ensure_unique_join_code() -> str:
     import secrets as _secrets
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     core = "".join(_secrets.choice(alphabet) for _ in range(6))
-    return f"WARB-{core}"
+    return f"WHAM-{core}"
 
 
 @app.post("/api/join")
@@ -1140,7 +1142,7 @@ async def ws_room(ws: WebSocket, room_id: str):
         q.append(now)
         return True
 
-    session_sid = ws.cookies.get(SESSION_COOKIE, "")
+    session_sid = ws.cookies.get(SESSION_COOKIE, "") or ws.cookies.get(LEGACY_SESSION_COOKIE, "")
     last_session_check = time.time()
     SESSION_RECHECK_SECONDS = 300.0
 

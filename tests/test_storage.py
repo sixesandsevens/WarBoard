@@ -60,7 +60,7 @@ def _make_room(room_id="room1", owner_id=1):
         name="Test Room",
         state_json=state.model_dump_json(),
         owner_user_id=owner_id,
-        join_code="WARB-AAAA11",
+        join_code="WHAM-AAAA11",
     )
     return room_id
 
@@ -279,11 +279,11 @@ class TestMembership:
     def test_room_id_from_join_code(self):
         u = _make_user()
         room_id = _make_room(owner_id=u.user_id)
-        found = room_id_from_join_code("WARB-AAAA11")
+        found = room_id_from_join_code("WHAM-AAAA11")
         assert found == room_id
 
     def test_room_id_from_join_code_missing_returns_none(self):
-        assert room_id_from_join_code("WARB-XXXXXX") is None
+        assert room_id_from_join_code("WHAM-XXXXXX") is None
 
     def test_room_id_from_join_code_empty_returns_none(self):
         assert room_id_from_join_code("") is None
@@ -292,7 +292,7 @@ class TestMembership:
         u = _make_user()
         room_id = _make_room(owner_id=u.user_id)
         code = ensure_room_join_code(room_id)
-        assert code == "WARB-AAAA11"
+        assert code == "WHAM-AAAA11"
 
     def test_ensure_room_join_code_missing_room_raises(self):
         with pytest.raises(ValueError, match="not found"):

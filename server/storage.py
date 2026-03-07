@@ -19,7 +19,11 @@ def db_url() -> str:
     # Local dev: DATA_DIR=./data
     data_dir = os.getenv("DATA_DIR", "./data")
     os.makedirs(data_dir, exist_ok=True)
-    return f"sqlite:///{os.path.join(data_dir, 'warboard.db')}"
+    new_path = os.path.join(data_dir, "warhamster.db")
+    legacy_path = os.path.join(data_dir, "warboard.db")
+    # Preserve existing data when upgrading an existing deployment.
+    db_path = legacy_path if (not os.path.exists(new_path) and os.path.exists(legacy_path)) else new_path
+    return f"sqlite:///{db_path}"
 
 
 engine = create_engine(db_url(), connect_args={"check_same_thread": False, "timeout": 3.0})
@@ -363,7 +367,7 @@ def get_user_by_sid(sid: str) -> Optional[UserRow]:
 _JOIN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
-def generate_join_code(prefix: str = "WARB", length: int = 6) -> str:
+def generate_join_code(prefix: str = "WHAM", length: int = 6) -> str:
     core = "".join(secrets.choice(_JOIN_ALPHABET) for _ in range(length))
     return f"{prefix}-{core}"
 

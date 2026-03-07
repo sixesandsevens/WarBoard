@@ -35,7 +35,7 @@ def _seed_user_and_session(username="testgm", password_hash="hash"):
     return u, sid
 
 
-def _seed_room(owner_id: int, room_id: str = "room1", join_code: str = "WARB-TEST11"):
+def _seed_room(owner_id: int, room_id: str = "room1", join_code: str = "WHAM-TEST11"):
     state = RoomState(room_id=room_id, gm_user_id=owner_id)
     create_room_record(
         room_id=room_id,
@@ -103,7 +103,7 @@ class TestAuth:
     async def test_register_sets_session_cookie(self, http_client):
         await http_client.post("/api/auth/register",
                                json={"username": "cookietest", "password": "password123"})
-        assert "warboard_sid" in http_client.cookies
+        assert "warhamster_sid" in http_client.cookies
 
     async def test_register_short_username_400(self, http_client):
         r = await http_client.post("/api/auth/register",
@@ -133,7 +133,7 @@ class TestAuth:
             r = await fresh.post("/api/auth/login",
                                  json={"username": "logintest", "password": "password123"})
             assert r.status_code == 200
-            assert "warboard_sid" in fresh.cookies
+            assert "warhamster_sid" in fresh.cookies
 
     async def test_login_wrong_password_401(self, app, http_client):
         await http_client.post("/api/auth/register",
@@ -159,7 +159,7 @@ class TestAuth:
         r = await auth_client.post("/api/auth/logout")
         assert r.status_code == 200
         # Cookie should be cleared (empty or absent)
-        cookie_val = auth_client.cookies.get("warboard_sid", "")
+        cookie_val = auth_client.cookies.get("warhamster_sid", "")
         assert cookie_val == ""
 
     async def test_me_returns_current_user(self, auth_client):
@@ -202,7 +202,7 @@ class TestRoomCrud:
         assert "room_id" in r2.json()
 
     async def test_join_room_invalid_code_404(self, auth_client):
-        r = await auth_client.post("/api/join", json={"code": "WARB-XXXXXX"})
+        r = await auth_client.post("/api/join", json={"code": "WHAM-XXXXXX"})
         assert r.status_code == 404
 
     async def test_delete_room_by_owner(self, auth_client):
@@ -260,7 +260,7 @@ class TestAssetFileServing:
         sid = create_session(u.user_id)
         r = await auth_client.get(
             f"/api/assets/file/{asset_id}",
-            cookies={"warboard_sid": sid},
+            cookies={"warhamster_sid": sid},
         )
         assert r.status_code == 200
 
@@ -283,7 +283,7 @@ class TestAssetFileServing:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://test",
-            cookies={"warboard_sid": player_sid},
+            cookies={"warhamster_sid": player_sid},
         ) as client:
             r = await client.get(f"/api/assets/file/{asset_id}")
             assert r.status_code == 200, (
@@ -321,7 +321,7 @@ class TestAssetFileServing:
         sid = create_session(u.user_id)
         r = await auth_client.get(
             f"/api/assets/file/{asset_id}",
-            cookies={"warboard_sid": sid},
+            cookies={"warhamster_sid": sid},
         )
         assert r.status_code == 404
 
@@ -391,7 +391,7 @@ class TestWebSocket:
             with pytest.raises(Exception):
                 with client.websocket_connect(
                     "/ws/some-room",
-                    cookies={"warboard_sid": sid},
+                    cookies={"warhamster_sid": sid},
                 ) as ws:
                     ws.receive_text()
 
@@ -404,7 +404,7 @@ class TestWebSocket:
         with TestClient(app) as client:
             with client.websocket_connect(
                 f"/ws/{room_id}",
-                cookies={"warboard_sid": sid},
+                cookies={"warhamster_sid": sid},
             ) as ws:
                 data = json.loads(ws.receive_text())
                 assert data["type"] == "STATE_SYNC"
@@ -412,13 +412,13 @@ class TestWebSocket:
     def test_ws_heartbeat_is_echoed(self):
         """Client sends HEARTBEAT, server responds with HEARTBEAT."""
         u, sid = _seed_user_and_session("ws_hb")
-        room_id = _seed_room(u.user_id, room_id="hb-room", join_code="WARB-HBEAT1")
+        room_id = _seed_room(u.user_id, room_id="hb-room", join_code="WHAM-HBEAT1")
 
         app = self._make_app()
         with TestClient(app) as client:
             with client.websocket_connect(
                 f"/ws/{room_id}",
-                cookies={"warboard_sid": sid},
+                cookies={"warhamster_sid": sid},
             ) as ws:
                 # Owner triggers gm_claimed, so server sends 6 initial messages:
                 # direct STATE_SYNC, HELLO, PRESENCE + broadcast STATE_SYNC, HELLO, PRESENCE
@@ -433,13 +433,13 @@ class TestWebSocket:
     def test_ws_gm_owner_gets_is_gm_true_in_hello(self):
         """Room owner should be recognised as GM on connect."""
         u, sid = _seed_user_and_session("ws_gm_owner")
-        room_id = _seed_room(u.user_id, room_id="gm-room", join_code="WARB-GMOWN1")
+        room_id = _seed_room(u.user_id, room_id="gm-room", join_code="WHAM-GMOWN1")
 
         app = self._make_app()
         with TestClient(app) as client:
             with client.websocket_connect(
                 f"/ws/{room_id}",
-                cookies={"warboard_sid": sid},
+                cookies={"warhamster_sid": sid},
             ) as ws:
                 # Messages: STATE_SYNC, HELLO, PRESENCE (order may vary slightly)
                 messages = [json.loads(ws.receive_text()) for _ in range(3)]

@@ -3,11 +3,14 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>WarBoard – Lobby</title>
+  <title>WarHamster – Lobby</title>
   <style>
     body{margin:0;background:#0f1115;color:#eaeef6;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
     .top{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);background:#121622;position:sticky;top:0}
     .brand{font-weight:800;letter-spacing:.5px}
+    .brand-wrap{display:flex;align-items:center;gap:10px}
+    .top-mascot{width:38px;height:38px;object-fit:contain;border-radius:10px;background:rgba(180,225,95,.12);border:1px solid rgba(180,225,95,.22);padding:4px}
+    .top-mascot.missing{display:none}
     .me{color:rgba(234,238,246,.75);font-size:13px}
     .wrap{max-width:980px;margin:0 auto;padding:16px}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -30,11 +33,25 @@
     .ghost{background:#2b354e}
     a{color:#8fb1ff;text-decoration:none}
     .small{font-size:12px;color:rgba(234,238,246,.65)}
+    .intro{display:flex;gap:16px;align-items:center;margin-bottom:14px}
+    .intro-mascot{width:120px;max-width:24vw;border-radius:16px;background:rgba(180,225,95,.12);border:1px solid rgba(180,225,95,.22);padding:8px;box-shadow:0 10px 24px rgba(0,0,0,.22)}
+    .intro-mascot.missing{display:none}
+    .intro-copy h1{margin:0 0 6px;font-size:22px}
+    .intro-copy p{margin:0;color:rgba(234,238,246,.7)}
+    @media (max-width:700px){.intro{align-items:flex-start}.intro-mascot{width:88px;max-width:none}.intro-copy h1{font-size:18px}}
   </style>
 </head>
 <body>
   <div class="top">
-    <div class="brand">WarBoard</div>
+    <div class="brand-wrap">
+      <img
+        class="top-mascot"
+        src="/static/WarHamsterMascot.png"
+        alt="WarHamster mascot"
+        onerror="this.classList.add('missing');"
+      />
+      <div class="brand">WarHamster</div>
+    </div>
     <div class="row" style="flex:0;gap:8px;">
       <div class="me" id="me">…</div>
       <button class="ghost" id="logoutBtn" style="flex:0;">Logout</button>
@@ -42,6 +59,18 @@
   </div>
 
   <div class="wrap">
+    <div class="intro">
+      <img
+        class="intro-mascot"
+        src="/static/WarHamsterMascot.png"
+        alt="WarHamster mascot"
+        onerror="this.classList.add('missing');"
+      />
+      <div class="intro-copy">
+        <h1>Welcome to WarHamster</h1>
+        <p>Create a table, drop your join code, and get your party rolling fast.</p>
+      </div>
+    </div>
     <div class="grid">
       <div class="card">
         <h2>Create a new table</h2>
@@ -55,7 +84,7 @@
       <div class="card">
         <h2>Join with a code</h2>
         <div class="row">
-          <input id="joinCode" placeholder="WARB-XXXXXX"/>
+          <input id="joinCode" placeholder="WHAM-XXXXXX"/>
           <button id="joinBtn" style="flex:0;">Join</button>
         </div>
         <div class="small" id="joinMsg"></div>
@@ -65,7 +94,7 @@
     <div class="card" style="margin-top:14px;">
       <h2>Your recent tables</h2>
       <div class="list" id="rooms"></div>
-      <div class="small" style="margin-top:10px;">Tip: send your DM a join link like <span class="pill">https://warboard.app/join/WARB-ABC123</span></div>
+      <div class="small" style="margin-top:10px;">Tip: send your DM a join link like <span class="pill">https://warhamster.app/join/WHAM-ABC123</span></div>
     </div>
   </div>
 

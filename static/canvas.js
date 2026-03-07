@@ -6,7 +6,7 @@
 
   const roomEl = document.getElementById("room");
   const cidEl = document.getElementById("cid");
-  const OFFLINE_STATE_KEY = "warboard_offline_state_v1";
+  const OFFLINE_STATE_KEY = "warhamster_offline_state_v1";
   let online = false;
   let me = null;
 
@@ -3034,11 +3034,11 @@
     tokens: [],
     search: "",
   };
-  const ASSET_RECENT_USAGE_KEY = "warboard:v1:asset_recent_usage";
-  const ASSET_KIND_OVERRIDE_KEY = "warboard:v1:asset_kind_override";
-  const ASSET_FILTER_PRESET_KEY = "warboard:v1:asset_filter_preset";
-  const ASSET_DEBUG_NET_KEY = "warboard:v1:asset_debug_net";
-  const ASSET_SAVED_SETS_KEY = "warboard:v1:asset_saved_sets";
+  const ASSET_RECENT_USAGE_KEY = "warhamster:v1:asset_recent_usage";
+  const ASSET_KIND_OVERRIDE_KEY = "warhamster:v1:asset_kind_override";
+  const ASSET_FILTER_PRESET_KEY = "warhamster:v1:asset_filter_preset";
+  const ASSET_DEBUG_NET_KEY = "warhamster:v1:asset_debug_net";
+  const ASSET_SAVED_SETS_KEY = "warhamster:v1:asset_saved_sets";
   function loadAssetRecentUsage() {
     try {
       const raw = localStorage.getItem(ASSET_RECENT_USAGE_KEY);
@@ -3101,7 +3101,7 @@
   }
   function loadAssetMoveLock() {
     try {
-      return localStorage.getItem("warboard:v1:lock_asset_move") === "1";
+      return localStorage.getItem("warhamster:v1:lock_asset_move") === "1";
     } catch (_) {
       return false;
     }
@@ -3228,7 +3228,7 @@
   let moveSeqCounter = 0;
   let activeDragMoveSeq = null;
   function getLocalMoveClientId() {
-    const key = "warboard:v1:move_client_id";
+    const key = "warhamster:v1:move_client_id";
     try {
       const existing = sessionStorage.getItem(key);
       if (existing) return existing;
@@ -6845,7 +6845,7 @@
   if (lockAssetMoveEl) lockAssetMoveEl.addEventListener("change", (e) => {
     ui.lockAssetMove = !!e.target.checked;
     try {
-      localStorage.setItem("warboard:v1:lock_asset_move", ui.lockAssetMove ? "1" : "0");
+      localStorage.setItem("warhamster:v1:lock_asset_move", ui.lockAssetMove ? "1" : "0");
     } catch (_) {}
     if (ui.lockAssetMove) {
       draggingAssetId = null;

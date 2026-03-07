@@ -1,5 +1,5 @@
 """
-Shared fixtures for all WarBoard tests.
+Shared fixtures for all WarHamster tests.
 """
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ def make_room(room_id: str = "room1", owner_user_id: int = 1, name: str = "Test 
         name=name,
         state_json=state.model_dump_json(),
         owner_user_id=owner_user_id,
-        join_code=f"WARB-TEST1",
+        join_code=f"WHAM-TEST1",
     )
     add_membership(owner_user_id, room_id, role="owner")
     return room_id

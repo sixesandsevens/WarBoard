@@ -1,6 +1,6 @@
-# WarBoard
+# WarHamster
 
-WarBoard is a FastAPI + WebSocket virtual tabletop focused on lightweight real-time battlemap play.
+WarHamster is a FastAPI + WebSocket virtual tabletop focused on lightweight real-time battlemap play.
 
 The project currently ships as:
 - a Python backend (`server/`) for auth, rooms, persistence, and realtime sync,
@@ -11,7 +11,7 @@ The project currently ships as:
 ## Current Capabilities
 
 - Account auth with session cookies (`register`, `login`, `logout`, `me`).
-- Lobby flow for creating rooms and joining by code (`WARB-XXXXXX`).
+- Lobby flow for creating rooms and joining by code (`WHAM-XXXXXX`).
 - Membership-gated rooms over WebSocket (`/ws/{room_id}`).
 - Owner/GM authorization model:
   - room owner is always GM,
@@ -83,7 +83,7 @@ Open:
 Directory for SQLite DB and uploads.
 
 - Default: `./data`
-- DB path: `${DATA_DIR}/warboard.db`
+- DB path: `${DATA_DIR}/warhamster.db` (existing deployments automatically reuse the legacy DB filename)
 - Upload roots include:
   - `${DATA_DIR}/uploads/backgrounds`
   - `${DATA_DIR}/uploads/assets`
@@ -92,7 +92,7 @@ Directory for SQLite DB and uploads.
 Example:
 
 ```bash
-DATA_DIR=/tmp/warboard-data uvicorn server.app:app --reload
+DATA_DIR=/tmp/warhamster-data uvicorn server.app:app --reload
 ```
 
 ### `PRIVATE_PACKS_DIR`
@@ -100,7 +100,7 @@ DATA_DIR=/tmp/warboard-data uvicorn server.app:app --reload
 Overrides private-pack filesystem root.
 
 ```bash
-PRIVATE_PACKS_DIR=/srv/warboard/private_packs uvicorn server.app:app --reload
+PRIVATE_PACKS_DIR=/srv/warhamster/private_packs uvicorn server.app:app --reload
 ```
 
 ### Upload/Import Limits
@@ -117,7 +117,7 @@ Other fixed defaults in code:
 
 ## Auth + Access Model
 
-- Most routes require login via session cookie (`warboard_sid`).
+- Most routes require login via session cookie (`warhamster_sid`).
 - Public paths include:
   - `/api/auth/*`
   - `/api/packs`, `/api/packs/{pack_id}`
