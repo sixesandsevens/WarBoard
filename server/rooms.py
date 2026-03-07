@@ -438,6 +438,34 @@ class RoomManager:
         if t == "REQ_STATE_SYNC":
             return WireEvent(type="STATE_SYNC", payload=room.state.model_dump(exclude={"gm_key_hash"}))
 
+        if t in ("UNDO", "REDO"):
+            return self._apply_history_event(room_id, room, t, client_id, user_id)
+
+        if t in {"TOKEN_CREATE", "TOKEN_MOVE", "TOKENS_MOVE", "TOKEN_DELETE",
+                 "TOKEN_ASSIGN", "TOKEN_RENAME", "TOKEN_SET_SIZE", "TOKEN_SET_LOCK",
+                 "TOKEN_SET_GROUP", "TOKEN_BADGE_TOGGLE"}:
+            return self._apply_token_event(room_id, room, t, p, client_id, user_id)
+
+        if t == "ROOM_SETTINGS":
+            return self._apply_settings_event(room_id, room, p, client_id, user_id)
+
+        if t in {"STROKE_ADD", "STROKE_DELETE", "STROKE_SET_LOCK", "ERASE_AT"}:
+            return self._apply_stroke_event(room_id, room, t, p, client_id, user_id)
+
+        if t in {"SHAPE_ADD", "SHAPE_UPDATE", "SHAPE_SET_LOCK", "SHAPE_DELETE"}:
+            return self._apply_shape_event(room_id, room, t, p, client_id, user_id)
+
+        if t in {"ASSET_INSTANCE_CREATE", "ASSET_INSTANCE_UPDATE", "ASSET_INSTANCE_DELETE"}:
+            return self._apply_asset_event(room_id, room, t, p, client_id, user_id)
+
+        if t in {"TERRAIN_STROKE_ADD", "TERRAIN_STROKE_UNDO"}:
+            return self._apply_terrain_event(room_id, room, t, p, client_id, user_id)
+
+        # Unknown / not implemented
+        return WireEvent(type="ERROR", payload={"message": f"Unhandled event type: {t}"})
+
+    # ------------------------------------------------------------------ history
+    def _apply_history_event(self, room_id: str, room: Room, t: str, client_id: str, user_id: Optional[int]) -> WireEvent:
         if t == "UNDO":
             if not self._is_gm(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can undo"})
@@ -462,6 +490,10 @@ class RoomManager:
             self._mark_dirty(room_id, room)
             return WireEvent(type="STATE_SYNC", payload=room.state.model_dump(exclude={"gm_key_hash"}))
 
+        return WireEvent(type="ERROR", payload={"message": "Unhandled history event"})
+
+    # ------------------------------------------------------------------ tokens
+    def _apply_token_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
         if t == "TOKEN_CREATE":
             self._push_history(room)
             badges = p.get("badges", [])
@@ -529,7 +561,7 @@ class RoomManager:
             token.y = float(p.get("y", token.y))
             room.state.tokens[token.id] = token
             self._mark_dirty(room_id, room)
-            return event
+            return WireEvent(type=t, payload=p)
 
         if t == "TOKENS_MOVE":
             moves = p.get("moves")
@@ -604,6 +636,137 @@ class RoomManager:
                 },
             )
 
+        if t == "TOKEN_DELETE":
+            token_id = p.get("id")
+            token = room.state.tokens.get(token_id)
+            if not token:
+                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
+            if not self.can_delete_token(room, user_id, client_id, token):
+                return WireEvent(type="ERROR", payload={"message": "Not allowed to delete token", "id": token_id})
+
+            self._push_history(room)
+            room.state.tokens.pop(token_id, None)
+            self._mark_dirty(room_id, room)
+            return WireEvent(type=t, payload=p)
+
+        if t == "TOKEN_ASSIGN":
+            # GM assigns token to player
+            token_id = p.get("id")
+            owner_id = p.get("owner_id")
+            token = room.state.tokens.get(token_id)
+            if not token:
+                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
+
+            if not self._is_gm(room, user_id, client_id):
+                return WireEvent(type="ERROR", payload={"message": "Only GM can assign tokens", "id": token_id})
+
+            self._push_history(room)
+            token.owner_id = owner_id
+            room.state.tokens[token.id] = token
+            self._mark_dirty(room_id, room)
+            return WireEvent(type=t, payload=p)
+
+        if t == "TOKEN_RENAME":
+            token_id = p.get("id")
+            token = room.state.tokens.get(token_id)
+            if not token:
+                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
+            if not self.can_edit_token(room, user_id, client_id, token):
+                return WireEvent(type="ERROR", payload={"message": "Not allowed to rename token", "id": token_id})
+            name = str(p.get("name", "")).strip() or "Token"
+            self._push_history(room)
+            token.name = name
+            room.state.tokens[token_id] = token
+            self._mark_dirty(room_id, room)
+            return WireEvent(type="TOKEN_RENAME", payload={"id": token_id, "name": name})
+
+        if t == "TOKEN_SET_SIZE":
+            token_id = p.get("id")
+            token = room.state.tokens.get(token_id)
+            if not token:
+                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
+            if not self.can_edit_token(room, user_id, client_id, token):
+                return WireEvent(type="ERROR", payload={"message": "Not allowed to resize token", "id": token_id})
+            try:
+                size_scale = float(p.get("size_scale", token.size_scale))
+            except (TypeError, ValueError):
+                return WireEvent(type="ERROR", payload={"message": "Invalid token size", "id": token_id})
+            size_scale = max(0.25, min(4.0, size_scale))
+            self._push_history(room)
+            token.size_scale = size_scale
+            room.state.tokens[token_id] = token
+            self._mark_dirty(room_id, room)
+            return WireEvent(type="TOKEN_SET_SIZE", payload={"id": token_id, "size_scale": size_scale})
+
+        if t == "TOKEN_SET_LOCK":
+            if not self._is_gm(room, user_id, client_id):
+                return WireEvent(type="ERROR", payload={"message": "Only GM can lock tokens"})
+            token_id = p.get("id")
+            token = room.state.tokens.get(token_id)
+            if not token:
+                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
+            self._push_history(room)
+            token.locked = bool(p.get("locked", False))
+            room.state.tokens[token_id] = token
+            self._mark_dirty(room_id, room)
+            return WireEvent(type="TOKEN_SET_LOCK", payload={"id": token_id, "locked": token.locked})
+
+        if t == "TOKEN_SET_GROUP":
+            ids = p.get("ids")
+            if not isinstance(ids, list) or not ids:
+                return WireEvent(type="ERROR", payload={"message": "ids is required"})
+            # Group metadata is GM-authoritative for now.
+            if not self._is_gm(room, user_id, client_id):
+                return WireEvent(type="ERROR", payload={"message": "Only GM can group tokens"})
+            group_id_raw = p.get("group_id")
+            group_id = str(group_id_raw).strip() if group_id_raw else None
+            if group_id is not None and not group_id:
+                group_id = None
+            existing = [token_id for token_id in ids if token_id in room.state.tokens]
+            if not existing:
+                return WireEvent(type="TOKEN_SET_GROUP", payload={"ids": [], "group_id": group_id})
+            self._push_history(room)
+            for token_id in existing:
+                token = room.state.tokens[token_id]
+                token.group_id = group_id
+                room.state.tokens[token_id] = token
+            self._mark_dirty(room_id, room)
+            return WireEvent(type="TOKEN_SET_GROUP", payload={"ids": existing, "group_id": group_id})
+
+        if t == "TOKEN_BADGE_TOGGLE":
+            token_id = p.get("id")
+            badge = str(p.get("badge", "")).strip()
+            token = room.state.tokens.get(token_id)
+            if not token:
+                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
+            if not self._is_gm(room, user_id, client_id):
+                return WireEvent(type="ERROR", payload={"message": "Only GM can edit token badges", "id": token_id})
+            if badge not in VALID_TOKEN_BADGES:
+                return WireEvent(type="ERROR", payload={"message": "Invalid badge", "badge": badge})
+
+            enabled = p.get("enabled")
+            badge_set = set(token.badges)
+            if isinstance(enabled, bool):
+                if enabled:
+                    badge_set.add(badge)
+                else:
+                    badge_set.discard(badge)
+            elif badge in badge_set:
+                badge_set.discard(badge)
+            else:
+                badge_set.add(badge)
+
+            self._push_history(room)
+            token.badges = sorted(badge_set)
+            room.state.tokens[token_id] = token
+            self._mark_dirty(room_id, room)
+            return WireEvent(type="TOKEN_BADGE_TOGGLE", payload={"id": token_id, "badges": token.badges})
+
+        return WireEvent(type="ERROR", payload={"message": f"Unhandled token event: {t}"})
+
+    # ------------------------------------------------------------------ settings
+    def _apply_settings_event(self, room_id: str, room: Room, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
+        t = "ROOM_SETTINGS"
         if t == "ROOM_SETTINGS":
             # GM-only
             if not self._is_gm(room, user_id, client_id):
@@ -667,6 +830,8 @@ class RoomManager:
                 },
             )
 
+    # ------------------------------------------------------------------ strokes
+    def _apply_stroke_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
         if t == "STROKE_ADD":
             sid = p.get("id")
             pts = p.get("points", [])
@@ -800,6 +965,10 @@ class RoomManager:
             self._mark_dirty(room_id, room)
             return WireEvent(type="ERASE_AT", payload={"stroke_ids": stroke_ids, "shape_ids": shape_ids, "token_ids": token_ids})
 
+        return WireEvent(type="ERROR", payload={"message": f"Unhandled stroke event: {t}"})
+
+    # ------------------------------------------------------------------ shapes
+    def _apply_shape_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
         if t == "SHAPE_ADD":
             sid = p.get("id")
             stype = p.get("type")
@@ -907,6 +1076,10 @@ class RoomManager:
                 self._mark_dirty(room_id, room)
             return WireEvent(type="SHAPE_DELETE", payload={"id": sid})
 
+        return WireEvent(type="ERROR", payload={"message": f"Unhandled shape event: {t}"})
+
+    # ------------------------------------------------------------------ assets
+    def _apply_asset_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
         if t == "ASSET_INSTANCE_CREATE":
             if room.state.lockdown:
                 return WireEvent(type="ERROR", payload={"message": "Lockdown is enabled"})
@@ -1016,132 +1189,10 @@ class RoomManager:
             self._mark_dirty(room_id, room)
             return WireEvent(type="ASSET_INSTANCE_DELETE", payload={"id": aid})
 
-        if t == "TOKEN_DELETE":
-            token_id = p.get("id")
-            token = room.state.tokens.get(token_id)
-            if not token:
-                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-            if not self.can_delete_token(room, user_id, client_id, token):
-                return WireEvent(type="ERROR", payload={"message": "Not allowed to delete token", "id": token_id})
+        return WireEvent(type="ERROR", payload={"message": f"Unhandled asset event: {t}"})
 
-            self._push_history(room)
-            room.state.tokens.pop(token_id, None)
-            self._mark_dirty(room_id, room)
-            return event
-
-        if t == "TOKEN_ASSIGN":
-            # GM assigns token to player
-            token_id = p.get("id")
-            owner_id = p.get("owner_id")
-            token = room.state.tokens.get(token_id)
-            if not token:
-                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can assign tokens", "id": token_id})
-
-            self._push_history(room)
-            token.owner_id = owner_id
-            room.state.tokens[token.id] = token
-            self._mark_dirty(room_id, room)
-            return event
-
-        if t == "TOKEN_RENAME":
-            token_id = p.get("id")
-            token = room.state.tokens.get(token_id)
-            if not token:
-                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-            if not self.can_edit_token(room, user_id, client_id, token):
-                return WireEvent(type="ERROR", payload={"message": "Not allowed to rename token", "id": token_id})
-            name = str(p.get("name", "")).strip() or "Token"
-            self._push_history(room)
-            token.name = name
-            room.state.tokens[token_id] = token
-            self._mark_dirty(room_id, room)
-            return WireEvent(type="TOKEN_RENAME", payload={"id": token_id, "name": name})
-
-        if t == "TOKEN_SET_SIZE":
-            token_id = p.get("id")
-            token = room.state.tokens.get(token_id)
-            if not token:
-                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-            if not self.can_edit_token(room, user_id, client_id, token):
-                return WireEvent(type="ERROR", payload={"message": "Not allowed to resize token", "id": token_id})
-            try:
-                size_scale = float(p.get("size_scale", token.size_scale))
-            except (TypeError, ValueError):
-                return WireEvent(type="ERROR", payload={"message": "Invalid token size", "id": token_id})
-            size_scale = max(0.25, min(4.0, size_scale))
-            self._push_history(room)
-            token.size_scale = size_scale
-            room.state.tokens[token_id] = token
-            self._mark_dirty(room_id, room)
-            return WireEvent(type="TOKEN_SET_SIZE", payload={"id": token_id, "size_scale": size_scale})
-
-        if t == "TOKEN_SET_LOCK":
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can lock tokens"})
-            token_id = p.get("id")
-            token = room.state.tokens.get(token_id)
-            if not token:
-                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-            self._push_history(room)
-            token.locked = bool(p.get("locked", False))
-            room.state.tokens[token_id] = token
-            self._mark_dirty(room_id, room)
-            return WireEvent(type="TOKEN_SET_LOCK", payload={"id": token_id, "locked": token.locked})
-
-        if t == "TOKEN_SET_GROUP":
-            ids = p.get("ids")
-            if not isinstance(ids, list) or not ids:
-                return WireEvent(type="ERROR", payload={"message": "ids is required"})
-            # Group metadata is GM-authoritative for now.
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can group tokens"})
-            group_id_raw = p.get("group_id")
-            group_id = str(group_id_raw).strip() if group_id_raw else None
-            if group_id is not None and not group_id:
-                group_id = None
-            existing = [token_id for token_id in ids if token_id in room.state.tokens]
-            if not existing:
-                return WireEvent(type="TOKEN_SET_GROUP", payload={"ids": [], "group_id": group_id})
-            self._push_history(room)
-            for token_id in existing:
-                token = room.state.tokens[token_id]
-                token.group_id = group_id
-                room.state.tokens[token_id] = token
-            self._mark_dirty(room_id, room)
-            return WireEvent(type="TOKEN_SET_GROUP", payload={"ids": existing, "group_id": group_id})
-
-        if t == "TOKEN_BADGE_TOGGLE":
-            token_id = p.get("id")
-            badge = str(p.get("badge", "")).strip()
-            token = room.state.tokens.get(token_id)
-            if not token:
-                return WireEvent(type="ERROR", payload={"message": "Unknown token", "id": token_id})
-            if not self._is_gm(room, user_id, client_id):
-                return WireEvent(type="ERROR", payload={"message": "Only GM can edit token badges", "id": token_id})
-            if badge not in VALID_TOKEN_BADGES:
-                return WireEvent(type="ERROR", payload={"message": "Invalid badge", "badge": badge})
-
-            enabled = p.get("enabled")
-            badge_set = set(token.badges)
-            if isinstance(enabled, bool):
-                if enabled:
-                    badge_set.add(badge)
-                else:
-                    badge_set.discard(badge)
-            elif badge in badge_set:
-                badge_set.discard(badge)
-            else:
-                badge_set.add(badge)
-
-            self._push_history(room)
-            token.badges = sorted(badge_set)
-            room.state.tokens[token_id] = token
-            self._mark_dirty(room_id, room)
-            return WireEvent(type="TOKEN_BADGE_TOGGLE", payload={"id": token_id, "badges": token.badges})
-
+    # ------------------------------------------------------------------ terrain
+    def _apply_terrain_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
         if t == "TERRAIN_STROKE_ADD":
             if not self.can_paint_terrain(room, user_id, client_id):
                 return WireEvent(type="ERROR", payload={"message": "Only GM can paint terrain"})
@@ -1218,5 +1269,4 @@ class RoomManager:
                 self._mark_dirty(room_id, room)
             return WireEvent(type="TERRAIN_STROKE_UNDO", payload={"ids": removed_ids})
 
-        # Unknown / not implemented
-        return WireEvent(type="ERROR", payload={"message": f"Unhandled event type: {t}"})
+        return WireEvent(type="ERROR", payload={"message": f"Unhandled terrain event: {t}"})

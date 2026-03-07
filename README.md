@@ -4,7 +4,7 @@ WarBoard is a FastAPI + WebSocket virtual tabletop focused on lightweight real-t
 
 The project currently ships as:
 - a Python backend (`server/`) for auth, rooms, persistence, and realtime sync,
-- a browser canvas client (`static/test_canvas.html`),
+- a browser canvas client (`static/canvas.html`),
 - a lobby/dashboard (`static/app.html`) and login/register UI (`static/login.html`),
 - SQLite-backed persistence under `DATA_DIR`.
 
@@ -35,7 +35,7 @@ The project currently ships as:
 - `server/rooms.py`: room lifecycle, event application, authorization, autosave/history.
 - `server/storage.py`: SQLModel schema + SQLite persistence helpers.
 - `server/models.py`: Pydantic wire/state models.
-- `static/test_canvas.html`: main board UI.
+- `static/canvas.html`: main board UI.
 - `static/app.html`: room lobby/dashboard.
 - `static/login.html`, `static/login.js`, `static/login.css`: auth UI.
 - `scripts/import_private_pack.py`: import server-side private pack assets.
@@ -67,7 +67,7 @@ uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
 Open:
 - `http://localhost:8000/static/login.html` (recommended start)
 - `http://localhost:8000/app` (lobby, requires login)
-- `http://localhost:8000/static/test_canvas.html` (board client)
+- `http://localhost:8000/static/canvas.html` (board client)
 
 ### Default Local Flow
 
@@ -121,7 +121,7 @@ Other fixed defaults in code:
 - Public paths include:
   - `/api/auth/*`
   - `/api/packs`, `/api/packs/{pack_id}`
-  - `/static/login*`, `/static/test_canvas.html`, `/packs/*`
+  - `/static/login*`, `/static/canvas.html`, `/packs/*`
 - Room operations are membership-protected.
 - GM-only operations require room ownership or valid `gm_key`.
 

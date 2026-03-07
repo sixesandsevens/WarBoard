@@ -1,0 +1,595 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>WarBoard</title>
+  <link rel="stylesheet" href="/static/canvas.css"/>
+</head>
+<body>
+  <div id="top">
+    <div class="top-left">
+      <button id="drawerToggle" class="drawer-toggle">☰</button>
+      <div id="sessionPill" class="session-pill bad">○ Disconnected</div>
+      <div id="sessionResyncBadge" class="session-resync hidden">Resyncing...</div>
+    </div>
+    <div class="top-center">
+      <div class="tool-strip">
+        <button id="toolBtnMove" class="tool-btn" data-tool="move" data-tip="Select and move tokens">🖐 Select</button>
+        <button id="toolBtnPen" class="tool-btn" data-tool="pen" data-tip="Draw freehand">✏️ Pen</button>
+        <button id="toolBtnShape" class="tool-btn" data-tool="shape" data-tip="Draw shapes">⬛ Shape</button>
+        <button id="toolBtnText" class="tool-btn" data-tool="text" data-tip="Place text label">🔤 Text</button>
+        <button id="toolBtnErase" class="tool-btn" data-tool="eraser" data-tip="Erase drawings">🧽 Erase</button>
+        <button id="toolBtnRuler" class="tool-btn" data-tool="ruler" data-tip="Measure distance">📏 Ruler</button>
+        <button id="toolBtnTerrainPaint" class="tool-btn gm-only" data-tool="terrain_paint" data-tip="Paint terrain overlays (GM only)">🖌 Terrain</button>
+      </div>
+      <span id="selectModeLabel" class="pill hidden">Select Mode</span>
+      <button id="spawn" class="top-action-btn" data-tip="Place new token">Spawn Token</button>
+      <span id="sizePresetGroup" class="size-strip">
+        Size
+        <button id="sizePresetS" class="top-action-btn">S</button>
+        <button id="sizePresetM" class="top-action-btn">M</button>
+        <button id="sizePresetL" class="top-action-btn">L</button>
+        <button id="sizePresetH" class="top-action-btn">Huge</button>
+      </span>
+      <button id="undo" class="top-action-btn" data-tip="Undo last action">Undo</button>
+      <button id="redo" class="top-action-btn" data-tip="Redo last undone action">Redo</button>
+    </div>
+    <label style="display:none;">Room <input id="room" value="demo"></label>
+    <label style="display:none;">Client ID <input id="cid" value="chris"></label>
+    <button id="connect" style="display:none;">Connect</button>
+    <button id="gmPanelBtn">GM Panel</button>
+    <button id="roomsPanelBtn">Rooms</button>
+    <button id="libraryPanelBtn">Token Library</button>
+
+    <label><input type="checkbox" id="allowPlayersMove"> Players move assigned</label>
+    <label><input type="checkbox" id="allowAllMove"> Everyone moves everything</label>
+    <label><input type="checkbox" id="lockAssetMove"> Lock Asset Move</label>
+    <label><input type="checkbox" id="lockdown"> Lockdown</label>
+
+    <label>BG URL <input id="bgUrl" placeholder="https://..."></label>
+    <button id="setBg">Set BG</button>
+    <label>BG File <input id="bgFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+    <button id="uploadBg">Upload BG</button>
+    <label><input type="checkbox" id="terrainBg"> Terrain BG</label>
+    <label>Biome
+      <select id="terrainStyle">
+        <option value="grassland">Grassland</option>
+        <option value="dirt">Dirt/Road</option>
+        <option value="snow">Snow</option>
+        <option value="desert">Desert</option>
+        <option value="water">Water</option>
+        <option value="volcano">Volcano</option>
+      </select>
+    </label>
+    <button id="regenTerrain">Regenerate Terrain</button>
+    <span id="terrainBadge" class="pill" style="display:none; opacity:.9;"></span>
+
+    <label style="display:none;">Tool
+      <select id="tool">
+        <option value="move">Move</option>
+        <option value="pen">Pen</option>
+        <option value="eraser">Eraser (GM)</option>
+        <option value="rect">Rect</option>
+        <option value="circle">Circle</option>
+        <option value="line">Line</option>
+        <option value="text">Text</option>
+        <option value="ruler">Ruler</option>
+        <option value="terrain_paint">Terrain Paint</option>
+      </select>
+    </label>
+
+    <label style="display:none;">Color <input id="color" type="color" value="#ffffff"></label>
+    <label style="display:none;">Size <input id="size" type="number" value="3" min="1" max="30" style="width:70px"></label>
+    <label>ft/sq <input id="feetPerSq" type="number" value="5" min="1" max="100" style="width:70px"></label>
+
+    <label><input type="checkbox" id="snap" checked> Snap</label>
+    <label>Grid <input id="grid" value="50" style="width:70px"></label>
+    <label><input type="checkbox" id="showGrid" checked> Grid</label>
+
+    <label><input type="checkbox" id="layerGrid" checked> Layer Grid</label>
+    <label><input type="checkbox" id="layerDraw" checked> Layer Drawings</label>
+    <label><input type="checkbox" id="layerShapes" checked> Layer Shapes</label>
+    <label><input type="checkbox" id="layerAssets" checked> Layer Assets</label>
+    <label><input type="checkbox" id="layerTokens" checked> Layer Tokens</label>
+  </div>
+
+  <div id="wrap">
+    <div id="sessionModalBackdrop" class="modal-backdrop hidden"></div>
+    <div id="sessionModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Session">
+      <div class="modal-header">
+        <div id="sessionModalTitle" class="modal-title">Disconnected - Single Session Mode</div>
+        <button id="sessionModalClose" class="modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="sessionStatusText" class="hint" style="margin-bottom:10px;">
+          Everything works locally. Log in to host or join a shared room.
+        </div>
+        <div id="sessionAuthBox">
+          <div class="field">
+            <label>Username</label>
+            <input id="sessionAuthUser" type="text" autocomplete="username" />
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input id="sessionAuthPass" type="password" autocomplete="current-password" />
+          </div>
+          <div class="modal-actions">
+            <button id="sessionLoginBtn" class="primary">Log In</button>
+            <button id="sessionRegisterBtn" class="ghost">Register</button>
+          </div>
+        </div>
+        <div id="sessionAccountBox" class="hidden">
+          <div id="sessionWhoami" class="hint"></div>
+          <div class="modal-actions">
+            <button id="sessionOpenLobbyBtn" class="primary">Open Account Panel</button>
+            <button id="sessionLogoutBtn" class="ghost">Log Out</button>
+          </div>
+        </div>
+        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:12px 0;">
+        <div class="field">
+          <label>Room (optional online room id)</label>
+          <input id="sessionRoom" type="text" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label>Client ID</label>
+          <input id="sessionClientId" type="text" autocomplete="off" />
+        </div>
+        <div class="modal-actions">
+          <button id="sessionConnectBtn" class="primary">Connect Room</button>
+          <button id="sessionDisconnectBtn" class="ghost hidden">Disconnect</button>
+        </div>
+      </div>
+    </div>
+    <div id="mapPreviewBackdrop" class="modal-backdrop hidden"></div>
+    <div id="mapPreviewModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Map preview" style="width:min(820px, calc(100vw - 24px)); left:12px; top:56px; max-height:calc(100vh - 80px); overflow:auto;">
+      <div class="modal-header">
+        <div id="mapPreviewTitle" class="modal-title">Map Preview</div>
+        <button id="mapPreviewClose" class="modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="width:100%; border-radius:10px; overflow:hidden; border:1px solid rgba(255,255,255,0.14); background:#111;">
+          <img id="mapPreviewImage" alt="Map preview" style="display:block; width:100%; max-height:52vh; object-fit:contain; background:#111;">
+        </div>
+        <div id="mapPreviewMeta" class="hint" style="margin-top:8px;"></div>
+        <div id="mapPreviewPath" class="hint"></div>
+        <div class="modal-actions" style="flex-wrap:wrap;">
+          <button id="mapPreviewSetBgBtn" class="primary">Set as Background</button>
+          <button id="mapPreviewClearBgBtn" class="ghost">Clear BG</button>
+          <button id="mapPreviewFitBtn" class="ghost">Fit to View</button>
+          <button id="mapPreviewOverlayBtn" class="ghost">Use as Overlay</button>
+          <button id="mapPreviewSpawnBtn" class="ghost">Place Piece</button>
+          <button id="mapPreviewCopyUrlBtn" class="ghost">Copy URL</button>
+          <button id="mapPreviewOpenTabBtn" class="ghost">Open</button>
+        </div>
+      </div>
+    </div>
+    <div id="drawer" class="drawer hidden">
+      <div class="drawer-header">
+        <span>WarBoard</span>
+        <button id="drawerClose">✕</button>
+      </div>
+
+      <div class="drawer-tabs">
+        <button data-tab="tokens" class="tab-btn active">Tokens</button>
+        <button data-tab="assets" class="tab-btn">Assets</button>
+        <button data-tab="rooms" class="tab-btn">Rooms</button>
+        <button data-tab="scene" class="tab-btn">Scene</button>
+        <button data-tab="players" class="tab-btn">Players</button>
+        <button data-tab="settings" class="tab-btn">Settings</button>
+      </div>
+
+      <div class="drawer-content">
+        <div id="tab-tokens" class="drawer-panel active"></div>
+        <div id="tab-assets" class="drawer-panel"></div>
+        <div id="tab-rooms" class="drawer-panel"></div>
+        <div id="tab-scene" class="drawer-panel"></div>
+        <div id="tab-players" class="drawer-panel"></div>
+        <div id="tab-settings" class="drawer-panel"></div>
+      </div>
+    </div>
+    <canvas id="c"></canvas>
+    <div id="tokenMenu" style="
+      position:absolute;
+      min-width: 180px;
+      background: rgba(0,0,0,0.92);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 8px;
+      padding: 6px;
+      display:none;
+      z-index: 4;
+    ">
+      <button id="tokenMenuRename" style="display:block; width:100%; text-align:left; margin:2px 0;">Rename</button>
+      <button id="tokenMenuResize" style="display:block; width:100%; text-align:left; margin:2px 0;">Resize</button>
+      <button id="tokenMenuAssign" style="display:block; width:100%; text-align:left; margin:2px 0;">Assign owner</button>
+      <button id="tokenMenuLock" style="display:block; width:100%; text-align:left; margin:2px 0;">Lock / Unlock</button>
+      <button id="tokenMenuGroup" style="display:block; width:100%; text-align:left; margin:2px 0;">Group selected</button>
+      <button id="tokenMenuUngroup" style="display:block; width:100%; text-align:left; margin:2px 0;">Ungroup selected</button>
+      <div style="height:1px; margin:6px 0; background:rgba(255,255,255,0.12);"></div>
+      <button id="tokenMenuBadgeDowned" style="display:block; width:100%; text-align:left; margin:2px 0;">Downed</button>
+      <button id="tokenMenuBadgePoisoned" style="display:block; width:100%; text-align:left; margin:2px 0;">Poisoned</button>
+      <button id="tokenMenuBadgeStunned" style="display:block; width:100%; text-align:left; margin:2px 0;">Stunned</button>
+      <button id="tokenMenuBadgeBurning" style="display:block; width:100%; text-align:left; margin:2px 0;">Burning</button>
+      <button id="tokenMenuBadgeBleeding" style="display:block; width:100%; text-align:left; margin:2px 0;">Bleeding</button>
+      <button id="tokenMenuBadgeProne" style="display:block; width:100%; text-align:left; margin:2px 0;">Prone</button>
+      <button id="tokenMenuBadgeClear" style="display:block; width:100%; text-align:left; margin:2px 0;">Clear badges</button>
+      <button id="tokenMenuDelete" style="display:block; width:100%; text-align:left; margin:2px 0; color:#ffb3b3;">Delete</button>
+    </div>
+    <div id="mapCtx" class="ctx hidden" role="menu" aria-label="Map menu">
+      <div class="ctx-title">Map</div>
+      <div class="ctx-item" data-action="spawn_default" data-gm="1">➕ Spawn token</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item has-sub" data-sub="bg" data-gm="1">🖼 Background ▸</div>
+      <div class="ctx-item has-sub" data-sub="layers" data-gm="1">🧅 Layers ▸</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item has-sub" data-sub="clear" data-gm="1">🧹 Clear ▸</div>
+      <div class="ctx-item" data-action="save_snapshot" data-gm="1">💾 Save snapshot</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="open_tokens">📚 Token Library</div>
+      <div class="ctx-item" data-action="open_assets">🖼 Asset Library</div>
+      <div class="ctx-item" data-action="open_rooms">🏠 Rooms</div>
+      <div class="ctx-item" data-action="open_scene">🎛 Scene</div>
+    </div>
+    <div id="mapCtx-bg" class="ctx hidden ctx-sub" role="menu" aria-label="Background menu">
+      <div class="ctx-title">Background</div>
+      <div class="ctx-item" data-action="bg_solid" data-gm="1">Solid (default)</div>
+      <div class="ctx-item" data-action="bg_url" data-gm="1">Set URL...</div>
+      <div class="ctx-item" data-action="bg_terrain" data-gm="1">Terrain</div>
+      <div class="ctx-item" data-action="bg_terrain_regen" data-gm="1">Regenerate terrain</div>
+    </div>
+    <div id="mapCtx-layers" class="ctx hidden ctx-sub" role="menu" aria-label="Layers menu">
+      <div class="ctx-title">Layers</div>
+      <div class="ctx-item" data-action="toggle_layer_grid" data-gm="1">Toggle Grid</div>
+      <div class="ctx-item" data-action="toggle_layer_drawings" data-gm="1">Toggle Drawings</div>
+      <div class="ctx-item" data-action="toggle_layer_shapes" data-gm="1">Toggle Shapes</div>
+      <div class="ctx-item" data-action="toggle_layer_assets" data-gm="1">Toggle Assets</div>
+      <div class="ctx-item" data-action="toggle_layer_tokens" data-gm="1">Toggle Tokens</div>
+    </div>
+    <div id="mapCtx-clear" class="ctx hidden ctx-sub" role="menu" aria-label="Clear menu">
+      <div class="ctx-title">Clear</div>
+      <div class="ctx-item danger" data-action="clear_drawings" data-gm="1">Clear drawings</div>
+      <div class="ctx-item danger" data-action="clear_shapes" data-gm="1">Clear shapes</div>
+      <div class="ctx-item danger" data-action="clear_tokens" data-gm="1">Clear tokens</div>
+    </div>
+    <div id="penCtx" class="ctx hidden" role="menu" aria-label="Pen menu">
+      <div class="ctx-title">Pen</div>
+      <div class="ctx-item" data-action="pen_size_2">Size 2</div>
+      <div class="ctx-item" data-action="pen_size_4">Size 4</div>
+      <div class="ctx-item" data-action="pen_size_8">Size 8</div>
+      <div class="ctx-item" data-action="pen_size_custom">Custom size...</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="pen_color_white">Color White</div>
+      <div class="ctx-item" data-action="pen_color_red">Color Red</div>
+      <div class="ctx-item" data-action="pen_color_green">Color Green</div>
+      <div class="ctx-item" data-action="pen_color_blue">Color Blue</div>
+      <div class="ctx-item" data-action="pen_color_custom">Custom color...</div>
+    </div>
+    <div id="shapeCtx" class="ctx hidden" role="menu" aria-label="Shape menu">
+      <div class="ctx-title">Shape</div>
+      <div class="ctx-item" data-action="shape_tool_rect">Rect Tool</div>
+      <div class="ctx-item" data-action="shape_tool_circle">Circle Tool</div>
+      <div class="ctx-item" data-action="shape_tool_line">Line Tool</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="shape_size_2">Stroke 2</div>
+      <div class="ctx-item" data-action="shape_size_4">Stroke 4</div>
+      <div class="ctx-item" data-action="shape_size_8">Stroke 8</div>
+      <div class="ctx-item" data-action="shape_size_custom">Custom size...</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="shape_color_custom">Custom color...</div>
+      <div class="ctx-item" data-action="shape_toggle_snap">Toggle Snap</div>
+    </div>
+    <div id="textCtx" class="ctx hidden" role="menu" aria-label="Text menu">
+      <div class="ctx-title">Text</div>
+      <div class="ctx-item" data-action="text_set_content">Set text...</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="text_size_16">Size 16</div>
+      <div class="ctx-item" data-action="text_size_24">Size 24</div>
+      <div class="ctx-item" data-action="text_size_32">Size 32</div>
+      <div class="ctx-item" data-action="text_size_custom">Custom size...</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="text_color_custom">Text color...</div>
+    </div>
+    <div id="rulerCtx" class="ctx hidden" role="menu" aria-label="Ruler menu">
+      <div class="ctx-title">Ruler</div>
+      <div class="ctx-item" data-action="ruler_feet_5">Set 5 ft/sq</div>
+      <div class="ctx-item" data-action="ruler_feet_10">Set 10 ft/sq</div>
+      <div class="ctx-item" data-action="ruler_feet_15">Set 15 ft/sq</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="ruler_toggle_snap">Toggle Snap</div>
+      <div class="ctx-item" data-action="ruler_clear">Clear ruler</div>
+    </div>
+    <div id="assetCtx" class="ctx hidden" role="menu" aria-label="Asset menu">
+      <div class="ctx-title">Asset</div>
+      <div class="ctx-item" data-action="asset_duplicate">Duplicate</div>
+      <div class="ctx-sep"></div>
+      <div style="padding:8px 10px; display:flex; flex-direction:column; gap:6px;">
+        <label style="font-size:12px; opacity:.9; display:flex; justify-content:space-between; gap:8px;">
+          <span>Scale</span>
+          <span id="assetScaleValue">100%</span>
+        </label>
+        <input id="assetScaleSlider" type="range" min="5" max="400" step="1" value="100">
+        <label style="font-size:12px; opacity:.9; display:flex; justify-content:space-between; gap:8px; margin-top:4px;">
+          <span>Rotation</span>
+          <span id="assetRotateValue">0°</span>
+        </label>
+        <input id="assetRotateSlider" type="range" min="-180" max="180" step="1" value="0">
+      </div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="asset_layer_front">Bring to front</div>
+      <div class="ctx-item" data-action="asset_layer_back">Send to back</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="asset_flip_x">Flip horizontal</div>
+      <div class="ctx-item" data-action="asset_flip_y">Flip vertical</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item" data-action="asset_lock_toggle" data-gm="1">Lock / Unlock</div>
+      <div class="ctx-item danger" data-action="asset_delete">Delete asset</div>
+    </div>
+    <div id="toolColorPanel" class="ctx hidden" role="dialog" aria-label="Tool color">
+      <div id="toolColorTitle" class="ctx-title">Color</div>
+      <div style="padding:8px 10px;">
+        <input id="toolColorPicker" type="color" value="#ffffff" style="width:100%; height:36px; border:none; background:transparent; padding:0;">
+      </div>
+    </div>
+    <div id="toolSizePanel" class="ctx hidden" role="dialog" aria-label="Tool size">
+      <div id="toolSizeTitle" class="ctx-title">Size</div>
+      <div style="padding:8px 10px; display:flex; flex-direction:column; gap:8px;">
+        <input id="toolSizeSlider" type="range" min="1" max="30" step="1" value="3">
+        <div id="toolSizeValue" style="font-size:12px; opacity:.85;">3</div>
+      </div>
+    </div>
+    <div id="toolTextPanel" class="ctx hidden" role="dialog" aria-label="Text content">
+      <div class="ctx-title">Text Content</div>
+      <div style="padding:8px 10px; display:flex; flex-direction:column; gap:8px;">
+        <input id="toolTextInput" type="text" maxlength="120" placeholder="Enter label text..." style="padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.18); background:#121212; color:#eee;">
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button id="toolTextApply" class="ghost" type="button">Apply</button>
+        </div>
+      </div>
+    </div>
+    <div id="terrainPaintPanel" class="ctx hidden" role="dialog" aria-label="Terrain paint brush" style="min-width:200px;">
+      <div class="ctx-title">Terrain Paint</div>
+      <div style="padding:8px 10px; display:flex; flex-direction:column; gap:8px;">
+        <div style="font-size:11px; opacity:.7; margin-bottom:2px;">Material</div>
+        <div id="terrainMaterialPills" style="display:flex; flex-direction:column; gap:4px;"></div>
+        <div style="font-size:11px; opacity:.7; margin-top:4px;">Operation</div>
+        <div style="display:flex; gap:6px;">
+          <button id="terrainOpPaint" class="ghost active" style="flex:1; font-size:12px; padding:4px 6px;">Paint</button>
+          <button id="terrainOpErase" class="ghost" style="flex:1; font-size:12px; padding:4px 6px;">Erase</button>
+        </div>
+        <div style="font-size:11px; opacity:.7; margin-top:4px;">Radius <span id="terrainRadiusVal">60</span></div>
+        <input id="terrainRadiusSlider" type="range" min="10" max="300" step="5" value="60">
+        <div style="font-size:11px; opacity:.7;">Opacity <span id="terrainOpacityVal">60%</span></div>
+        <input id="terrainOpacitySlider" type="range" min="5" max="100" step="5" value="60">
+        <div style="font-size:11px; opacity:.7;">Hardness <span id="terrainHardnessVal">40%</span></div>
+        <input id="terrainHardnessSlider" type="range" min="0" max="100" step="5" value="40">
+        <button id="terrainUndoBtn" class="ghost" style="margin-top:4px; font-size:12px;">↩ Undo Stroke</button>
+      </div>
+    </div>
+    <div id="uiTooltip" class="ui-tooltip hidden"></div>
+    <div id="roomsPanel" style="
+      position:absolute; top:10px; left:10px;
+      width:min(460px, calc(100vw - 20px));
+      max-height: calc(100vh - 120px);
+      overflow:auto;
+      background: rgba(0,0,0,0.78);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px;
+      display:none;
+      z-index: 3;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <b>Rooms</b>
+        <button id="roomsPanelClose">Close</button>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+        <input id="newRoomName" placeholder="Room name" style="flex:1; min-width:150px;">
+        <input id="newRoomId" placeholder="optional id" style="width:120px;">
+        <button id="createRoomBtn">Create</button>
+        <button id="refreshRoomsBtn">Refresh</button>
+      </div>
+      <div id="roomsList" style="margin-top:8px; font-size:12px;"></div>
+
+      <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:10px 0;">
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <b>Snapshots for</b>
+        <code id="snapshotRoomLabel">demo</code>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+        <input id="snapshotLabelInput" placeholder="Save Point label" style="flex:1; min-width:180px;">
+        <button id="saveSnapshotBtn">Save Point</button>
+        <button id="refreshSnapshotsBtn">Refresh</button>
+      </div>
+      <div id="snapshotsList" style="margin-top:8px; font-size:12px;"></div>
+    </div>
+    <div id="libraryPanel" style="
+      position:absolute; top:10px; left:10px;
+      width:min(560px, calc(100vw - 20px));
+      max-height: calc(100vh - 120px);
+      overflow:auto;
+      background: rgba(0,0,0,0.82);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px;
+      display:none;
+      z-index: 3;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <b>Token Library</b>
+        <button id="libraryPanelClose">Close</button>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <label>Pack
+          <select id="packSelect" style="min-width:200px;"></select>
+        </label>
+        <input id="packSearch" placeholder="Search tokens..." style="flex:1; min-width:180px;">
+        <button id="refreshPacksBtn">Refresh</button>
+      </div>
+      <div id="packGrid" style="
+        margin-top:8px;
+        display:grid;
+        grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+        gap:8px;
+      "></div>
+    </div>
+    <div id="assetPanel" style="
+      position:absolute; top:10px; left:10px;
+      width:min(560px, calc(100vw - 20px));
+      max-height: calc(100vh - 120px);
+      overflow:auto;
+      background: rgba(0,0,0,0.82);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px;
+      display:none;
+      z-index: 3;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <b>Asset Library</b>
+        <button id="assetPanelClose">Close</button>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <input id="assetNameInput" placeholder="Asset name (optional)" style="flex:1; min-width:150px;">
+        <input id="assetTagsInput" placeholder="tags comma-separated" style="flex:1; min-width:170px;">
+      </div>
+      <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <input id="assetFileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+        <button id="assetUploadBtn">Upload</button>
+        <input id="assetZipInput" type="file" accept=".zip,application/zip">
+        <button id="assetZipUploadBtn">Upload ZIP</button>
+        <button id="assetRefreshBtn">Refresh</button>
+      </div>
+      <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+        <input id="assetSearchInput" placeholder="Search assets..." style="flex:1; min-width:180px;">
+        <button id="assetPlaceModeBtn" class="ghost" type="button" title="When enabled, clicking asset cards starts drag-place instead of spawning at center.">Place Mode: On</button>
+      </div>
+      <div id="assetSearchChips" style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;"></div>
+      <div id="assetSearchHint" style="margin-top:4px; font-size:11px; opacity:.8;"></div>
+      <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <label style="font-size:12px;">View
+          <select id="assetViewMode">
+            <option value="pieces">Pieces</option>
+            <option value="maps">Maps</option>
+            <option value="unknown">Unknown</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <label style="font-size:12px;">Pack
+          <select id="assetPackFilter">
+            <option value="all">All Packs</option>
+          </select>
+        </label>
+        <label style="font-size:12px;">Type
+          <select id="assetTypeFilter">
+            <option value="all">All Files</option>
+            <option value="png">PNG</option>
+            <option value="webp">WebP</option>
+            <option value="jpg">JPG</option>
+            <option value="gif">GIF</option>
+          </select>
+        </label>
+        <label style="font-size:12px;">Alpha
+          <select id="assetAlphaFilter">
+            <option value="all">Any</option>
+            <option value="yes">Has Alpha</option>
+            <option value="no">No Alpha</option>
+          </select>
+        </label>
+        <label style="font-size:12px;">Size
+          <select id="assetSizeFilter">
+            <option value="all">Any</option>
+            <option value="tiny">Tiny (≤256)</option>
+            <option value="small">Small (≤512)</option>
+            <option value="medium">Medium (≤1024)</option>
+            <option value="large">Large (≤2048)</option>
+            <option value="huge">Huge (&gt;2048)</option>
+          </select>
+        </label>
+        <label style="font-size:12px;">Sort
+          <select id="assetSortMode">
+            <option value="recent">Recently Used</option>
+            <option value="newest">Newest</option>
+            <option value="largest">Largest</option>
+            <option value="name">Name (A-Z)</option>
+          </select>
+        </label>
+        <label style="font-size:12px; display:flex; align-items:center; gap:4px;">
+          <input id="assetDebugNet" type="checkbox">
+          Debug net
+        </label>
+      </div>
+      <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <label style="font-size:12px;">Saved Set
+          <select id="assetSetSelect" style="min-width:180px;">
+            <option value="">(no saved sets)</option>
+          </select>
+        </label>
+        <button id="assetSetApplyBtn" type="button">Apply</button>
+        <button id="assetSetSaveBtn" type="button">Save Set</button>
+        <button id="assetSetDeleteBtn" type="button">Delete</button>
+      </div>
+      <div id="assetFolderTree" style="margin-top:6px; max-height:180px; overflow:auto; border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:6px; font-size:12px;"></div>
+      <div id="assetGrid" style="
+        margin-top:8px;
+        display:grid;
+        grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+        gap:8px;
+      "></div>
+    </div>
+    <div id="gmPanel" style="
+      position:absolute; top:10px; right:10px;
+      width:min(480px, calc(100vw - 20px));
+      max-height: calc(100vh - 120px);
+      overflow:auto;
+      background: rgba(0,0,0,0.78);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px;
+      display:none;
+      z-index: 3;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <b>GM Panel</b>
+        <button id="gmPanelClose">Close</button>
+      </div>
+
+      <div style="margin-top:10px;">
+        <div style="opacity:.9; margin-bottom:6px;">Connected players</div>
+        <div id="playerList" style="font-family: ui-monospace, monospace; font-size:12px;"></div>
+      </div>
+
+      <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:10px 0;">
+      <div>
+        <div style="opacity:.9; margin-bottom:6px;">Tokens (owner + lock)</div>
+        <div id="tokenList"></div>
+      </div>
+
+      <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:10px 0;">
+      <div>
+        <div style="opacity:.9; margin-bottom:6px;">Strokes (lock)</div>
+        <div id="strokeList"></div>
+      </div>
+
+      <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:10px 0;">
+      <div>
+        <div style="opacity:.9; margin-bottom:6px;">Shapes (lock)</div>
+        <div id="shapeList"></div>
+      </div>
+    </div>
+
+    <div id="log">
+      <div id="logHeader">
+        <span>Activity Log</span>
+        <button id="logToggle" type="button">Minimize</button>
+      </div>
+      <div id="logText"></div>
+    </div>
+    <div id="hint">
+      <div><span class="pill">Left-drag</span> act with tool</div>
+      <div><span class="pill">Right-drag</span> pan</div>
+      <div><span class="pill">Wheel</span> zoom</div>
+      <div><span class="pill">Delete</span> delete selected token (if allowed)</div>
+      <div style="opacity:.85;margin-top:6px">
+        Layer visibility and background are server-synced room settings.
+      </div>
+    </div>
+  </div>
+
+<script src="/static/canvas.js"></script>
+</body>
+</html>

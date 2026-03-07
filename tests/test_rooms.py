@@ -14,6 +14,8 @@ from server.rooms import (
     MAX_CANVAS_COORD,
     MAX_STROKE_POINTS,
     MAX_STROKE_WIDTH,
+    MAX_TERRAIN_STROKE_POINTS,
+    MAX_TERRAIN_STROKES,
     Room,
     RoomManager,
 )
@@ -719,3 +721,177 @@ class TestSetLock:
         result = await apply(rm, room, room_id, "STROKE_SET_LOCK", id="s1", locked=True)
         assert result.type == "STROKE_SET_LOCK"
         assert room.state.strokes["s1"].locked is True
+
+
+# ---------------------------------------------------------------------------
+# TERRAIN_STROKE_ADD / TERRAIN_STROKE_UNDO
+# ---------------------------------------------------------------------------
+
+def make_terrain_points(n: int) -> list[dict]:
+    return [{"x": float(i * 10), "y": float(i * 10)} for i in range(n)]
+
+
+class TestTerrainPaint:
+    async def test_gm_can_add_terrain_stroke(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(
+            rm, room, room_id, "TERRAIN_STROKE_ADD",
+            id="ts1", material_id="stone",
+            points=make_terrain_points(3),
+            radius=60.0, opacity=0.6, hardness=0.4,
+        )
+        assert result.type == "TERRAIN_STROKE_ADD"
+        assert result.payload["id"] == "ts1"
+        assert result.payload["material_id"] == "stone"
+        assert "ts1" in room.state.terrain_paint.strokes
+        assert "ts1" in room.state.terrain_paint.undo_stack
+
+    async def test_non_gm_cannot_add_terrain_stroke(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply_as_player(
+            rm, room, room_id, "TERRAIN_STROKE_ADD",
+            id="ts1", material_id="stone",
+            points=make_terrain_points(3),
+        )
+        assert result.type == "ERROR"
+        assert "ts1" not in room.state.terrain_paint.strokes
+
+    async def test_terrain_stroke_requires_at_least_2_points(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(
+            rm, room, room_id, "TERRAIN_STROKE_ADD",
+            id="ts1", material_id="stone",
+            points=make_terrain_points(1),
+        )
+        assert result.type == "ERROR"
+        assert "ts1" not in room.state.terrain_paint.strokes
+
+    async def test_terrain_stroke_exceeds_max_points_returns_error(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(
+            rm, room, room_id, "TERRAIN_STROKE_ADD",
+            id="ts1", material_id="stone",
+            points=make_terrain_points(MAX_TERRAIN_STROKE_POINTS + 1),
+        )
+        assert result.type == "ERROR"
+        assert "ts1" not in room.state.terrain_paint.strokes
+
+    async def test_terrain_stroke_at_exact_max_points_succeeds(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(
+            rm, room, room_id, "TERRAIN_STROKE_ADD",
+            id="ts1", material_id="stone",
+            points=make_terrain_points(MAX_TERRAIN_STROKE_POINTS),
+        )
+        assert result.type == "TERRAIN_STROKE_ADD"
+
+    async def test_terrain_stroke_duplicate_id_returns_error(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                    id="ts1", material_id="stone", points=make_terrain_points(3))
+        result = await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                             id="ts1", material_id="stone", points=make_terrain_points(3))
+        assert result.type == "ERROR"
+
+    async def test_terrain_stroke_missing_id_returns_error(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                             id="", material_id="stone", points=make_terrain_points(3))
+        assert result.type == "ERROR"
+
+    async def test_terrain_stroke_missing_material_id_returns_error(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                             id="ts1", material_id="", points=make_terrain_points(3))
+        assert result.type == "ERROR"
+
+    async def test_terrain_stroke_radius_clamped(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                             id="ts1", material_id="stone",
+                             points=make_terrain_points(3), radius=9999.0)
+        assert result.type == "TERRAIN_STROKE_ADD"
+        assert room.state.terrain_paint.strokes["ts1"].radius == 400.0
+
+    async def test_terrain_stroke_op_defaults_to_paint(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                    id="ts1", material_id="stone", points=make_terrain_points(3))
+        assert room.state.terrain_paint.strokes["ts1"].op == "paint"
+
+    async def test_terrain_stroke_op_erase_accepted(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                             id="ts1", material_id="stone",
+                             points=make_terrain_points(3), op="erase")
+        assert result.type == "TERRAIN_STROKE_ADD"
+        assert result.payload["op"] == "erase"
+
+    async def test_terrain_stroke_marks_dirty(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                    id="ts1", material_id="stone", points=make_terrain_points(3))
+        assert room.dirty is True
+
+    async def test_terrain_stroke_limit_enforced(self, gm_room):
+        rm, room, room_id = gm_room
+        # Fill up to the limit
+        from server.models import TerrainStroke
+        import time as _time
+        for i in range(MAX_TERRAIN_STROKES):
+            room.state.terrain_paint.strokes[f"ts{i}"] = TerrainStroke(
+                id=f"ts{i}", material_id="stone",
+                points=[{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 1.0}],
+            )
+        result = await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                             id="overflow", material_id="stone", points=make_terrain_points(3))
+        assert result.type == "ERROR"
+        assert "overflow" not in room.state.terrain_paint.strokes
+
+    async def test_terrain_stroke_undo_removes_last_stroke(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                    id="ts1", material_id="stone", points=make_terrain_points(3))
+        result = await apply(rm, room, room_id, "TERRAIN_STROKE_UNDO")
+        assert result.type == "TERRAIN_STROKE_UNDO"
+        assert "ts1" in result.payload["ids"]
+        assert "ts1" not in room.state.terrain_paint.strokes
+        assert "ts1" not in room.state.terrain_paint.undo_stack
+
+    async def test_terrain_stroke_undo_multiple(self, gm_room):
+        rm, room, room_id = gm_room
+        for i in range(3):
+            await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                        id=f"ts{i}", material_id="stone", points=make_terrain_points(3))
+        result = await apply(rm, room, room_id, "TERRAIN_STROKE_UNDO", count=2)
+        assert result.type == "TERRAIN_STROKE_UNDO"
+        assert len(result.payload["ids"]) == 2
+        assert len(room.state.terrain_paint.strokes) == 1
+
+    async def test_terrain_stroke_undo_empty_returns_empty_ids(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(rm, room, room_id, "TERRAIN_STROKE_UNDO")
+        assert result.type == "TERRAIN_STROKE_UNDO"
+        assert result.payload["ids"] == []
+
+    async def test_non_gm_cannot_undo_terrain_stroke(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                    id="ts1", material_id="stone", points=make_terrain_points(3))
+        result = await apply_as_player(rm, room, room_id, "TERRAIN_STROKE_UNDO")
+        assert result.type == "ERROR"
+        assert "ts1" in room.state.terrain_paint.strokes
+
+    async def test_terrain_undo_marks_dirty_when_strokes_removed(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "TERRAIN_STROKE_ADD",
+                    id="ts1", material_id="stone", points=make_terrain_points(3))
+        room.dirty = False
+        await apply(rm, room, room_id, "TERRAIN_STROKE_UNDO")
+        assert room.dirty is True
+
+    async def test_terrain_undo_does_not_mark_dirty_when_nothing_removed(self, gm_room):
+        rm, room, room_id = gm_room
+        room.dirty = False
+        await apply(rm, room, room_id, "TERRAIN_STROKE_UNDO")
+        assert room.dirty is False

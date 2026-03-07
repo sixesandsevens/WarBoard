@@ -85,7 +85,7 @@ class TestAuthMiddleware:
         assert r.status_code == 200
 
     async def test_unauthenticated_static_canvas_is_public(self, http_client):
-        r = await http_client.get("/static/test_canvas.html")
+        r = await http_client.get("/static/canvas.html")
         assert r.status_code in (200, 404)  # 404 if file not mounted in test
 
 

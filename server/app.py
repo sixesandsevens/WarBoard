@@ -373,7 +373,7 @@ async def auth_gate(request: Request, call_next):
         return await call_next(request)
 
     # Public board + minimal unauth static for offline single-session mode.
-    if path in ("/", "/favicon.ico") or path == "/static/test_canvas.html" or path.startswith("/static/canvas/") or path.startswith("/static/login") or path.startswith("/static/auth/") or path.startswith("/packs/"):
+    if path in ("/", "/favicon.ico") or path in ("/static/canvas.html", "/static/canvas.js", "/static/canvas.css") or path.startswith("/static/canvas/") or path.startswith("/static/login") or path.startswith("/static/auth/") or path.startswith("/packs/"):
         return await call_next(request)
 
     # Public pack metadata for token library in offline mode.
@@ -401,7 +401,7 @@ async def auth_gate(request: Request, call_next):
 
 @app.get("/")
 def root(req: Request):
-    return RedirectResponse(url="/static/test_canvas.html", status_code=307)
+    return RedirectResponse(url="/static/canvas.html", status_code=307)
 
 
 @app.head("/")
@@ -426,7 +426,7 @@ def join_link(code: str, req: Request):
     add_membership(user.user_id, room_id, role="player")
     touch_membership(user.user_id, room_id)
     update_user_last_room(user.user_id, room_id)
-    return RedirectResponse(url=f"/static/test_canvas.html?room={room_id}", status_code=302)
+    return RedirectResponse(url=f"/static/canvas.html?room={room_id}", status_code=302)
 
 
 # ----------------------------- Auth API ---------------------------------------

@@ -104,7 +104,7 @@
       right.className='actions';
       const openBtn = document.createElement('button');
       openBtn.textContent='Open';
-      openBtn.onclick = ()=> location.href = '/static/test_canvas.html?room=' + encodeURIComponent(r.room_id);
+      openBtn.onclick = ()=> location.href = '/static/canvas.html?room=' + encodeURIComponent(r.room_id);
       right.appendChild(openBtn);
 
       if(r.join_code){
@@ -128,7 +128,7 @@
   document.getElementById('createBtn').onclick = async ()=>{
     const name = document.getElementById('newName').value.trim() || 'Untitled Room';
     const data = await api('/api/rooms', {method:'POST', body: JSON.stringify({name})});
-    location.href = '/static/test_canvas.html?room=' + encodeURIComponent(data.room_id);
+    location.href = '/static/canvas.html?room=' + encodeURIComponent(data.room_id);
   };
 
   document.getElementById('joinBtn').onclick = async ()=>{
@@ -136,7 +136,7 @@
     const code = document.getElementById('joinCode').value.trim().toUpperCase();
     try{
       const data = await api('/api/join', {method:'POST', body: JSON.stringify({code})});
-      location.href = '/static/test_canvas.html?room=' + encodeURIComponent(data.room_id);
+      location.href = '/static/canvas.html?room=' + encodeURIComponent(data.room_id);
     }catch(e){
       joinMsg.textContent = e.message;
     }

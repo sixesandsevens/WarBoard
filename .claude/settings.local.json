@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python -m pytest tests/ -x -q)",
+      "Bash(.venv/bin/pip install httpx -q)",
+      "Bash(.venv/bin/pip install pytest-asyncio -q)",
+      "Bash(.venv/bin/python -m pytest tests/ -q)",
+      "Bash(.venv/bin/python -m pytest tests/test_rooms.py::TestTokenMove::test_gm_can_move_token -q)"
+    ]
+  }
+}
