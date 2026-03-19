@@ -36,6 +36,9 @@ EventType = Literal[
     "ASSET_INSTANCE_DELETE",
     "TERRAIN_STROKE_ADD",
     "TERRAIN_STROKE_UNDO",
+    "COGM_ADD",
+    "COGM_REMOVE",
+    "COGM_UPDATE",
     "ERROR",
 ]
 
@@ -137,6 +140,8 @@ class RoomState(BaseModel):
     version: int = 0
     gm_id: Optional[str] = None
     gm_user_id: Optional[int] = None
+    co_gm_ids: List[str] = Field(default_factory=list)
+    co_gm_user_ids: List[int] = Field(default_factory=list)
     allow_players_move: bool = False
     allow_all_move: bool = False
     lockdown: bool = False

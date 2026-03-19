@@ -2990,6 +2990,7 @@
   const state = {
     room_id: null,
     gm_id: null,
+    co_gm_ids: [],
     allow_players_move: false,
     allow_all_move: false,
     lockdown: false,
@@ -3145,7 +3146,9 @@
   const expandedAssetFolders = new Set([""]);
 
   function myId() { return cidEl.value.trim(); }
-  function isGM() { return state.gm_id && myId() === state.gm_id; }
+  function isPrimaryGM() { return !!(state.gm_id && myId() === state.gm_id); }
+  function isCoGM() { return state.co_gm_ids.includes(myId()); }
+  function isGM() { return isPrimaryGM() || isCoGM(); }
   function ensureOfflineGm() {
     if (online) return;
     const cid = myId() || "player";
@@ -4090,9 +4093,51 @@
 
     const arr = Array.from(players).sort();
     playerListEl.innerHTML = arr.map((id) => {
-      const tag = id === state.gm_id ? " (GM)" : "";
+      const tag = id === state.gm_id ? " (GM)" : state.co_gm_ids.includes(id) ? " (co-GM)" : "";
       return `<div>${id}${tag}</div>`;
     }).join("") || `<div style="opacity:.7">(none yet)</div>`;
+
+    const coGmSection = document.getElementById("coGmSection");
+    const coGmHr = document.getElementById("coGmHr");
+    const isPrimary = isPrimaryGM();
+    if (coGmSection) coGmSection.style.display = isPrimary ? "" : "none";
+    if (coGmHr) coGmHr.style.display = isPrimary ? "" : "none";
+    if (isPrimary) {
+      const coGmListEl = document.getElementById("coGmList");
+      const coGmPromoteListEl = document.getElementById("coGmPromoteList");
+      if (coGmListEl) {
+        coGmListEl.innerHTML = state.co_gm_ids.length
+          ? state.co_gm_ids.map((id) =>
+              `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                <span>${id}</span>
+                <button style="font-size:11px;padding:1px 6px;" data-cogm-demote="${id}">Demote</button>
+              </div>`
+            ).join("")
+          : `<div style="opacity:.7">(none)</div>`;
+        coGmListEl.querySelectorAll("[data-cogm-demote]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            send("COGM_REMOVE", { target_id: btn.dataset.cogmDemote });
+          });
+        });
+      }
+      if (coGmPromoteListEl) {
+        const promotable = arr.filter((id) => id !== state.gm_id && !state.co_gm_ids.includes(id));
+        coGmPromoteListEl.innerHTML = promotable.length
+          ? `<div style="opacity:.7;font-size:11px;margin-bottom:3px;">Promote a player:</div>` +
+            promotable.map((id) =>
+              `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                <span>${id}</span>
+                <button style="font-size:11px;padding:1px 6px;" data-cogm-promote="${id}">Promote</button>
+              </div>`
+            ).join("")
+          : `<div style="opacity:.7;font-size:11px;">(no players to promote)</div>`;
+        coGmPromoteListEl.querySelectorAll("[data-cogm-promote]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            send("COGM_ADD", { target_id: btn.dataset.cogmPromote });
+          });
+        });
+      }
+    }
 
     if (!gm) {
       tokenListEl.innerHTML = `<div style="opacity:.7">Only GM can edit token ownership/locks.</div>`;
@@ -4956,6 +5001,7 @@
 
     state.room_id = s.room_id;
     state.gm_id = s.gm_id;
+    state.co_gm_ids = Array.isArray(s.co_gm_ids) ? s.co_gm_ids : [];
     state.allow_players_move = !!s.allow_players_move;
     state.allow_all_move = !!s.allow_all_move;
     state.lockdown = !!s.lockdown;
@@ -5055,6 +5101,7 @@
     "TOKEN_BADGE_TOGGLE", "TOKEN_MOVE", "STROKE_ADD", "STROKE_DELETE", "STROKE_SET_LOCK", "ERASE_AT", "SHAPE_ADD", "SHAPE_UPDATE", "SHAPE_DELETE", "SHAPE_SET_LOCK",
     "ASSET_INSTANCE_CREATE", "ASSET_INSTANCE_UPDATE", "ASSET_INSTANCE_DELETE",
     "TERRAIN_STROKE_ADD", "TERRAIN_STROKE_UNDO",
+    "COGM_ADD", "COGM_REMOVE",
   ]);
 
   function saveOfflineStateNow() {
@@ -5532,6 +5579,22 @@
       scheduleOfflineSave();
       return;
     }
+
+    if (type === "COGM_ADD") {
+      const tid = payload?.target_id;
+      if (tid && !state.co_gm_ids.includes(tid)) state.co_gm_ids.push(tid);
+      refreshGmUI();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "COGM_REMOVE") {
+      const tid = payload?.target_id;
+      if (tid) state.co_gm_ids = state.co_gm_ids.filter((x) => x !== tid);
+      refreshGmUI();
+      scheduleOfflineSave();
+      return;
+    }
   }
 
   function clearLocalRoomView() {
@@ -5675,9 +5738,16 @@
         players.clear();
         for (const id of (ev.payload?.clients || [])) players.add(id);
         if (ev.payload?.gm_id) state.gm_id = ev.payload.gm_id;
+        state.co_gm_ids = Array.isArray(ev.payload?.co_gm_ids) ? ev.payload.co_gm_ids : state.co_gm_ids;
         refreshGmUI();
         updateSessionPill();
         refreshSessionModalAuth();
+        return;
+      }
+
+      if (ev.type === "COGM_UPDATE") {
+        state.co_gm_ids = Array.isArray(ev.payload?.co_gm_ids) ? ev.payload.co_gm_ids : [];
+        refreshGmUI();
         return;
       }
 

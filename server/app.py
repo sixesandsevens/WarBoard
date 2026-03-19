@@ -1099,6 +1099,7 @@ async def ws_room(ws: WebSocket, room_id: str):
                 "client_id": client_id,
                 "room_id": room_id,
                 "is_gm": room.state.gm_user_id == user.user_id or room.state.gm_id == client_id,
+                "is_co_gm": client_id in room.state.co_gm_ids,
                 "gm_key_set": bool(room.state.gm_key_hash),
                 "username": user.username,
             },

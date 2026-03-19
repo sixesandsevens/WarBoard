@@ -171,7 +171,7 @@ class RoomManager:
         clients = sorted(room.client_counts.keys())
         return WireEvent(
             type="PRESENCE",
-            payload={"clients": clients, "gm_id": room.state.gm_id, "room_id": room.state.room_id},
+            payload={"clients": clients, "gm_id": room.state.gm_id, "co_gm_ids": room.state.co_gm_ids, "room_id": room.state.room_id},
         )
 
     async def broadcast(self, room: Room, event: WireEvent) -> None:
@@ -332,11 +332,19 @@ class RoomManager:
         dist = math.hypot(cx - float(token.x), cy - float(token.y))
         return dist <= token_r + r
 
-    def _is_gm(self, room: Room, user_id: Optional[int], client_id: str) -> bool:
+    def _is_primary_gm(self, room: Room, user_id: Optional[int], client_id: str) -> bool:
         if room.state.gm_user_id is not None and user_id is not None:
             return room.state.gm_user_id == user_id
         # Legacy fallback for old room states.
         return bool(room.state.gm_id and client_id == room.state.gm_id)
+
+    def _is_co_gm(self, room: Room, user_id: Optional[int], client_id: str) -> bool:
+        if user_id is not None and user_id in room.state.co_gm_user_ids:
+            return True
+        return client_id in room.state.co_gm_ids
+
+    def _is_gm(self, room: Room, user_id: Optional[int], client_id: str) -> bool:
+        return self._is_primary_gm(room, user_id, client_id) or self._is_co_gm(room, user_id, client_id)
 
     def can_move_token(self, room: Room, user_id: Optional[int], client_id: str, token: Token) -> bool:
         # GM can move anything.
@@ -460,6 +468,9 @@ class RoomManager:
 
         if t in {"TERRAIN_STROKE_ADD", "TERRAIN_STROKE_UNDO"}:
             return self._apply_terrain_event(room_id, room, t, p, client_id, user_id)
+
+        if t in {"COGM_ADD", "COGM_REMOVE"}:
+            return self._apply_cogm_event(room_id, room, t, p, client_id, user_id)
 
         # Unknown / not implemented
         return WireEvent(type="ERROR", payload={"message": f"Unhandled event type: {t}"})
@@ -1270,3 +1281,32 @@ class RoomManager:
             return WireEvent(type="TERRAIN_STROKE_UNDO", payload={"ids": removed_ids})
 
         return WireEvent(type="ERROR", payload={"message": f"Unhandled terrain event: {t}"})
+
+    # ------------------------------------------------------------------ co-gm
+    def _apply_cogm_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
+        if not self._is_primary_gm(room, user_id, client_id):
+            return WireEvent(type="ERROR", payload={"message": "Only the primary GM can manage co-GMs"})
+
+        target_id: str = p.get("target_id", "")
+        target_user_id: Optional[int] = p.get("target_user_id")
+
+        if not target_id:
+            return WireEvent(type="ERROR", payload={"message": "target_id required"})
+
+        # Prevent assigning the primary GM as a co-GM.
+        if target_id == room.state.gm_id or (target_user_id is not None and target_user_id == room.state.gm_user_id):
+            return WireEvent(type="ERROR", payload={"message": "Primary GM cannot be added as co-GM"})
+
+        if t == "COGM_ADD":
+            if target_id not in room.state.co_gm_ids:
+                room.state.co_gm_ids.append(target_id)
+            if target_user_id is not None and target_user_id not in room.state.co_gm_user_ids:
+                room.state.co_gm_user_ids.append(target_user_id)
+        elif t == "COGM_REMOVE":
+            room.state.co_gm_ids = [x for x in room.state.co_gm_ids if x != target_id]
+            if target_user_id is not None:
+                room.state.co_gm_user_ids = [x for x in room.state.co_gm_user_ids if x != target_user_id]
+
+        self._mark_dirty(room_id, room)
+        return WireEvent(type="COGM_UPDATE", payload={"co_gm_ids": room.state.co_gm_ids})
+
