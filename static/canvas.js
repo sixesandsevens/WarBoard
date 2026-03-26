@@ -72,10 +72,22 @@
   const strokeListEl = document.getElementById("strokeList");
   const shapeListEl = document.getElementById("shapeList");
   const roomsListEl = document.getElementById("roomsList");
+  const sessionSummaryTextEl = document.getElementById("sessionSummaryText");
+  const sessionRoomsListEl = document.getElementById("sessionRoomsList");
+  const sessionMembersListEl = document.getElementById("sessionMembersList");
+  const roomMovePromptEl = document.getElementById("roomMovePrompt");
+  const roomMovePromptBackdropEl = document.getElementById("roomMovePromptBackdrop");
+  const roomMovePromptTitleEl = document.getElementById("roomMovePromptTitle");
+  const roomMovePromptTextEl = document.getElementById("roomMovePromptText");
+  const roomMovePromptJoinEl = document.getElementById("roomMovePromptJoin");
+  const roomMovePromptDismissEl = document.getElementById("roomMovePromptDismiss");
+  const roomMovePromptCloseEl = document.getElementById("roomMovePromptClose");
   const snapshotsListEl = document.getElementById("snapshotsList");
   const snapshotRoomLabelEl = document.getElementById("snapshotRoomLabel");
   const newRoomNameEl = document.getElementById("newRoomName");
   const newRoomIdEl = document.getElementById("newRoomId");
+  const newSessionNameEl = document.getElementById("newSessionName");
+  const createSessionBtnEl = document.getElementById("createSessionBtn");
   const snapshotLabelInputEl = document.getElementById("snapshotLabelInput");
   const packSelectEl = document.getElementById("packSelect");
   const packSearchEl = document.getElementById("packSearch");
@@ -3021,6 +3033,17 @@
     },
   };
 
+  const playSessionState = {
+    id: null,
+    name: "",
+    user_role: "",
+    rooms: [],
+    members: [],
+    current_room: null,
+  };
+  let pendingRoomMoveOffer = null;
+  let pendingArrivalNotice = "";
+
   const terrainBrush = {
     material_id: "mud",
     radius: 60,
@@ -4058,6 +4081,207 @@
     terrainBadgeEl.style.display = "inline-block";
   }
 
+  function clearPlaySessionState() {
+    playSessionState.id = null;
+    playSessionState.name = "";
+    playSessionState.user_role = "";
+    playSessionState.rooms = [];
+    playSessionState.members = [];
+    playSessionState.current_room = null;
+  }
+
+  function applyPlaySessionState(session) {
+    if (!session || typeof session !== "object") {
+      clearPlaySessionState();
+      closeRoomMovePrompt();
+      renderSessionSummary();
+      return;
+    }
+    playSessionState.id = session.id || null;
+    playSessionState.name = session.name || "";
+    playSessionState.user_role = session.user_role || "";
+    playSessionState.rooms = Array.isArray(session.rooms) ? session.rooms : [];
+    playSessionState.members = Array.isArray(session.members) ? session.members : [];
+    playSessionState.current_room = session.current_room || null;
+    renderSessionSummary();
+  }
+
+  async function refreshCurrentSessionState() {
+    if (!playSessionState.id) {
+      renderSessionSummary();
+      return;
+    }
+    try {
+      const session = await apiGet(`/api/sessions/${encodeURIComponent(playSessionState.id)}`);
+      applyPlaySessionState(session);
+    } catch (e) {
+      console.warn("session refresh failed", e);
+      renderSessionSummary();
+    }
+  }
+
+  function closeRoomMovePrompt() {
+    if (roomMovePromptEl) roomMovePromptEl.classList.add("hidden");
+    if (roomMovePromptBackdropEl) roomMovePromptBackdropEl.classList.add("hidden");
+  }
+
+  function openRoomMovePrompt() {
+    if (!roomMovePromptEl || !roomMovePromptBackdropEl || !pendingRoomMoveOffer) return;
+    const move = pendingRoomMoveOffer;
+    if (roomMovePromptTitleEl) roomMovePromptTitleEl.textContent = `${move.requested_by || "GM"} wants to move you`;
+    if (roomMovePromptTextEl) {
+      const bits = [`Destination: ${move.target_room_name || move.target_room_id}`];
+      if (move.message) bits.push(move.message);
+      roomMovePromptTextEl.textContent = bits.join("\n\n");
+    }
+    roomMovePromptEl.classList.remove("hidden");
+    roomMovePromptBackdropEl.classList.remove("hidden");
+  }
+
+  function setPendingRoomMoveOffer(move) {
+    pendingRoomMoveOffer = move || null;
+    if (pendingRoomMoveOffer) openRoomMovePrompt();
+    else closeRoomMovePrompt();
+    renderSessionSummary();
+  }
+
+  function prepareForRoomTransition() {
+    isPanning = false;
+    pointerCaptured = false;
+    draggingTokenId = null;
+    draggingTokenIds = [];
+    dragMoveStartWorld = null;
+    dragStartTokenPositions.clear();
+    draggingAssetId = null;
+    assetDragOrigin = null;
+    draggingShapeId = null;
+    shapeDragOrigin = null;
+    marqueeSelectRect = null;
+    dragSpawn = null;
+    dragSpawnWorld = null;
+    dragSpawnOverCanvas = false;
+    activeStroke = null;
+    activeShapePreview = null;
+    activeRuler = null;
+    activePaintStroke = null;
+    selectedTokenId = null;
+    selectedAssetId = null;
+    selectedShapeId = null;
+    hoveredTokenId = null;
+    setSelection([]);
+    closeTokenMenu();
+    hideAllCtx();
+    hideToolPanels();
+    requestRender();
+  }
+
+  async function executeIncomingRoomMove(move, options = {}) {
+    if (!move || !move.target_room_id) return;
+    setPendingRoomMoveOffer(null);
+    if (options.notice) pendingArrivalNotice = options.notice;
+    await switchRoom(move.target_room_id);
+  }
+
+  function renderSessionSummary() {
+    if (!sessionSummaryTextEl || !sessionRoomsListEl || !sessionMembersListEl) return;
+    const hasSession = !!playSessionState.id;
+    if (!hasSession) {
+      sessionSummaryTextEl.textContent = pendingRoomMoveOffer
+        ? `Pending move offer to ${pendingRoomMoveOffer.target_room_name || pendingRoomMoveOffer.target_room_id}`
+        : "No session attached to this room yet.";
+      sessionRoomsListEl.innerHTML = `<div style="opacity:.7">(standalone room)</div>`;
+      sessionMembersListEl.innerHTML = `<div style="opacity:.7">(no session roster)</div>`;
+      if (createSessionBtnEl) {
+        createSessionBtnEl.disabled = !isGM();
+        createSessionBtnEl.textContent = "Create Session Here";
+      }
+      if (newSessionNameEl) newSessionNameEl.disabled = !isGM();
+      return;
+    }
+    const currentRoomName = playSessionState.current_room?.display_name || roomEl.value.trim() || "Current Room";
+    const role = String(playSessionState.user_role || "player").replace(/_/g, " ");
+    const pendingSuffix = pendingRoomMoveOffer ? ` • pending move to ${pendingRoomMoveOffer.target_room_name || pendingRoomMoveOffer.target_room_id}` : "";
+    sessionSummaryTextEl.textContent = `${playSessionState.name} • ${currentRoomName} • ${role}${pendingSuffix}`;
+    if (createSessionBtnEl) {
+      createSessionBtnEl.disabled = true;
+      createSessionBtnEl.textContent = "Session Attached";
+    }
+    if (newSessionNameEl) newSessionNameEl.disabled = true;
+
+    const canManageSession = ["gm", "co_gm"].includes(String(playSessionState.user_role || ""));
+    const roomRows = playSessionState.rooms.map((room) => {
+      const current = room.id === (state.room_id || roomEl.value.trim());
+      const occupancy = Number(room.occupancy_count || 0);
+      const moveButtons = canManageSession && !current
+        ? `<button data-session-request="${room.id}" style="padding:2px 6px;">Request</button><button data-session-force="${room.id}" style="padding:2px 6px;">Force</button>`
+        : "";
+      return `
+        <div style="display:flex; gap:6px; align-items:center; margin:4px 0; flex-wrap:wrap; ${current ? "background:rgba(91,156,246,0.14); border-radius:8px; padding:4px;" : ""}">
+          <button data-session-open="${room.id}" style="padding:2px 6px;">Go</button>
+          <button data-session-copy="${room.id}" style="padding:2px 6px;">Copy Link</button>
+          ${moveButtons}
+          <span style="font-weight:${current ? 700 : 500};">${room.display_name || room.id}</span>
+          <span style="opacity:.65;">${occupancy} online</span>
+          ${current ? '<span style="opacity:.75;">Current</span>' : ''}
+        </div>
+      `;
+    });
+    sessionRoomsListEl.innerHTML = roomRows.join("") || `<div style="opacity:.7">(no session rooms)</div>`;
+    sessionRoomsListEl.querySelectorAll("button[data-session-open]").forEach((btn) => {
+      btn.onclick = () => switchRoom(btn.getAttribute("data-session-open"));
+    });
+    sessionRoomsListEl.querySelectorAll("button[data-session-copy]").forEach((btn) => {
+      btn.onclick = async () => {
+        const rid = btn.getAttribute("data-session-copy");
+        const room = playSessionState.rooms.find((entry) => entry.id === rid);
+        if (!room || !room.join_code) return;
+        const link = `${location.origin}/join/${room.join_code}`;
+        try {
+          await navigator.clipboard.writeText(link);
+          log(`JOIN LINK COPIED ${room.join_code}`);
+        } catch (_) {
+          log(`JOIN LINK: ${link}`);
+        }
+      };
+    });
+    sessionRoomsListEl.querySelectorAll("button[data-session-request]").forEach((btn) => {
+      btn.onclick = () => {
+        const rid = btn.getAttribute("data-session-request");
+        const room = playSessionState.rooms.find((entry) => entry.id === rid);
+        if (!room || !playSessionState.id) return;
+        const message = prompt(`Request players join ${room.display_name || rid}? Optional message:`, "") || "";
+        send("SESSION_ROOM_MOVE_REQUEST", {
+          session_id: playSessionState.id,
+          target_room_id: rid,
+          message,
+        });
+        log(`ROOM MOVE REQUEST ${rid}`);
+      };
+    });
+    sessionRoomsListEl.querySelectorAll("button[data-session-force]").forEach((btn) => {
+      btn.onclick = () => {
+        const rid = btn.getAttribute("data-session-force");
+        const room = playSessionState.rooms.find((entry) => entry.id === rid);
+        if (!room || !playSessionState.id) return;
+        const message = prompt(`Force-move players to ${room.display_name || rid}? Optional message:`, "") || "";
+        send("SESSION_ROOM_MOVE_FORCE", {
+          session_id: playSessionState.id,
+          target_room_id: rid,
+          message,
+        });
+        log(`ROOM MOVE FORCE ${rid}`);
+      };
+    });
+
+    const memberRows = playSessionState.members.map((member) => `
+      <div style="display:flex; gap:6px; align-items:center; margin:4px 0;">
+        <span>${member.username || "User"}</span>
+        <span style="opacity:.65; text-transform:capitalize;">${String(member.role || "player").replace(/_/g, " ")}</span>
+      </div>
+    `);
+    sessionMembersListEl.innerHTML = memberRows.join("") || `<div style="opacity:.7">(no members)</div>`;
+  }
+
   function refreshGmUI() {
     const gm = isGM();
 
@@ -4200,6 +4424,7 @@
     try {
       const data = await apiGet("/api/my/rooms");
       const rooms = data.rooms || [];
+      await refreshCurrentSessionState();
       const rows = rooms.map((r) => `
         <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
           <button data-open-room="${r.room_id}" style="padding:2px 6px;">Open</button>
@@ -4207,8 +4432,9 @@
           <button data-rename-room="${r.room_id}" style="padding:2px 6px;">Rename</button>
           <button data-delete-room="${r.room_id}" style="padding:2px 6px; color:#ffb3b3;">Delete</button>
           <code>${r.room_id}</code>
-          <span style="opacity:.9">${r.name}</span>
+          <span style="opacity:.9">${r.display_name || r.name}</span>
           <span style="opacity:.7">${r.role === "owner" ? "GM" : "Player"}</span>
+          <span style="opacity:.6">${r.session_id ? "session" : "standalone"}</span>
           <span style="opacity:.6">${(r.join_code || "").trim() ? "join " + r.join_code : ""}</span>
           <span style="opacity:.6">${(r.created_at || "").replace("T", " ").slice(0, 19)}</span>
         </div>
@@ -5598,6 +5824,7 @@
   }
 
   function clearLocalRoomView() {
+    prepareForRoomTransition();
     state.room_id = null;
     state.background_mode = "solid";
     state.background_url = null;
@@ -5684,6 +5911,9 @@
       if (ev.code === 1008) {
         log("Connection rejected: login expired or you are not a member of this room.");
       }
+      clearPlaySessionState();
+      closeRoomMovePrompt();
+      renderSessionSummary();
       updateSessionPill();
       refreshSessionModalAuth();
       if (heartbeatTimer) {
@@ -5714,6 +5944,11 @@
       if (ev.type === "STATE_SYNC") {
         hideResyncBadge();
         applyStateSync(ev.payload);
+        if (pendingArrivalNotice) {
+          toast(pendingArrivalNotice);
+          log(pendingArrivalNotice);
+          pendingArrivalNotice = "";
+        }
         log(`STATE_SYNC v${state.version} gm=${state.gm_id} strokes=${state.strokes.size} shapes=${state.shapes.size}`);
         updateSessionPill();
         refreshSessionModalAuth();
@@ -5724,9 +5959,34 @@
         if (typeof ev.payload?.is_gm === "boolean") {
           log(ev.payload.is_gm ? "You are GM" : `GM is ${state.gm_id || "(unclaimed)"}`);
         }
+        if (ev.payload && Object.prototype.hasOwnProperty.call(ev.payload, "session")) {
+          applyPlaySessionState(ev.payload.session || null);
+        }
         refreshGmUI();
         updateSessionPill();
         refreshSessionModalAuth();
+        return;
+      }
+
+      if (ev.type === "SESSION_ROOM_MOVE_OFFER") {
+        setPendingRoomMoveOffer(ev.payload || null);
+        toast(`${ev.payload?.requested_by || "GM"} requested that players join ${ev.payload?.target_room_name || ev.payload?.target_room_id || "another room"}.`);
+        return;
+      }
+
+      if (ev.type === "SESSION_ROOM_MOVE_EXECUTE") {
+        const targetName = ev.payload?.target_room_name || ev.payload?.target_room_id || "another room";
+        void executeIncomingRoomMove(ev.payload || null, {
+          notice: `${ev.payload?.requested_by || "GM"} moved you to ${targetName}.`,
+        });
+        return;
+      }
+
+      if (ev.type === "SESSION_SYSTEM_NOTICE") {
+        if (ev.payload?.message) {
+          toast(ev.payload.message);
+          log(`SESSION NOTICE: ${ev.payload.message}`);
+        }
         return;
       }
 
@@ -6108,6 +6368,7 @@
   }
 
   async function switchRoom(newRoomId) {
+    prepareForRoomTransition();
     roomEl.value = newRoomId;
     snapshotRoomLabelEl.textContent = newRoomId;
     await refreshSnapshotsPanel();
@@ -6543,6 +6804,7 @@
   const roomsPanelBtnEl = document.getElementById("roomsPanelBtn");
   if (roomsPanelBtnEl) roomsPanelBtnEl.onclick = async () => {
     activateDrawerTab("rooms", true);
+    await refreshCurrentSessionState();
     await refreshRoomsPanel();
     await refreshSnapshotsPanel();
   };
@@ -6881,13 +7143,52 @@
     const name = newRoomNameEl.value.trim();
     const roomId = newRoomIdEl.value.trim();
     try {
-      const created = await apiPost("/api/rooms", { name, room_id: roomId });
+      const created = playSessionState.id
+        ? await apiPost(`/api/sessions/${encodeURIComponent(playSessionState.id)}/rooms`, { name, room_id: roomId })
+        : await apiPost("/api/rooms", { name, room_id: roomId });
       log(`ROOM CREATED ${created.room_id}`);
       if (created.room_id) await switchRoom(created.room_id);
+      await refreshCurrentSessionState();
       await refreshRoomsPanel();
       await refreshSnapshotsPanel();
     } catch (e) {
       log(`CREATE ROOM ERROR: ${e.message || e}`);
+    }
+  };
+  if (roomMovePromptJoinEl) roomMovePromptJoinEl.onclick = async () => {
+    if (!pendingRoomMoveOffer) return;
+    const move = pendingRoomMoveOffer;
+    try {
+      send("SESSION_ROOM_MOVE_ACCEPT", {
+        session_id: move.session_id,
+        target_room_id: move.target_room_id,
+      });
+    } catch (_) {}
+    await executeIncomingRoomMove(move, {
+      notice: `Joining ${move.target_room_name || move.target_room_id}.`,
+    });
+  };
+  if (roomMovePromptDismissEl) roomMovePromptDismissEl.onclick = () => closeRoomMovePrompt();
+  if (roomMovePromptCloseEl) roomMovePromptCloseEl.onclick = () => closeRoomMovePrompt();
+  if (roomMovePromptBackdropEl) roomMovePromptBackdropEl.onclick = () => closeRoomMovePrompt();
+  if (createSessionBtnEl) createSessionBtnEl.onclick = async () => {
+    const rid = roomEl.value.trim();
+    if (!rid) {
+      log("CREATE SESSION ERROR: connect to a room first");
+      return;
+    }
+    if (playSessionState.id) {
+      log(`SESSION READY ${playSessionState.name}`);
+      return;
+    }
+    const name = newSessionNameEl?.value.trim() || "";
+    try {
+      const session = await apiPost(`/api/rooms/${encodeURIComponent(rid)}/attach-session`, { name });
+      applyPlaySessionState(session);
+      log(`SESSION CREATED ${session.id}`);
+      await refreshRoomsPanel();
+    } catch (e) {
+      log(`CREATE SESSION ERROR: ${e.message || e}`);
     }
   };
   document.getElementById("saveSnapshotBtn").onclick = async () => {

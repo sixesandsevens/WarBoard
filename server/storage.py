@@ -43,6 +43,10 @@ class RoomMetaRow(SQLModel, table=True):
     created_at: str
     owner_user_id: Optional[int] = Field(default=None, index=True)
     join_code: Optional[str] = Field(default=None, index=True, unique=True)
+    session_id: Optional[str] = Field(default=None, index=True)
+    display_name: Optional[str] = None
+    room_order: Optional[int] = None
+    archived: bool = False
 
 
 class SnapshotRow(SQLModel, table=True):
@@ -68,6 +72,23 @@ class SessionRow(SQLModel, table=True):
     user_id: int = Field(index=True)
     created_at: str
     expires_at: str
+
+
+class GameSessionRow(SQLModel, table=True):
+    session_id: str = Field(primary_key=True)
+    name: str
+    created_by_user_id: Optional[int] = Field(default=None, index=True)
+    created_at: str
+    updated_at: str
+    archived: bool = False
+
+
+class GameSessionMemberRow(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True)
+    user_id: int = Field(index=True)
+    role: str = "player"  # "gm" | "co_gm" | "player"
+    joined_at: str
 
 
 class RoomMemberRow(SQLModel, table=True):
@@ -157,6 +178,15 @@ def init_db() -> None:
             if not _column_exists(conn, table, "join_code"):
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN join_code TEXT;")
                 conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS ix_roommetarow_join_code ON {table}(join_code);")
+            if not _column_exists(conn, table, "session_id"):
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN session_id TEXT;")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS ix_roommetarow_session_id ON {table}(session_id);")
+            if not _column_exists(conn, table, "display_name"):
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN display_name TEXT;")
+            if not _column_exists(conn, table, "room_order"):
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN room_order INTEGER;")
+            if not _column_exists(conn, table, "archived"):
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN archived BOOLEAN DEFAULT 0;")
         user_table = "userrow"
         if _table_exists(conn, user_table):
             if not _column_exists(conn, user_table, "last_room_id"):
@@ -202,13 +232,35 @@ def save_room_state_json(room_id: str, state_json: str) -> None:
         s.commit()
 
 
-def create_room_record(room_id: str, name: str, state_json: str, owner_user_id: Optional[int] = None, join_code: Optional[str] = None) -> None:
+def create_room_record(
+    room_id: str,
+    name: str,
+    state_json: str,
+    owner_user_id: Optional[int] = None,
+    join_code: Optional[str] = None,
+    session_id: Optional[str] = None,
+    display_name: Optional[str] = None,
+    room_order: Optional[int] = None,
+    archived: bool = False,
+) -> None:
     now = utc_now_iso()
     with Session(engine) as s:
         existing = s.get(RoomMetaRow, room_id)
         if existing:
             raise ValueError("Room already exists")
-        s.add(RoomMetaRow(room_id=room_id, name=name, created_at=now, owner_user_id=owner_user_id, join_code=join_code))
+        s.add(
+            RoomMetaRow(
+                room_id=room_id,
+                name=name,
+                created_at=now,
+                owner_user_id=owner_user_id,
+                join_code=join_code,
+                session_id=session_id,
+                display_name=display_name,
+                room_order=room_order,
+                archived=archived,
+            )
+        )
         s.add(RoomRow(room_id=room_id, state_json=state_json, updated_at=now))
         s.commit()
 
@@ -216,6 +268,12 @@ def create_room_record(room_id: str, name: str, state_json: str, owner_user_id: 
 def get_room_meta(room_id: str) -> Optional[RoomMetaRow]:
     with Session(engine) as s:
         return s.get(RoomMetaRow, room_id)
+
+
+def get_room_session_id(room_id: str) -> Optional[str]:
+    with Session(engine) as s:
+        meta = s.get(RoomMetaRow, room_id)
+        return meta.session_id if meta else None
 
 
 def update_room_name(room_id: str, name: str) -> bool:
@@ -248,6 +306,191 @@ def delete_room_record(room_id: str) -> bool:
             s.delete(m)
         s.commit()
         return True
+
+
+# --- Gameplay sessions -------------------------------------------------------
+
+def create_game_session(name: str, created_by_user_id: Optional[int]) -> GameSessionRow:
+    now = utc_now_iso()
+    row = GameSessionRow(
+        session_id="sess_" + secrets.token_hex(6),
+        name=(name or "").strip() or "Untitled Session",
+        created_by_user_id=created_by_user_id,
+        created_at=now,
+        updated_at=now,
+        archived=False,
+    )
+    with Session(engine) as s:
+        s.add(row)
+        s.commit()
+        s.refresh(row)
+    if created_by_user_id is not None:
+        add_game_session_member(row.session_id, created_by_user_id, "gm")
+    return row
+
+
+def get_game_session(session_id: str) -> Optional[GameSessionRow]:
+    with Session(engine) as s:
+        return s.get(GameSessionRow, session_id)
+
+
+def touch_game_session(session_id: str) -> None:
+    with Session(engine) as s:
+        row = s.get(GameSessionRow, session_id)
+        if not row:
+            return
+        row.updated_at = utc_now_iso()
+        s.add(row)
+        s.commit()
+
+
+def add_game_session_member(session_id: str, user_id: int, role: str = "player") -> None:
+    now = utc_now_iso()
+    with Session(engine) as s:
+        existing = s.exec(
+            select(GameSessionMemberRow).where(
+                GameSessionMemberRow.session_id == session_id,
+                GameSessionMemberRow.user_id == user_id,
+            )
+        ).first()
+        if existing:
+            existing.role = role or existing.role
+            s.add(existing)
+        else:
+            s.add(GameSessionMemberRow(session_id=session_id, user_id=user_id, role=role or "player", joined_at=now))
+        s.commit()
+    touch_game_session(session_id)
+
+
+def get_game_session_role(session_id: str, user_id: int) -> Optional[str]:
+    with Session(engine) as s:
+        row = s.exec(
+            select(GameSessionMemberRow).where(
+                GameSessionMemberRow.session_id == session_id,
+                GameSessionMemberRow.user_id == user_id,
+            )
+        ).first()
+        return row.role if row else None
+
+
+def is_game_session_member(session_id: str, user_id: int) -> bool:
+    return bool(get_game_session_role(session_id, user_id))
+
+
+def can_manage_game_session(session_id: str, user_id: int) -> bool:
+    return (get_game_session_role(session_id, user_id) or "") in {"gm", "co_gm"}
+
+
+def list_game_sessions_for_user(user_id: int) -> List[Dict[str, object]]:
+    with Session(engine) as s:
+        memberships = s.exec(select(GameSessionMemberRow).where(GameSessionMemberRow.user_id == user_id)).all()
+        session_ids = [row.session_id for row in memberships]
+        sessions = {
+            row.session_id: row
+            for row in s.exec(select(GameSessionRow).where(GameSessionRow.session_id.in_(session_ids))).all()
+        } if session_ids else {}
+    out: List[Dict[str, object]] = []
+    for membership in memberships:
+        session = sessions.get(membership.session_id)
+        if not session or session.archived:
+            continue
+        out.append(
+            {
+                "id": session.session_id,
+                "name": session.name,
+                "role": membership.role,
+                "created_at": session.created_at,
+                "updated_at": session.updated_at,
+            }
+        )
+    out.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+    return out
+
+
+def list_game_session_members(session_id: str) -> List[Dict[str, object]]:
+    with Session(engine) as s:
+        members = s.exec(select(GameSessionMemberRow).where(GameSessionMemberRow.session_id == session_id)).all()
+        user_ids = [m.user_id for m in members]
+        users = {row.user_id: row for row in s.exec(select(UserRow).where(UserRow.user_id.in_(user_ids))).all()} if user_ids else {}
+    out: List[Dict[str, object]] = []
+    for member in members:
+        user = users.get(member.user_id)
+        out.append(
+            {
+                "user_id": member.user_id,
+                "username": user.username if user else f"user-{member.user_id}",
+                "role": member.role,
+                "joined_at": member.joined_at,
+            }
+        )
+    out.sort(key=lambda row: ({"gm": 0, "co_gm": 1, "player": 2}.get(str(row.get("role")), 9), str(row.get("username"))))
+    return out
+
+
+def list_game_session_rooms(session_id: str) -> List[Dict[str, object]]:
+    with Session(engine) as s:
+        rows = s.exec(select(RoomMetaRow).where(RoomMetaRow.session_id == session_id)).all()
+    out: List[Dict[str, object]] = []
+    for row in rows:
+        if row.archived:
+            continue
+        out.append(
+            {
+                "room_id": row.room_id,
+                "name": row.name,
+                "display_name": row.display_name or row.name,
+                "room_order": row.room_order if row.room_order is not None else 999999,
+                "join_code": row.join_code or "",
+                "created_at": row.created_at,
+                "owner_user_id": row.owner_user_id,
+            }
+        )
+    out.sort(key=lambda row: (int(row.get("room_order") or 999999), str(row.get("display_name") or "").lower(), str(row.get("room_id") or "")))
+    return out
+
+
+def next_room_order_for_session(session_id: str) -> int:
+    rooms = list_game_session_rooms(session_id)
+    if not rooms:
+        return 0
+    return max(int(row.get("room_order") or 0) for row in rooms) + 1
+
+
+def assign_room_to_game_session(room_id: str, session_id: str, display_name: Optional[str] = None, order: Optional[int] = None) -> bool:
+    with Session(engine) as s:
+        meta = s.get(RoomMetaRow, room_id)
+        session = s.get(GameSessionRow, session_id)
+        if not meta or not session:
+            return False
+        meta.session_id = session_id
+        meta.display_name = (display_name or "").strip() or meta.display_name or meta.name
+        meta.room_order = next_room_order_for_session(session_id) if order is None else order
+        s.add(meta)
+        session.updated_at = utc_now_iso()
+        s.add(session)
+        s.commit()
+        return True
+
+
+def create_room_in_game_session(*, session_id: str, created_by_user_id: int, room_id: str, name: str, state_json: str, join_code: Optional[str] = None) -> None:
+    display_name = (name or "").strip() or "Untitled Room"
+    create_room_record(
+        room_id=room_id,
+        name=display_name,
+        state_json=state_json,
+        owner_user_id=created_by_user_id,
+        join_code=join_code,
+        session_id=session_id,
+        display_name=display_name,
+        room_order=next_room_order_for_session(session_id),
+    )
+    add_membership(created_by_user_id, room_id, role="owner")
+    for member in list_game_session_members(session_id):
+        member_user_id = member.get("user_id")
+        if not isinstance(member_user_id, int) or member_user_id == created_by_user_id:
+            continue
+        add_membership(member_user_id, room_id, role="player")
+    touch_game_session(session_id)
 
 
 # --- Snapshots ---------------------------------------------------------------
@@ -427,32 +670,71 @@ def touch_membership(user_id: int, room_id: str) -> None:
             s.commit()
 
 
+def list_room_member_user_ids(room_id: str) -> List[int]:
+    with Session(engine) as s:
+        rows = s.exec(select(RoomMemberRow).where(RoomMemberRow.room_id == room_id)).all()
+        return [int(row.user_id) for row in rows]
+
+
 def is_member(user_id: int, room_id: str) -> bool:
     with Session(engine) as s:
         row = s.get(RoomMemberRow, (user_id, room_id))
         return bool(row)
 
 
-def list_rooms_for_user(user_id: int) -> List[Dict[str, str]]:
+def ensure_room_membership_for_user(user_id: int, room_id: str) -> bool:
+    if is_member(user_id, room_id):
+        return True
+    with Session(engine) as s:
+        meta = s.get(RoomMetaRow, room_id)
+        if not meta or not meta.session_id:
+            return False
+    role = get_game_session_role(meta.session_id, user_id)
+    if not role:
+        return False
+    add_membership(user_id, room_id, role="owner" if role == "gm" else "player")
+    return True
+
+
+def list_rooms_for_user(user_id: int) -> List[Dict[str, object]]:
     with Session(engine) as s:
         mems = s.exec(select(RoomMemberRow).where(RoomMemberRow.user_id == user_id)).all()
+        session_memberships = s.exec(select(GameSessionMemberRow).where(GameSessionMemberRow.user_id == user_id)).all()
+        session_ids = [m.session_id for m in session_memberships]
+        session_role_by_id = {m.session_id: m.role for m in session_memberships}
         metas = {m.room_id: m for m in s.exec(select(RoomMetaRow)).all()}
-        rows = {r.room_id: r for r in s.exec(select(RoomRow)).all()}
-        out: List[Dict[str, str]] = []
-        # sort by last_seen desc
+        direct_room_ids = {m.room_id for m in mems}
+        for meta in metas.values():
+            if meta.session_id and meta.session_id in session_ids and meta.room_id not in direct_room_ids:
+                mems.append(
+                    RoomMemberRow(
+                        user_id=user_id,
+                        room_id=meta.room_id,
+                        role="owner" if session_role_by_id.get(meta.session_id) == "gm" else "player",
+                        last_seen_at=meta.created_at,
+                    )
+                )
+        out: List[Dict[str, object]] = []
         mems_sorted = sorted(mems, key=lambda m: m.last_seen_at or "", reverse=True)
+        seen_room_ids = set()
         for m in mems_sorted:
+            if m.room_id in seen_room_ids:
+                continue
+            seen_room_ids.add(m.room_id)
             meta = metas.get(m.room_id)
-            if not meta:
+            if not meta or meta.archived:
                 continue
             out.append(
                 {
                     "room_id": meta.room_id,
                     "name": meta.name,
+                    "display_name": meta.display_name or meta.name,
                     "join_code": meta.join_code or "",
                     "role": m.role,
                     "last_seen_at": m.last_seen_at,
                     "created_at": meta.created_at,
+                    "session_id": meta.session_id,
+                    "room_order": meta.room_order,
                 }
             )
         return out

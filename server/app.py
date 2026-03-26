@@ -36,8 +36,13 @@ except Exception:  # pragma: no cover - fallback used in minimal/offline envs
 from .models import RoomState, WireEvent
 from .rooms import RoomManager
 from .storage import (
+    add_game_session_member,
     add_membership,
+    assign_room_to_game_session,
+    can_manage_game_session,
     create_asset_record,
+    create_game_session,
+    create_room_in_game_session,
     create_room_record,
     create_session,
     create_snapshot,
@@ -46,6 +51,9 @@ from .storage import (
     delete_room_record,
     delete_session,
     ensure_room_join_code,
+    ensure_room_membership_for_user,
+    get_game_session,
+    get_game_session_role,
     get_room_meta,
     get_pack_asset_by_asset_id,
     get_private_pack_by_id,
@@ -56,6 +64,10 @@ from .storage import (
     init_db,
     is_member,
     list_all_assets_for_user,
+    list_game_session_members,
+    list_game_session_rooms,
+    list_game_sessions_for_user,
+    list_room_member_user_ids,
     list_assets_for_user,
     list_rooms_for_user,
     list_snapshots,
@@ -347,6 +359,151 @@ def _gm_authorized(room_state: RoomState, user_id: Optional[int], gm_key: str | 
     if not gm_key:
         return False
     return _hash_key(gm_key) == room_state.gm_key_hash
+
+
+def _room_online_count(room_id: str) -> int:
+    room = rm._rooms.get(room_id)
+    return len(room.client_counts) if room else 0
+
+
+def _build_session_summary(session_id: str, user_id: int, current_room_id: str | None = None) -> dict | None:
+    session = get_game_session(session_id)
+    if not session:
+        return None
+    role = get_game_session_role(session_id, user_id)
+    if not role:
+        return None
+    rooms = []
+    for room in list_game_session_rooms(session_id):
+        room_id = str(room.get("room_id") or "")
+        rooms.append(
+            {
+                "id": room_id,
+                "display_name": room.get("display_name") or room.get("name") or room_id,
+                "join_code": room.get("join_code") or "",
+                "room_order": room.get("room_order"),
+                "occupancy_count": _room_online_count(room_id),
+                "is_current": room_id == current_room_id,
+            }
+        )
+    members = []
+    for member in list_game_session_members(session_id):
+        members.append(
+            {
+                "user_id": member.get("user_id"),
+                "username": member.get("username"),
+                "role": member.get("role"),
+            }
+        )
+    current_room = None
+    if current_room_id:
+        meta = get_room_meta(current_room_id)
+        if meta:
+            current_room = {"id": current_room_id, "display_name": meta.display_name or meta.name}
+    return {
+        "id": session.session_id,
+        "name": session.name,
+        "user_role": role,
+        "rooms": rooms,
+        "members": members,
+        "current_room": current_room,
+    }
+
+
+def _room_session_payload(room_id: str, user_id: int) -> dict | None:
+    meta = get_room_meta(room_id)
+    if not meta or not meta.session_id:
+        return None
+    return _build_session_summary(meta.session_id, user_id, room_id)
+
+
+def _session_room_name(session_id: str, target_room_id: str) -> str | None:
+    for room in list_game_session_rooms(session_id):
+        if str(room.get("room_id") or "") == target_room_id:
+            return str(room.get("display_name") or room.get("name") or target_room_id)
+    return None
+
+
+async def _broadcast_session_event(session_id: str, event: WireEvent, roles: set[str] | None = None) -> None:
+    session_rooms = {str(room.get("room_id") or "") for room in list_game_session_rooms(session_id)}
+    if not session_rooms:
+        return
+    members_by_username = {
+        str(member.get("username") or ""): str(member.get("role") or "player")
+        for member in list_game_session_members(session_id)
+    }
+    sockets = []
+    message = event.model_dump_json()
+    for room_id, live_room in list(rm._rooms.items()):
+        if room_id not in session_rooms:
+            continue
+        for ws in list(live_room.sockets):
+            username = str(live_room.socket_to_client.get(ws) or "")
+            role = members_by_username.get(username)
+            if not role:
+                continue
+            if roles is not None and role not in roles:
+                continue
+            sockets.append(ws)
+    if not sockets:
+        return
+    await asyncio.gather(*(ws.send_text(message) for ws in sockets), return_exceptions=True)
+
+
+async def _broadcast_session_notice(session_id: str, message: str) -> None:
+    await _broadcast_session_event(
+        session_id,
+        WireEvent(type="SESSION_SYSTEM_NOTICE", payload={"scope": "session", "message": message}),
+    )
+
+
+async def _handle_session_control_event(event: WireEvent, user, client_id: str) -> WireEvent | None:
+    session_id = str(event.payload.get("session_id") or "").strip()
+    target_room_id = str(event.payload.get("target_room_id") or "").strip()
+    if not session_id or not target_room_id:
+        return WireEvent(type="ERROR", payload={"message": "session_id and target_room_id are required"})
+    if user.user_id is None:
+        return WireEvent(type="ERROR", payload={"message": "Invalid user"})
+    target_room_name = _session_room_name(session_id, target_room_id)
+    if not target_room_name:
+        return WireEvent(type="ERROR", payload={"message": "Target room is not in this session"})
+    role = get_game_session_role(session_id, user.user_id)
+    if not role:
+        return WireEvent(type="ERROR", payload={"message": "Not a member of this session"})
+    message = str(event.payload.get("message") or "").strip()
+    requested_by = user.username or client_id
+
+    if event.type in {"SESSION_ROOM_MOVE_REQUEST", "SESSION_ROOM_MOVE_FORCE"}:
+        if role not in {"gm", "co_gm"}:
+            return WireEvent(type="ERROR", payload={"message": "Only GM or co-GM can move players"})
+        outgoing_type = "SESSION_ROOM_MOVE_OFFER" if event.type == "SESSION_ROOM_MOVE_REQUEST" else "SESSION_ROOM_MOVE_EXECUTE"
+        await _broadcast_session_event(
+            session_id,
+            WireEvent(
+                type=outgoing_type,
+                payload={
+                    "session_id": session_id,
+                    "target_room_id": target_room_id,
+                    "target_room_name": target_room_name,
+                    "requested_by": requested_by,
+                    "message": message,
+                },
+            ),
+            roles={"player"},
+        )
+        if event.type == "SESSION_ROOM_MOVE_REQUEST":
+            await _broadcast_session_notice(session_id, f"{requested_by} requested that players join {target_room_name}.")
+        else:
+            await _broadcast_session_notice(session_id, f"{requested_by} moved players to {target_room_name}.")
+        return None
+
+    if event.type == "SESSION_ROOM_MOVE_ACCEPT":
+        if role != "player":
+            return WireEvent(type="ERROR", payload={"message": "Only players can accept room move offers"})
+        await _broadcast_session_notice(session_id, f"{requested_by} accepted room move to {target_room_name}.")
+        return None
+
+    return WireEvent(type="ERROR", payload={"message": "Unhandled session control event"})
 
 
 @app.on_event("startup")
@@ -872,6 +1029,120 @@ def my_rooms(req: Request):
     return {"rooms": rooms}
 
 
+@app.get("/api/my/sessions")
+def my_sessions(req: Request):
+    user = _require_user(req)
+    return {"sessions": list_game_sessions_for_user(user.user_id)}
+
+
+@app.post("/api/sessions")
+async def create_session_api(req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    body = await req.json()
+    name = str(body.get("name") or "").strip() or "Untitled Session"
+    session = create_game_session(name, user.user_id)
+    room_id = str(body.get("room_id") or "").strip() or None
+    if room_id:
+        meta = get_room_meta(room_id)
+        if not meta:
+            raise HTTPException(status_code=404, detail="Room not found")
+        if meta.owner_user_id != user.user_id:
+            raise HTTPException(status_code=403, detail="Only the room owner can attach it to a session")
+        if not assign_room_to_game_session(room_id, session.session_id, display_name=meta.name):
+            raise HTTPException(status_code=400, detail="Failed to attach room to session")
+        for member_user_id in list_room_member_user_ids(room_id):
+            role = "gm" if member_user_id == user.user_id else "player"
+            add_game_session_member(session.session_id, member_user_id, role)
+    return _build_session_summary(session.session_id, user.user_id, room_id)
+
+
+@app.post("/api/rooms/{room_id}/attach-session")
+async def attach_room_to_session_api(room_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    meta = get_room_meta(room_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if meta.owner_user_id != user.user_id:
+        raise HTTPException(status_code=403, detail="Only the room owner can attach it to a session")
+    body = await req.json()
+    name = str(body.get("name") or "").strip() or f"{meta.name} Session"
+    session = create_game_session(name, user.user_id)
+    if not assign_room_to_game_session(room_id, session.session_id, display_name=meta.name):
+        raise HTTPException(status_code=400, detail="Failed to attach room to session")
+    for member_user_id in list_room_member_user_ids(room_id):
+        role = "gm" if member_user_id == user.user_id else "player"
+        add_game_session_member(session.session_id, member_user_id, role)
+    return _build_session_summary(session.session_id, user.user_id, room_id)
+
+
+@app.get("/api/sessions/{session_id}")
+def get_session_api(session_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    payload = _build_session_summary(session_id, user.user_id, user.last_room_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return payload
+
+
+@app.get("/api/sessions/{session_id}/rooms")
+def get_session_rooms_api(session_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    if not get_game_session_role(session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Not a member of this session")
+    return {"rooms": list_game_session_rooms(session_id)}
+
+
+@app.post("/api/sessions/{session_id}/rooms")
+async def create_session_room_api(session_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    if not can_manage_game_session(session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="GM or co-GM required")
+    body = await req.json()
+    name = str(body.get("name") or "").strip() or "Untitled Room"
+    room_id = uuid.uuid4().hex[:8]
+    join_code = None
+    for _ in range(20):
+        candidate = ensure_unique_join_code()
+        try:
+            initial = RoomState(room_id=room_id, gm_id=None, gm_user_id=user.user_id)
+            create_room_in_game_session(
+                session_id=session_id,
+                created_by_user_id=user.user_id,
+                room_id=room_id,
+                name=name,
+                state_json=initial.model_dump_json(),
+                join_code=candidate,
+            )
+            join_code = candidate
+            break
+        except Exception:
+            continue
+    if not join_code:
+        raise HTTPException(status_code=500, detail="Failed to create room")
+    update_user_last_room(user.user_id, room_id)
+    return {"room_id": room_id, "name": name, "join_code": join_code, "session_id": session_id}
+
+
+@app.get("/api/sessions/{session_id}/members")
+def get_session_members_api(session_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    if not get_game_session_role(session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Not a member of this session")
+    return {"members": list_game_session_members(session_id)}
+
+
 @app.post("/api/rooms")
 async def create_room(req: Request):
     user = _require_user(req)
@@ -879,28 +1150,39 @@ async def create_room(req: Request):
         raise HTTPException(status_code=500, detail="Invalid user record")
     body = await req.json()
     name = str(body.get("name", "")).strip() or "Untitled Room"
+    session_id = str(body.get("session_id") or "").strip() or None
     room_id = uuid.uuid4().hex[:8]
 
     join_code = None
-    # allocate unique join_code
-    # create_room_record enforces uniqueness via index; try a few times.
     for _ in range(20):
         candidate = ensure_unique_join_code()
         try:
-            # Persist immutable GM identity; display gm_id is claimed by active WS session.
             initial = RoomState(room_id=room_id, gm_id=None, gm_user_id=user.user_id)
-            create_room_record(room_id=room_id, name=name, state_json=initial.model_dump_json(), owner_user_id=user.user_id, join_code=candidate)
+            if session_id:
+                if not can_manage_game_session(session_id, user.user_id):
+                    raise HTTPException(status_code=403, detail="GM or co-GM required")
+                create_room_in_game_session(
+                    session_id=session_id,
+                    created_by_user_id=user.user_id,
+                    room_id=room_id,
+                    name=name,
+                    state_json=initial.model_dump_json(),
+                    join_code=candidate,
+                )
+            else:
+                create_room_record(room_id=room_id, name=name, state_json=initial.model_dump_json(), owner_user_id=user.user_id, join_code=candidate)
+                add_membership(user.user_id, room_id, role="owner")
             join_code = candidate
             break
+        except HTTPException:
+            raise
         except Exception:
-            # retry candidate
             continue
     if not join_code:
         raise HTTPException(status_code=500, detail="Failed to create room")
 
-    add_membership(user.user_id, room_id, role="owner")
     update_user_last_room(user.user_id, room_id)
-    return {"room_id": room_id, "name": name, "join_code": join_code}
+    return {"room_id": room_id, "name": name, "join_code": join_code, "session_id": session_id}
 
 
 def ensure_unique_join_code() -> str:
@@ -923,9 +1205,12 @@ async def join_room(req: Request):
     if not room_id:
         raise HTTPException(status_code=404, detail="Invalid join code")
     add_membership(user.user_id, room_id, role="player")
+    meta = get_room_meta(room_id)
+    if meta and meta.session_id:
+        add_game_session_member(meta.session_id, user.user_id, role="player")
     touch_membership(user.user_id, room_id)
     update_user_last_room(user.user_id, room_id)
-    return {"room_id": room_id}
+    return {"room_id": room_id, "session_id": meta.session_id if meta else None}
 
 
 @app.get("/api/rooms/{room_id}/snapshots")
@@ -1056,7 +1341,7 @@ async def ws_room(ws: WebSocket, room_id: str):
         return
 
     # membership guard
-    if not is_member(user.user_id, room_id):
+    if not ensure_room_membership_for_user(user.user_id, room_id):
         await ws.close(code=1008)
         return
 
@@ -1102,6 +1387,7 @@ async def ws_room(ws: WebSocket, room_id: str):
                 "is_co_gm": client_id in room.state.co_gm_ids,
                 "gm_key_set": bool(room.state.gm_key_hash),
                 "username": user.username,
+                "session": _room_session_payload(room_id, user.user_id),
             },
         ).model_dump_json()
     )
@@ -1168,6 +1454,12 @@ async def ws_room(ws: WebSocket, room_id: str):
                         await ws.close(code=1008)
                         return
                 await ws.send_text(WireEvent(type="HEARTBEAT", payload={"ts": time.time()}).model_dump_json())
+                continue
+
+            if event.type in {"SESSION_ROOM_MOVE_REQUEST", "SESSION_ROOM_MOVE_FORCE", "SESSION_ROOM_MOVE_ACCEPT"}:
+                session_out = await _handle_session_control_event(event, user, client_id)
+                if session_out and session_out.type == "ERROR":
+                    await ws.send_text(session_out.model_dump_json())
                 continue
 
             if event.type == "REQ_STATE_SYNC" and not _allow_rate("sync"):

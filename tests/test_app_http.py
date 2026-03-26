@@ -15,8 +15,11 @@ import httpx
 from starlette.testclient import TestClient
 
 from server.storage import (
+    add_game_session_member,
     add_membership,
+    assign_room_to_game_session,
     create_asset_record,
+    create_game_session,
     create_room_record,
     create_session,
     create_user,
@@ -220,6 +223,45 @@ class TestRoomCrud:
         r2 = await auth_client.patch(f"/api/rooms/{room_id}",
                                      json={"name": "New Name", "gm_key": ""})
         assert r2.status_code in (200, 403)
+
+
+# ---------------------------------------------------------------------------
+# Gameplay sessions
+# ---------------------------------------------------------------------------
+
+class TestGameplaySessionsApi:
+    async def test_attach_room_to_new_session(self, auth_client):
+        created = await auth_client.post("/api/rooms", json={"name": "Anchor Room"})
+        room_id = created.json()["room_id"]
+        attached = await auth_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Session Alpha"})
+        assert attached.status_code == 200
+        payload = attached.json()
+        assert payload["name"] == "Session Alpha"
+        assert payload["current_room"]["id"] == room_id
+        assert any(room["id"] == room_id for room in payload["rooms"])
+
+    async def test_create_room_inside_session(self, auth_client):
+        created = await auth_client.post("/api/rooms", json={"name": "Room One"})
+        room_id = created.json()["room_id"]
+        attached = await auth_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Session Beta"})
+        session_id = attached.json()["id"]
+        second = await auth_client.post(f"/api/sessions/{session_id}/rooms", json={"name": "Room Two"})
+        assert second.status_code == 200
+        listed = await auth_client.get(f"/api/sessions/{session_id}/rooms")
+        assert listed.status_code == 200
+        assert len(listed.json()["rooms"]) == 2
+
+    async def test_joining_session_room_adds_session_membership(self, auth_client, second_auth_client):
+        created = await auth_client.post("/api/rooms", json={"name": "Session Start"})
+        room_id = created.json()["room_id"]
+        join_code = created.json()["join_code"]
+        attached = await auth_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Session Gamma"})
+        session_id = attached.json()["id"]
+        joined = await second_auth_client.post("/api/join", json={"code": join_code})
+        assert joined.status_code == 200
+        session = await second_auth_client.get(f"/api/sessions/{session_id}")
+        assert session.status_code == 200
+        assert session.json()["user_role"] == "player"
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +471,66 @@ class TestWebSocket:
                 resp = json.loads(ws.receive_text())
                 assert resp["type"] == "HEARTBEAT"
                 assert "ts" in resp["payload"]
+
+    def test_ws_session_move_request_reaches_players(self):
+        gm, gm_sid = _seed_user_and_session("ws_move_gm")
+        player, player_sid = _seed_user_and_session("ws_move_player")
+        room_a = _seed_room(gm.user_id, room_id="move-room-a", join_code="WHAM-MOVEA1")
+        room_b = _seed_room(gm.user_id, room_id="move-room-b", join_code="WHAM-MOVEB1")
+        add_membership(player.user_id, room_a, role="player")
+        session = create_game_session("WS Session", gm.user_id)
+        add_game_session_member(session.session_id, player.user_id, "player")
+        assert assign_room_to_game_session(room_a, session.session_id, display_name="Map A")
+        assert assign_room_to_game_session(room_b, session.session_id, display_name="Map B")
+
+        app = self._make_app()
+        with TestClient(app) as client:
+            with client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": gm_sid}) as gm_ws,                  client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": player_sid}) as player_ws:
+                for _ in range(6):
+                    gm_ws.receive_text()
+                for _ in range(5):
+                    player_ws.receive_text()
+                gm_ws.send_text(json.dumps({
+                    "type": "SESSION_ROOM_MOVE_REQUEST",
+                    "payload": {
+                        "session_id": session.session_id,
+                        "target_room_id": room_b,
+                        "message": "Please join the next map.",
+                    },
+                }))
+                offer = json.loads(player_ws.receive_text())
+                assert offer["type"] == "SESSION_ROOM_MOVE_OFFER"
+                assert offer["payload"]["target_room_id"] == room_b
+
+    def test_ws_session_move_force_reaches_players(self):
+        gm, gm_sid = _seed_user_and_session("ws_force_gm")
+        player, player_sid = _seed_user_and_session("ws_force_player")
+        room_a = _seed_room(gm.user_id, room_id="force-room-a", join_code="WHAM-FORCEA")
+        room_b = _seed_room(gm.user_id, room_id="force-room-b", join_code="WHAM-FORCEB")
+        add_membership(player.user_id, room_a, role="player")
+        session = create_game_session("WS Force Session", gm.user_id)
+        add_game_session_member(session.session_id, player.user_id, "player")
+        assert assign_room_to_game_session(room_a, session.session_id, display_name="Map A")
+        assert assign_room_to_game_session(room_b, session.session_id, display_name="Map B")
+
+        app = self._make_app()
+        with TestClient(app) as client:
+            with client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": gm_sid}) as gm_ws,                  client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": player_sid}) as player_ws:
+                for _ in range(6):
+                    gm_ws.receive_text()
+                for _ in range(5):
+                    player_ws.receive_text()
+                gm_ws.send_text(json.dumps({
+                    "type": "SESSION_ROOM_MOVE_FORCE",
+                    "payload": {
+                        "session_id": session.session_id,
+                        "target_room_id": room_b,
+                        "message": "The floor collapses beneath you.",
+                    },
+                }))
+                execute = json.loads(player_ws.receive_text())
+                assert execute["type"] == "SESSION_ROOM_MOVE_EXECUTE"
+                assert execute["payload"]["target_room_id"] == room_b
 
     def test_ws_gm_owner_gets_is_gm_true_in_hello(self):
         """Room owner should be recognised as GM on connect."""

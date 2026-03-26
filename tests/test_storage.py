@@ -12,8 +12,11 @@ import pytest
 
 from server import storage
 from server.storage import (
+    add_game_session_member,
     add_membership,
+    assign_room_to_game_session,
     create_asset_record,
+    create_game_session,
     create_room_record,
     create_session,
     create_snapshot,
@@ -22,14 +25,19 @@ from server.storage import (
     delete_room_record,
     delete_session,
     ensure_room_join_code,
+    ensure_room_membership_for_user,
     get_asset_by_id,
     get_asset_for_user,
+    get_game_session_role,
     get_room_meta,
     get_user_by_id,
     get_user_by_sid,
     get_user_by_username,
     is_member,
     list_assets_for_user,
+    list_game_session_members,
+    list_game_session_rooms,
+    list_game_sessions_for_user,
     list_rooms_for_user,
     list_snapshots,
     load_snapshot_state_json,
@@ -297,6 +305,55 @@ class TestMembership:
     def test_ensure_room_join_code_missing_room_raises(self):
         with pytest.raises(ValueError, match="not found"):
             ensure_room_join_code("ghost-room")
+
+
+# ---------------------------------------------------------------------------
+# Gameplay sessions
+# ---------------------------------------------------------------------------
+
+class TestGameplaySessions:
+    def test_create_game_session_adds_creator_as_gm(self):
+        u = _make_user("session_gm")
+        session = create_game_session("Friday Night", u.user_id)
+        assert session.session_id.startswith("sess_")
+        assert get_game_session_role(session.session_id, u.user_id) == "gm"
+
+    def test_assign_room_to_game_session_updates_room_meta(self):
+        u = _make_user("attach_owner")
+        room_id = _make_room(room_id="attach-room", owner_id=u.user_id)
+        session = create_game_session("Attach Test", u.user_id)
+        ok = assign_room_to_game_session(room_id, session.session_id, display_name="Antechamber")
+        assert ok is True
+        meta = get_room_meta(room_id)
+        assert meta.session_id == session.session_id
+        assert meta.display_name == "Antechamber"
+        rooms = list_game_session_rooms(session.session_id)
+        assert len(rooms) == 1
+        assert rooms[0]["display_name"] == "Antechamber"
+
+    def test_session_members_gain_room_access(self):
+        gm = _make_user("session_owner")
+        player = _make_user("session_player")
+        room_id = _make_room(room_id="session-room", owner_id=gm.user_id)
+        session = create_game_session("Access Test", gm.user_id)
+        assign_room_to_game_session(room_id, session.session_id, display_name="Map A")
+        add_game_session_member(session.session_id, player.user_id, "player")
+        assert ensure_room_membership_for_user(player.user_id, room_id) is True
+        assert is_member(player.user_id, room_id) is True
+
+    def test_list_rooms_for_user_includes_session_rooms(self):
+        gm = _make_user("session_owner_two")
+        player = _make_user("session_player_two")
+        room_id = _make_room(room_id="session-room-two", owner_id=gm.user_id)
+        session = create_game_session("List Test", gm.user_id)
+        assign_room_to_game_session(room_id, session.session_id, display_name="Map B")
+        add_game_session_member(session.session_id, player.user_id, "player")
+        rooms = list_rooms_for_user(player.user_id)
+        assert any(room["room_id"] == room_id and room["session_id"] == session.session_id for room in rooms)
+        memberships = list_game_session_members(session.session_id)
+        assert any(member["username"] == "session_player_two" for member in memberships)
+        sessions = list_game_sessions_for_user(player.user_id)
+        assert any(entry["id"] == session.session_id for entry in sessions)
 
 
 # ---------------------------------------------------------------------------

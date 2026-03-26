@@ -163,6 +163,20 @@
         </div>
       </div>
     </div>
+    <div id="roomMovePromptBackdrop" class="modal-backdrop hidden"></div>
+    <div id="roomMovePrompt" class="modal hidden" role="dialog" aria-modal="true" aria-label="Room move prompt">
+      <div class="modal-header">
+        <div id="roomMovePromptTitle" class="modal-title">GM Requested a Room Move</div>
+        <button id="roomMovePromptClose" class="modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="roomMovePromptText" class="hint" style="margin-bottom:12px;"></div>
+        <div class="modal-actions">
+          <button id="roomMovePromptJoin" class="primary">Join</button>
+          <button id="roomMovePromptDismiss" class="ghost">Dismiss</button>
+        </div>
+      </div>
+    </div>
     <div id="drawer" class="drawer hidden">
       <div class="drawer-header">
         <span>WarHamster</span>
@@ -379,6 +393,17 @@
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <b>Rooms</b>
         <button id="roomsPanelClose">Close</button>
+      </div>
+      <div id="sessionSummaryCard" style="margin-top:8px; padding:8px; border:1px solid rgba(255,255,255,0.12); border-radius:10px; background:rgba(255,255,255,0.03);">
+        <div id="sessionSummaryText" style="font-size:12px; opacity:.95;">No session attached to this room yet.</div>
+        <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+          <input id="newSessionName" placeholder="Session name" style="flex:1; min-width:160px;">
+          <button id="createSessionBtn">Create Session Here</button>
+        </div>
+        <div style="margin-top:8px; font-size:11px; opacity:.8;">Session Rooms</div>
+        <div id="sessionRoomsList" style="margin-top:4px; font-size:12px;"></div>
+        <div style="margin-top:8px; font-size:11px; opacity:.8;">Roster</div>
+        <div id="sessionMembersList" style="margin-top:4px; font-size:12px;"></div>
       </div>
       <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
         <input id="newRoomName" placeholder="Room name" style="flex:1; min-width:150px;">
