@@ -142,6 +142,14 @@ class PrivatePackAssetRow(SQLModel, table=True):
     created_at: str
 
 
+class GameSessionSharedPackRow(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True)
+    pack_id: int = Field(index=True)
+    shared_by_user_id: Optional[int] = Field(default=None, index=True)
+    shared_at: str
+
+
 def _sqlite_conn() -> sqlite3.Connection:
     # engine.url is like sqlite:////path/to/db
     url = str(engine.url)
@@ -893,14 +901,115 @@ def _pack_ids_for_user(user_id: int) -> set[int]:
     return {int(pid) for pid in [*owned, *entitled] if pid is not None}
 
 
-def list_private_packs_for_user(user_id: int) -> List[Dict[str, object]]:
+def list_game_session_shared_packs(session_id: str) -> List[Dict[str, object]]:
+    with Session(engine) as s:
+        shared_rows = s.exec(
+            select(GameSessionSharedPackRow).where(GameSessionSharedPackRow.session_id == session_id)
+        ).all()
+        pack_ids = [row.pack_id for row in shared_rows]
+        packs = {
+            int(row.pack_id): row
+            for row in s.exec(select(PrivatePackRow).where(PrivatePackRow.pack_id.in_(pack_ids))).all()
+        } if pack_ids else {}
+    out: List[Dict[str, object]] = []
+    for row in shared_rows:
+        pack = packs.get(int(row.pack_id))
+        if not pack:
+            continue
+        out.append(
+            {
+                "id": row.id,
+                "session_id": row.session_id,
+                "pack_id": row.pack_id,
+                "slug": pack.slug,
+                "name": pack.name,
+                "owner_user_id": pack.owner_user_id,
+                "shared_by_user_id": row.shared_by_user_id,
+                "shared_at": row.shared_at,
+            }
+        )
+    out.sort(key=lambda item: (str(item.get("name") or "").lower(), int(item.get("pack_id") or 0)))
+    return out
+
+
+def _shared_pack_ids_for_game_session(session_id: str) -> set[int]:
+    with Session(engine) as s:
+        rows = s.exec(
+            select(GameSessionSharedPackRow.pack_id).where(GameSessionSharedPackRow.session_id == session_id)
+        ).all()
+    return {int(pack_id) for pack_id in rows if pack_id is not None}
+
+
+def is_pack_shared_in_game_session(session_id: str, pack_id: int) -> bool:
+    with Session(engine) as s:
+        row = s.exec(
+            select(GameSessionSharedPackRow).where(
+                GameSessionSharedPackRow.session_id == session_id,
+                GameSessionSharedPackRow.pack_id == pack_id,
+            )
+        ).first()
+    return row is not None
+
+
+def set_game_session_shared_pack(
+    session_id: str,
+    pack_id: int,
+    enabled: bool,
+    shared_by_user_id: Optional[int] = None,
+) -> bool:
+    now = utc_now_iso()
+    with Session(engine) as s:
+        session = s.get(GameSessionRow, session_id)
+        pack = s.get(PrivatePackRow, pack_id)
+        if not session or not pack:
+            return False
+        existing = s.exec(
+            select(GameSessionSharedPackRow).where(
+                GameSessionSharedPackRow.session_id == session_id,
+                GameSessionSharedPackRow.pack_id == pack_id,
+            )
+        ).first()
+        if enabled:
+            if existing:
+                existing.shared_by_user_id = shared_by_user_id if shared_by_user_id is not None else existing.shared_by_user_id
+                existing.shared_at = now
+                s.add(existing)
+            else:
+                s.add(
+                    GameSessionSharedPackRow(
+                        session_id=session_id,
+                        pack_id=pack_id,
+                        shared_by_user_id=shared_by_user_id,
+                        shared_at=now,
+                    )
+                )
+        else:
+            if not existing:
+                return True
+            s.delete(existing)
+        session.updated_at = now
+        s.add(session)
+        s.commit()
+    return True
+
+
+def _effective_pack_ids_for_user(user_id: int, session_id: Optional[str] = None) -> set[int]:
+    pack_ids = _pack_ids_for_user(user_id)
+    if session_id and is_game_session_member(session_id, user_id):
+        pack_ids.update(_shared_pack_ids_for_game_session(session_id))
+    return pack_ids
+
+
+def list_private_packs_for_user(user_id: int, session_id: Optional[str] = None) -> List[Dict[str, object]]:
     pack_ids = _pack_ids_for_user(user_id)
     if not pack_ids:
         return []
+    shared_ids = _shared_pack_ids_for_game_session(session_id) if session_id and is_game_session_member(session_id, user_id) else set()
     with Session(engine) as s:
         packs = s.exec(select(PrivatePackRow).where(PrivatePackRow.pack_id.in_(pack_ids))).all()
     out: List[Dict[str, object]] = []
     for p in packs:
+        pack_id = int(p.pack_id) if p.pack_id is not None else 0
         out.append(
             {
                 "pack_id": p.pack_id,
@@ -910,23 +1019,32 @@ def list_private_packs_for_user(user_id: int) -> List[Dict[str, object]]:
                 "created_at": p.created_at,
                 "root_rel": p.root_rel,
                 "thumb_rel": p.thumb_rel,
+                "shared_in_session": pack_id in shared_ids,
             }
         )
     out.sort(key=lambda p: str(p.get("created_at", "")), reverse=True)
     return out
 
 
-def list_pack_assets_for_user(user_id: int, q: str = "", tag: str = "", folder: str = "") -> List[Dict[str, object]]:
+def list_pack_assets_for_user(
+    user_id: int,
+    q: str = "",
+    tag: str = "",
+    folder: str = "",
+    session_id: Optional[str] = None,
+) -> List[Dict[str, object]]:
     qn = (q or "").strip().lower()
     tn = (tag or "").strip().lower()
     fn = (folder or "").strip().strip("/").lower()
-    pack_ids = _pack_ids_for_user(user_id)
+    pack_ids = _effective_pack_ids_for_user(user_id, session_id=session_id)
     if not pack_ids:
         return []
+    shared_ids = _shared_pack_ids_for_game_session(session_id) if session_id and is_game_session_member(session_id, user_id) else set()
 
     with Session(engine) as s:
         packs = s.exec(select(PrivatePackRow).where(PrivatePackRow.pack_id.in_(pack_ids))).all()
         slug_by_pack_id = {int(p.pack_id): p.slug for p in packs if p.pack_id is not None}
+        name_by_pack_id = {int(p.pack_id): p.name for p in packs if p.pack_id is not None}
         rows = s.exec(select(PrivatePackAssetRow).where(PrivatePackAssetRow.pack_id.in_(pack_ids))).all()
 
     out: List[Dict[str, object]] = []
@@ -955,21 +1073,31 @@ def list_pack_assets_for_user(user_id: int, q: str = "", tag: str = "", folder: 
                 "created_at": row.created_at,
                 "readonly": True,
                 "source": "pack",
+                "pack_id": row.pack_id,
                 "pack_slug": slug_by_pack_id.get(int(row.pack_id), ""),
+                "pack_name": name_by_pack_id.get(int(row.pack_id), ""),
+                "shared_in_session": int(row.pack_id) in shared_ids,
             }
         )
     out.sort(key=lambda a: str(a.get("created_at", "")), reverse=True)
     return out
 
 
-def list_all_assets_for_user(user_id: int, q: str = "", tag: str = "", folder: str = "") -> List[Dict[str, object]]:
+def list_all_assets_for_user(
+    user_id: int,
+    q: str = "",
+    tag: str = "",
+    folder: str = "",
+    session_id: Optional[str] = None,
+) -> List[Dict[str, object]]:
     uploads = []
     for a in list_assets_for_user(user_id, q=q, tag=tag, folder=folder):
         item = dict(a)
         item["readonly"] = False
         item["source"] = "upload"
+        item["shared_in_session"] = False
         uploads.append(item)
-    packs = list_pack_assets_for_user(user_id, q=q, tag=tag, folder=folder)
+    packs = list_pack_assets_for_user(user_id, q=q, tag=tag, folder=folder, session_id=session_id)
     merged = [*uploads, *packs]
     merged.sort(key=lambda a: str(a.get("created_at", "")), reverse=True)
     return merged

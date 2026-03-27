@@ -24,8 +24,12 @@ from server.storage import (
     create_session,
     create_user,
     get_asset_by_id,
+    PrivatePackAssetRow,
+    PrivatePackRow,
+    utc_now_iso,
 )
 from server.models import RoomState
+from sqlmodel import Session
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +74,41 @@ def _seed_asset(asset_id: str, uploader_id: int, tmp_path):
         url_thumb=f"/uploads/assets/{uploader_id}/thumbs/{asset_id}.webp",
     )
     return file_path
+
+
+def _seed_private_pack(owner_user_id: int, slug: str = "shared-pack", name: str = "Shared Pack") -> int:
+    from server import storage as storage_module
+
+    with Session(storage_module.engine) as s:
+        pack = PrivatePackRow(
+            slug=slug,
+            name=name,
+            owner_user_id=owner_user_id,
+            created_at=utc_now_iso(),
+            root_rel=f"{slug}/manifest.json",
+            thumb_rel=f"{slug}/thumb.webp",
+        )
+        s.add(pack)
+        s.commit()
+        s.refresh(pack)
+        assert pack.pack_id is not None
+        s.add(
+            PrivatePackAssetRow(
+                asset_id=f"{slug}-asset",
+                pack_id=pack.pack_id,
+                name=f"{name} Piece",
+                folder_path="props",
+                tags_json='["shared"]',
+                mime="image/png",
+                width=128,
+                height=128,
+                url_original=f"/private-packs/{slug}/originals/{slug}-asset.png",
+                url_thumb=f"/private-packs/{slug}/thumbs/{slug}-asset.webp",
+                created_at=utc_now_iso(),
+            )
+        )
+        s.commit()
+        return int(pack.pack_id)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +301,69 @@ class TestGameplaySessionsApi:
         session = await second_auth_client.get(f"/api/sessions/{session_id}")
         assert session.status_code == 200
         assert session.json()["user_role"] == "player"
+
+    async def test_gm_can_share_private_pack_to_session(self, auth_client):
+        created = await auth_client.post("/api/rooms", json={"name": "Share Room"})
+        room_id = created.json()["room_id"]
+        attached = await auth_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Share Session"})
+        session_id = attached.json()["id"]
+
+        gm_user = create_user("share_owner", "hash")
+        add_game_session_member(session_id, gm_user.user_id, "co_gm")
+        pack_id = _seed_private_pack(gm_user.user_id, slug="ghoul-pack", name="Ghoul Pack")
+        sid = create_session(gm_user.user_id)
+
+        shared = await auth_client.post(
+            f"/api/sessions/{session_id}/shared-packs/{pack_id}",
+            cookies={"warhamster_sid": sid},
+        )
+        assert shared.status_code == 200
+        assert any(pack["pack_id"] == pack_id for pack in shared.json()["packs"])
+
+    async def test_player_sees_session_shared_pack_assets_in_library(self, auth_client, second_auth_client):
+        created = await auth_client.post("/api/rooms", json={"name": "Shared Assets Room"})
+        room_id = created.json()["room_id"]
+        join_code = created.json()["join_code"]
+        attached = await auth_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Shared Assets Session"})
+        session_id = attached.json()["id"]
+
+        joined = await second_auth_client.post("/api/join", json={"code": join_code})
+        assert joined.status_code == 200
+
+        owner = create_user("shared_assets_owner", "hash")
+        pack_id = _seed_private_pack(owner.user_id, slug="lantern-pack", name="Lantern Pack")
+        owner_sid = create_session(owner.user_id)
+        add_game_session_member(session_id, owner.user_id, "co_gm")
+
+        shared = await auth_client.post(
+            f"/api/sessions/{session_id}/shared-packs/{pack_id}",
+            cookies={"warhamster_sid": owner_sid},
+        )
+        assert shared.status_code == 200
+
+        listing = await second_auth_client.get(f"/api/assets?session_id={session_id}")
+        assert listing.status_code == 200
+        assets = listing.json()["assets"]
+        assert any(asset["pack_id"] == pack_id and asset["shared_in_session"] is True for asset in assets)
+
+        shared_packs = await second_auth_client.get(f"/api/sessions/{session_id}/shared-packs")
+        assert shared_packs.status_code == 200
+        assert any(pack["pack_id"] == pack_id for pack in shared_packs.json()["packs"])
+
+    async def test_non_member_cannot_query_session_scoped_assets(self, auth_client):
+        created = await auth_client.post("/api/rooms", json={"name": "Hidden Session Room"})
+        room_id = created.json()["room_id"]
+        attached = await auth_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Hidden Session"})
+        session_id = attached.json()["id"]
+
+        outsider = create_user("outsider_assets", "hash")
+        outsider_sid = create_session(outsider.user_id)
+
+        denied = await auth_client.get(
+            f"/api/assets?session_id={session_id}",
+            cookies={"warhamster_sid": outsider_sid},
+        )
+        assert denied.status_code == 403
 
 
 # ---------------------------------------------------------------------------

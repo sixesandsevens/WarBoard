@@ -66,7 +66,9 @@ from .storage import (
     list_all_assets_for_user,
     list_game_session_members,
     list_game_session_rooms,
+    list_game_session_shared_packs,
     list_game_sessions_for_user,
+    list_private_packs_for_user,
     list_room_member_user_ids,
     list_assets_for_user,
     list_rooms_for_user,
@@ -80,6 +82,7 @@ from .storage import (
     update_user_password_hash,
     update_room_name,
     user_has_pack_access,
+    set_game_session_shared_pack,
 )
 
 app = FastAPI(title="WarHamster")
@@ -715,11 +718,27 @@ def get_pack_api(pack_id: str, req: Request):
 # ----------------------------- Asset Library API ------------------------------
 
 @app.get("/api/assets")
-def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = ""):
+def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = "", session_id: str = ""):
     user = _require_user(req)
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
-    return {"assets": list_all_assets_for_user(user.user_id, q=q, tag=tag, folder=folder)}
+    current_session_id = str(session_id or "").strip() or None
+    if current_session_id and not get_game_session_role(current_session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Not a member of this session")
+    return {
+        "assets": list_all_assets_for_user(user.user_id, q=q, tag=tag, folder=folder, session_id=current_session_id)
+    }
+
+
+@app.get("/api/private-packs")
+def list_private_packs_api(req: Request, session_id: str = ""):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    current_session_id = str(session_id or "").strip() or None
+    if current_session_id and not get_game_session_role(current_session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Not a member of this session")
+    return {"packs": list_private_packs_for_user(user.user_id, session_id=current_session_id)}
 
 
 @app.get("/api/assets/file/{asset_id}")
@@ -1141,6 +1160,42 @@ def get_session_members_api(session_id: str, req: Request):
     if not get_game_session_role(session_id, user.user_id):
         raise HTTPException(status_code=403, detail="Not a member of this session")
     return {"members": list_game_session_members(session_id)}
+
+
+@app.get("/api/sessions/{session_id}/shared-packs")
+def get_session_shared_packs_api(session_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    if not get_game_session_role(session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Not a member of this session")
+    return {"packs": list_game_session_shared_packs(session_id)}
+
+
+@app.post("/api/sessions/{session_id}/shared-packs/{pack_id}")
+def share_session_pack_api(session_id: str, pack_id: int, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    if not can_manage_game_session(session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="GM or co-GM required")
+    if not user_has_pack_access(user.user_id, pack_id):
+        raise HTTPException(status_code=403, detail="You do not have access to that pack")
+    if not set_game_session_shared_pack(session_id, pack_id, True, shared_by_user_id=user.user_id):
+        raise HTTPException(status_code=404, detail="Session or pack not found")
+    return {"ok": True, "packs": list_game_session_shared_packs(session_id)}
+
+
+@app.delete("/api/sessions/{session_id}/shared-packs/{pack_id}")
+def unshare_session_pack_api(session_id: str, pack_id: int, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    if not can_manage_game_session(session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="GM or co-GM required")
+    if not set_game_session_shared_pack(session_id, pack_id, False, shared_by_user_id=user.user_id):
+        raise HTTPException(status_code=404, detail="Session or pack not found")
+    return {"ok": True, "packs": list_game_session_shared_packs(session_id)}
 
 
 @app.post("/api/rooms")

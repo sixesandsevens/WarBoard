@@ -29,20 +29,26 @@ from server.storage import (
     get_asset_by_id,
     get_asset_for_user,
     get_game_session_role,
+    list_all_assets_for_user,
     get_room_meta,
     get_user_by_id,
     get_user_by_sid,
     get_user_by_username,
     is_member,
+    list_game_session_shared_packs,
     list_assets_for_user,
     list_game_session_members,
     list_game_session_rooms,
     list_game_sessions_for_user,
+    list_private_packs_for_user,
     list_rooms_for_user,
     list_snapshots,
     load_snapshot_state_json,
     room_id_from_join_code,
+    set_game_session_shared_pack,
     SessionRow,
+    PrivatePackAssetRow,
+    PrivatePackRow,
     touch_membership,
     update_room_name,
     update_user_last_room,
@@ -86,6 +92,39 @@ def _make_asset(asset_id="asset1", uploader_id=1):
         url_thumb="/uploads/assets/1/thumbs/asset1.webp",
     )
     return asset_id
+
+
+def _make_private_pack(owner_user_id: int, slug: str = "crypt-pack", name: str = "Crypt Pack") -> int:
+    with Session(storage.engine) as s:
+        pack = PrivatePackRow(
+            slug=slug,
+            name=name,
+            owner_user_id=owner_user_id,
+            created_at=utc_now_iso(),
+            root_rel=f"{slug}/manifest.json",
+            thumb_rel=f"{slug}/thumb.webp",
+        )
+        s.add(pack)
+        s.commit()
+        s.refresh(pack)
+        assert pack.pack_id is not None
+        s.add(
+            PrivatePackAssetRow(
+                asset_id=f"{slug}-asset",
+                pack_id=pack.pack_id,
+                name=f"{name} Statue",
+                folder_path="props",
+                tags_json='["statue","crypt"]',
+                mime="image/png",
+                width=256,
+                height=256,
+                url_original=f"/private-packs/{slug}/originals/{slug}-asset.png",
+                url_thumb=f"/private-packs/{slug}/thumbs/{slug}-asset.webp",
+                created_at=utc_now_iso(),
+            )
+        )
+        s.commit()
+        return int(pack.pack_id)
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +393,44 @@ class TestGameplaySessions:
         assert any(member["username"] == "session_player_two" for member in memberships)
         sessions = list_game_sessions_for_user(player.user_id)
         assert any(entry["id"] == session.session_id for entry in sessions)
+
+    def test_session_shared_pack_visibility_extends_asset_library(self):
+        gm = _make_user("asset_gm")
+        player = _make_user("asset_player")
+        session = create_game_session("Asset Share Test", gm.user_id)
+        add_game_session_member(session.session_id, player.user_id, "player")
+        pack_id = _make_private_pack(gm.user_id, slug="shared-crypt", name="Shared Crypt")
+
+        assets_before = list_all_assets_for_user(player.user_id)
+        assert all(item.get("pack_id") != pack_id for item in assets_before)
+
+        assert set_game_session_shared_pack(session.session_id, pack_id, True, shared_by_user_id=gm.user_id) is True
+
+        shared_packs = list_game_session_shared_packs(session.session_id)
+        assert len(shared_packs) == 1
+        assert shared_packs[0]["pack_id"] == pack_id
+
+        packs_for_gm = list_private_packs_for_user(gm.user_id, session_id=session.session_id)
+        assert packs_for_gm[0]["shared_in_session"] is True
+
+        assets_after = list_all_assets_for_user(player.user_id, session_id=session.session_id)
+        shared_assets = [item for item in assets_after if item.get("pack_id") == pack_id]
+        assert len(shared_assets) == 1
+        assert shared_assets[0]["shared_in_session"] is True
+
+    def test_unsharing_pack_removes_session_library_access(self):
+        gm = _make_user("asset_gm_two")
+        player = _make_user("asset_player_two")
+        session = create_game_session("Asset Share Remove", gm.user_id)
+        add_game_session_member(session.session_id, player.user_id, "player")
+        pack_id = _make_private_pack(gm.user_id, slug="shared-vault", name="Shared Vault")
+
+        assert set_game_session_shared_pack(session.session_id, pack_id, True, shared_by_user_id=gm.user_id) is True
+        assert any(item.get("pack_id") == pack_id for item in list_all_assets_for_user(player.user_id, session_id=session.session_id))
+
+        assert set_game_session_shared_pack(session.session_id, pack_id, False, shared_by_user_id=gm.user_id) is True
+        assert list_game_session_shared_packs(session.session_id) == []
+        assert all(item.get("pack_id") != pack_id for item in list_all_assets_for_user(player.user_id, session_id=session.session_id))
 
 
 # ---------------------------------------------------------------------------

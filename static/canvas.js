@@ -100,6 +100,12 @@
   const assetZipUploadBtnEl = document.getElementById("assetZipUploadBtn");
   const assetRefreshBtnEl = document.getElementById("assetRefreshBtn");
   const assetSearchInputEl = document.getElementById("assetSearchInput");
+  const assetSessionShareBoxEl = document.getElementById("assetSessionShareBox");
+  const assetSessionShareSummaryEl = document.getElementById("assetSessionShareSummary");
+  const assetSessionShareRefreshBtnEl = document.getElementById("assetSessionShareRefreshBtn");
+  const assetSessionSharedListEl = document.getElementById("assetSessionSharedList");
+  const assetSessionManageWrapEl = document.getElementById("assetSessionManageWrap");
+  const assetSessionManageListEl = document.getElementById("assetSessionManageList");
   const assetSearchChipsEl = document.getElementById("assetSearchChips");
   const assetSearchHintEl = document.getElementById("assetSearchHint");
   const assetViewModeEl = document.getElementById("assetViewMode");
@@ -303,6 +309,12 @@
     return res.json();
   }
 
+  async function apiDelete(path, includeGm = false) {
+    const res = await fetch(apiUrl(path, includeGm), { method: "DELETE" });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
   async function apiUploadBackground(roomId, file) {
     const data = new FormData();
     data.append("file", file);
@@ -340,9 +352,7 @@
   }
 
   async function apiDeleteAsset(assetId) {
-    const res = await fetch(`/api/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
+    return apiDelete(`/api/assets/${encodeURIComponent(assetId)}`);
   }
 
   function setAuthIdentity(user) {
@@ -1581,13 +1591,14 @@
     const ext = assetFileExt(normalized).toUpperCase() || "IMG";
     const alpha = assetHasAlphaGuess(normalized) ? "alpha" : "opaque";
     const slug = String(normalized?.pack_slug || "").trim() || "uploads";
+    const sharedBadge = normalized?.shared_in_session ? " • session-shared" : "";
     const folder = String(normalized?.folder_path || "/");
     const src = withAssetLibSrc(assetPreviewUrl(normalized));
     const loadSeq = ++mapPreviewLoadSeq;
     mapPreviewAsset = normalized;
     mapPreviewSourceUrl = src || "";
     if (mapPreviewTitleEl) mapPreviewTitleEl.textContent = name;
-    if (mapPreviewMetaEl) mapPreviewMetaEl.textContent = `${dims} • ${ext} • ${alpha} • ${slug}`;
+    if (mapPreviewMetaEl) mapPreviewMetaEl.textContent = `${dims} • ${ext} • ${alpha} • ${slug}${sharedBadge}`;
     if (mapPreviewPathEl) mapPreviewPathEl.textContent = folder;
     if (mapPreviewImageEl) {
       mapPreviewImageEl.onload = () => {
@@ -2220,6 +2231,120 @@
     }
   }
 
+  function currentAssetSessionId() {
+    return String(playSessionState.id || "").trim();
+  }
+
+  function assetSessionQuery() {
+    const sessionId = currentAssetSessionId();
+    return sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : "";
+  }
+
+  function resetAssetSessionPackState() {
+    assetState.privatePacks = [];
+    assetState.sessionSharedPacks = [];
+    assetState.packMetaSessionId = "";
+    renderAssetSessionSharePanel();
+  }
+
+  async function refreshAssetSessionPackData() {
+    const sessionId = currentAssetSessionId();
+    if (!sessionId) {
+      resetAssetSessionPackState();
+      return;
+    }
+    if (assetState.packsLoading && assetState.packMetaSessionId === sessionId) return;
+    assetState.packsLoading = true;
+    assetState.packMetaSessionId = sessionId;
+    try {
+      const [privateData, sharedData] = await Promise.all([
+        apiGet(`/api/private-packs?session_id=${encodeURIComponent(sessionId)}`),
+        apiGet(`/api/sessions/${encodeURIComponent(sessionId)}/shared-packs`),
+      ]);
+      assetState.privatePacks = Array.isArray(privateData?.packs) ? privateData.packs : [];
+      assetState.sessionSharedPacks = Array.isArray(sharedData?.packs) ? sharedData.packs : [];
+    } catch (e) {
+      console.warn("asset session packs refresh failed", e);
+      assetState.privatePacks = [];
+      assetState.sessionSharedPacks = [];
+    } finally {
+      assetState.packsLoading = false;
+      renderAssetSessionSharePanel();
+    }
+  }
+
+  async function toggleSessionSharedPack(packId, enabled) {
+    const sessionId = currentAssetSessionId();
+    if (!sessionId || !packId) return;
+    try {
+      if (enabled) {
+        await apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/shared-packs/${encodeURIComponent(packId)}`, {});
+      } else {
+        await apiDelete(`/api/sessions/${encodeURIComponent(sessionId)}/shared-packs/${encodeURIComponent(packId)}`);
+      }
+      await Promise.all([refreshAssetSessionPackData(), refreshAssetsPanel()]);
+    } catch (e) {
+      log(`SHARED PACK ERROR: ${e.message || e}`);
+      toast(enabled ? "Could not share pack to session." : "Could not unshare pack from session.");
+    }
+  }
+
+  function renderAssetSessionSharePanel() {
+    if (!assetSessionShareBoxEl || !assetSessionShareSummaryEl || !assetSessionSharedListEl || !assetSessionManageWrapEl || !assetSessionManageListEl) return;
+    const sessionId = currentAssetSessionId();
+    if (!sessionId) {
+      assetSessionShareBoxEl.style.display = "none";
+      assetSessionShareSummaryEl.textContent = "No session attached.";
+      assetSessionSharedListEl.innerHTML = "";
+      assetSessionManageWrapEl.style.display = "none";
+      assetSessionManageListEl.innerHTML = "";
+      return;
+    }
+    assetSessionShareBoxEl.style.display = "block";
+    const canManageSession = ["gm", "co_gm"].includes(String(playSessionState.user_role || ""));
+    const sharedPacks = Array.isArray(assetState.sessionSharedPacks) ? assetState.sessionSharedPacks : [];
+    const privatePacks = Array.isArray(assetState.privatePacks) ? assetState.privatePacks : [];
+    assetSessionShareSummaryEl.textContent = sharedPacks.length
+      ? `${sharedPacks.length} pack${sharedPacks.length === 1 ? "" : "s"} shared in ${playSessionState.name || "this session"}.`
+      : `No packs are shared in ${playSessionState.name || "this session"} yet.`;
+    assetSessionSharedListEl.innerHTML = sharedPacks.length
+      ? sharedPacks.map((pack) => `
+          <div style="display:flex; align-items:center; gap:6px; border:1px solid rgba(255,255,255,0.12); border-radius:999px; padding:4px 8px; font-size:11px;">
+            <span style="font-weight:600;">${escapeHtml(String(pack.name || pack.slug || "Pack"))}</span>
+            <span style="opacity:.65;">${escapeHtml(String(pack.slug || ""))}</span>
+          </div>
+        `).join("")
+      : `<div style="font-size:11px; opacity:.7;">Players only see pack assets here after a GM or co-GM shares them.</div>`;
+    if (!canManageSession) {
+      assetSessionManageWrapEl.style.display = "none";
+      assetSessionManageListEl.innerHTML = "";
+      return;
+    }
+    assetSessionManageWrapEl.style.display = "block";
+    assetSessionManageListEl.innerHTML = privatePacks.length
+      ? privatePacks.map((pack) => {
+          const packId = Number(pack?.pack_id || 0);
+          const shared = !!pack?.shared_in_session;
+          return `
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 8px;">
+              <div style="min-width:0;">
+                <div style="font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(pack?.name || pack?.slug || "Pack"))}</div>
+                <div style="font-size:11px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(pack?.slug || ""))}${shared ? " • shared now" : ""}</div>
+              </div>
+              <button type="button" data-session-pack-toggle="${packId}" data-session-pack-enabled="${shared ? "1" : "0"}" style="padding:4px 8px;">${shared ? "Unshare" : "Share"}</button>
+            </div>
+          `;
+        }).join("")
+      : `<div style="font-size:11px; opacity:.7;">No eligible private packs found on this account yet.</div>`;
+    assetSessionManageListEl.querySelectorAll("[data-session-pack-toggle]").forEach((btn) => {
+      btn.onclick = () => {
+        const packId = Number(btn.getAttribute("data-session-pack-toggle") || "0");
+        const enabled = btn.getAttribute("data-session-pack-enabled") !== "1";
+        toggleSessionSharedPack(packId, enabled);
+      };
+    });
+  }
+
   function refreshAssetFilterOptions() {
     if (!assetPackFilterEl) return;
     const current = String(assetState.packFilter || "all");
@@ -2515,6 +2640,7 @@
       const dimsLabel = (width > 0 && height > 0) ? `${width}x${height}` : "unknown size";
       const alphaLabel = assetHasAlphaGuess(a) ? "alpha" : "opaque";
       const packLabel = String(a.pack_slug || "").trim() || "uploads";
+      const packMetaLabel = a.shared_in_session ? `${packLabel} • session-shared` : packLabel;
       const kind = assetKind(a);
       const kindBadge = kind === "map" ? "MAP" : kind === "piece" ? "PCS" : "?";
       const kindBadgeBg = kind === "map" ? "rgba(10,132,255,0.9)" : kind === "piece" ? "rgba(52,199,89,0.9)" : "rgba(255,149,0,0.92)";
@@ -2539,7 +2665,7 @@
         </div>
         <div style="margin-top:8px; font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.name || "Asset"))}</div>
         <div style="font-size:11px; opacity:.8; margin-top:2px;">${escapeHtml(dimsLabel)} • ${escapeHtml(ext)} • ${escapeHtml(alphaLabel)}</div>
-        <div style="font-size:11px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.folder_path || "/"))} • ${escapeHtml(packLabel)}</div>
+        <div style="font-size:11px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.folder_path || "/"))} • ${escapeHtml(packMetaLabel)}</div>
         <div style="display:flex; gap:6px; margin-top:8px;">
           <button type="button" data-asset-action="preview" data-asset-idx="${idx}" style="flex:1; padding:4px 6px;">Preview</button>
           <button type="button" data-asset-action="set-bg" data-asset-idx="${idx}" ${setBgDisabled} style="flex:1; padding:4px 6px;">Set as Background</button>
@@ -2572,6 +2698,7 @@
         </div>
         <div style="margin-top:6px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.name || "Asset"))}</div>
         <div style="font-size:10px; opacity:.75; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.folder_path || "/"))}</div>
+        <div style="font-size:10px; opacity:.65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(packMetaLabel)}</div>
       </button>
     `;
     }).join("");
@@ -2811,12 +2938,16 @@
     if (assetState.loading) return;
     assetState.loading = true;
     try {
-      const data = await apiGet(`/api/assets?src=assetlib`);
+      const [data] = await Promise.all([
+        apiGet(`/api/assets?src=assetlib${assetSessionQuery()}`),
+        refreshAssetSessionPackData(),
+      ]);
       assetState.items = Array.isArray(data.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];
       assetState.loaded = true;
       assetState.filterKey = "";
       assetState.renderCount = assetState.pageSize;
       refreshAssetFilterOptions();
+      renderAssetSessionSharePanel();
       applyAssetFilterPresetForSource(assetState.packFilter);
       renderAssetSavedSets();
       renderAssetFolderTree();
@@ -2824,6 +2955,7 @@
     } catch (e) {
       assetState.items = [];
       assetState.loaded = false;
+      resetAssetSessionPackState();
       if (assetGridEl) assetGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Asset load failed</div>`;
       log(`ASSETS ERROR: ${e.message || e}`);
     } finally {
@@ -3178,6 +3310,8 @@
   }
   const assetState = {
     items: [],
+    privatePacks: [],
+    sessionSharedPacks: [],
     search: "",
     searchInput: "",
     searchDebounceMs: 160,
@@ -3198,6 +3332,8 @@
     placeMode: true,
     loaded: false,
     loading: false,
+    packsLoading: false,
+    packMetaSessionId: "",
     pageSize: 200,
     renderCount: 200,
     hasMore: false,
@@ -4267,15 +4403,22 @@
   }
 
   function clearPlaySessionState() {
+    const hadSession = !!playSessionState.id;
     playSessionState.id = null;
     playSessionState.name = "";
     playSessionState.user_role = "";
     playSessionState.rooms = [];
     playSessionState.members = [];
     playSessionState.current_room = null;
+    if (hadSession) {
+      assetState.loaded = false;
+      resetAssetSessionPackState();
+      if (isAssetsTabActive()) refreshAssetsPanel();
+    }
   }
 
   function applyPlaySessionState(session) {
+    const prevSessionId = String(playSessionState.id || "");
     if (!session || typeof session !== "object") {
       clearPlaySessionState();
       closeRoomMovePrompt();
@@ -4288,6 +4431,13 @@
     playSessionState.rooms = Array.isArray(session.rooms) ? session.rooms : [];
     playSessionState.members = Array.isArray(session.members) ? session.members : [];
     playSessionState.current_room = session.current_room || null;
+    if (String(playSessionState.id || "") !== prevSessionId) {
+      assetState.loaded = false;
+      resetAssetSessionPackState();
+      if (isAssetsTabActive()) refreshAssetsPanel();
+    } else {
+      renderAssetSessionSharePanel();
+    }
     renderSessionSummary();
   }
 
@@ -7154,6 +7304,11 @@
   if (assetPanelCloseBtnEl) assetPanelCloseBtnEl.onclick = () => { drawer.classList.add("hidden"); };
   if (drawerContentEl) drawerContentEl.addEventListener("scroll", maybeLoadMoreAssets, { passive: true });
   if (assetRefreshBtnEl) assetRefreshBtnEl.onclick = () => refreshAssetsPanel();
+  if (assetSessionShareRefreshBtnEl) assetSessionShareRefreshBtnEl.onclick = async () => {
+    await refreshAssetSessionPackData();
+    renderAssetSessionSharePanel();
+    if (assetState.loaded) await refreshAssetsPanel();
+  };
   if (assetSearchInputEl) assetSearchInputEl.addEventListener("input", () => {
     assetState.searchInput = assetSearchInputEl.value || "";
     if (assetSearchDebounceTimer) clearTimeout(assetSearchDebounceTimer);
