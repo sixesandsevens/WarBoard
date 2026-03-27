@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Set
 
 from fastapi import WebSocket
 
-from .models import AssetInstance, Point, RoomState, Shape, Stroke, TerrainPaintState, TerrainStroke, Token, WireEvent
+from .models import AssetInstance, FogPaintState, FogStroke, Point, RoomState, Shape, Stroke, TerrainPaintState, TerrainStroke, Token, WireEvent
 from .storage import load_room_state_json, save_room_state_json
 
 
@@ -26,6 +26,8 @@ MAX_CANVAS_COORD = 1_000_000.0
 MAX_STROKE_WIDTH = 100.0
 MAX_TERRAIN_STROKES = 5_000
 MAX_TERRAIN_STROKE_POINTS = 2_000
+MAX_FOG_STROKES = 5_000
+MAX_FOG_STROKE_POINTS = 2_000
 logger = logging.getLogger("warhamster.ws")
 _LEGACY_PRIVATE_PACK_RE = re.compile(r"^/private-packs/[^/]+/originals/([A-Za-z0-9_-]+)\.[A-Za-z0-9]+$")
 
@@ -439,6 +441,9 @@ class RoomManager:
     def can_paint_terrain(self, room: Room, user_id: Optional[int], client_id: str) -> bool:
         return self._is_gm(room, user_id, client_id)
 
+    def can_edit_fog(self, room: Room, user_id: Optional[int], client_id: str) -> bool:
+        return self._is_gm(room, user_id, client_id)
+
     async def apply_event(self, room_id: str, room: Room, event: WireEvent, client_id: str, user_id: Optional[int] = None) -> WireEvent:
         t = event.type
         p = event.payload
@@ -468,6 +473,9 @@ class RoomManager:
 
         if t in {"TERRAIN_STROKE_ADD", "TERRAIN_STROKE_UNDO"}:
             return self._apply_terrain_event(room_id, room, t, p, client_id, user_id)
+
+        if t in {"FOG_STROKE_ADD", "FOG_RESET", "FOG_SET_ENABLED"}:
+            return self._apply_fog_event(room_id, room, t, p, client_id, user_id)
 
         if t in {"COGM_ADD", "COGM_REMOVE"}:
             return self._apply_cogm_event(room_id, room, t, p, client_id, user_id)
@@ -851,6 +859,9 @@ class RoomManager:
             layer = p.get("layer", "draw")
             if layer not in ("map", "draw", "notes"):
                 layer = "draw"
+            layer_band = p.get("layer_band", "below_assets")
+            if layer_band not in ("below_assets", "above_assets"):
+                layer_band = "below_assets"
 
             if not sid or not isinstance(pts, list) or len(pts) < 2:
                 return WireEvent(type="ERROR", payload={"message": "Invalid stroke"})
@@ -865,6 +876,7 @@ class RoomManager:
                 creator_id=client_id,
                 locked=bool(p.get("locked", False)),
                 layer=layer,
+                layer_band=layer_band,
             )
 
             if len(stroke.points) < 2:
@@ -883,6 +895,7 @@ class RoomManager:
                     "width": stroke.width,
                     "locked": stroke.locked,
                     "layer": stroke.layer,
+                    "layer_band": stroke.layer_band,
                 },
             )
 
@@ -988,6 +1001,9 @@ class RoomManager:
             layer = p.get("layer", "draw")
             if layer not in ("map", "draw", "notes"):
                 layer = "draw"
+            layer_band = p.get("layer_band", "below_assets")
+            if layer_band not in ("below_assets", "above_assets"):
+                layer_band = "below_assets"
             text_val = None
             font_size = float(p.get("font_size", 20.0))
             if stype == "text":
@@ -1014,6 +1030,7 @@ class RoomManager:
                 fill=bool(p.get("fill", False)),
                 locked=bool(p.get("locked", False)),
                 layer=layer,
+                layer_band=layer_band,
             )
             self._push_history(room)
             room.state.shapes[sid] = shape
@@ -1282,6 +1299,81 @@ class RoomManager:
 
         return WireEvent(type="ERROR", payload={"message": f"Unhandled terrain event: {t}"})
 
+    # ------------------------------------------------------------------ fog
+    def _apply_fog_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
+        if not self.can_edit_fog(room, user_id, client_id):
+            return WireEvent(type="ERROR", payload={"message": "Only GM can edit fog"})
+
+        if t == "FOG_SET_ENABLED":
+            enabled = bool(p.get("enabled", False))
+            default_mode = str(p.get("default_mode") or room.state.fog_paint.default_mode).strip().lower()
+            if default_mode not in ("clear", "covered"):
+                default_mode = room.state.fog_paint.default_mode
+            room.state.fog_paint.enabled = enabled
+            room.state.fog_paint.default_mode = default_mode
+            self._mark_dirty(room_id, room)
+            return WireEvent(
+                type="FOG_SET_ENABLED",
+                payload={"enabled": room.state.fog_paint.enabled, "default_mode": room.state.fog_paint.default_mode},
+            )
+
+        if t == "FOG_RESET":
+            mode = str(p.get("mode") or p.get("default_mode") or room.state.fog_paint.default_mode).strip().lower()
+            if mode not in ("clear", "covered"):
+                mode = "clear"
+            room.state.fog_paint.enabled = bool(p.get("enabled", True))
+            room.state.fog_paint.default_mode = mode
+            room.state.fog_paint.strokes = {}
+            room.state.fog_paint.undo_stack = []
+            self._mark_dirty(room_id, room)
+            return WireEvent(
+                type="FOG_RESET",
+                payload={"enabled": room.state.fog_paint.enabled, "default_mode": room.state.fog_paint.default_mode},
+            )
+
+        if t == "FOG_STROKE_ADD":
+            sid = str(p.get("id") or "").strip()
+            if not sid:
+                return WireEvent(type="ERROR", payload={"message": "Missing fog stroke id"})
+            if sid in room.state.fog_paint.strokes:
+                return WireEvent(type="ERROR", payload={"message": "Duplicate fog stroke id", "id": sid})
+
+            pts = p.get("points", [])
+            if not isinstance(pts, list) or len(pts) < 2:
+                return WireEvent(type="ERROR", payload={"message": "Fog stroke needs at least 2 points"})
+            if len(pts) > MAX_FOG_STROKE_POINTS:
+                return WireEvent(type="ERROR", payload={"message": f"Fog stroke exceeds max points ({MAX_FOG_STROKE_POINTS})"})
+            if len(room.state.fog_paint.strokes) >= MAX_FOG_STROKES:
+                return WireEvent(type="ERROR", payload={"message": f"Room fog stroke limit reached ({MAX_FOG_STROKES})"})
+
+            op = str(p.get("op") or "reveal").strip().lower()
+            if op not in ("cover", "reveal"):
+                op = "reveal"
+            radius = max(5.0, min(400.0, float(p.get("radius", 60.0))))
+            opacity = max(0.0, min(1.0, float(p.get("opacity", 1.0))))
+            hardness = max(0.0, min(1.0, float(p.get("hardness", 0.6))))
+
+            stroke = FogStroke(
+                id=sid,
+                op=op,
+                points=[{"x": float(pt["x"]), "y": float(pt["y"])} for pt in pts if "x" in pt and "y" in pt],
+                radius=radius,
+                opacity=opacity,
+                hardness=hardness,
+                created_by=client_id,
+                created_at=time.time(),
+            )
+            if len(stroke.points) < 2:
+                return WireEvent(type="ERROR", payload={"message": "Fog stroke too short after filtering"})
+
+            room.state.fog_paint.enabled = True
+            room.state.fog_paint.strokes[sid] = stroke
+            room.state.fog_paint.undo_stack.append(sid)
+            self._mark_dirty(room_id, room)
+            return WireEvent(type="FOG_STROKE_ADD", payload=stroke.model_dump())
+
+        return WireEvent(type="ERROR", payload={"message": f"Unhandled fog event: {t}"})
+
     # ------------------------------------------------------------------ co-gm
     def _apply_cogm_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
         if not self._is_primary_gm(room, user_id, client_id):
@@ -1309,4 +1401,3 @@ class RoomManager:
 
         self._mark_dirty(room_id, room)
         return WireEvent(type="COGM_UPDATE", payload={"co_gm_ids": room.state.co_gm_ids})
-

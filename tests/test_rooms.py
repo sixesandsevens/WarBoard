@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from server.models import AssetInstance, RoomState, Shape, Stroke, Token, WireEvent, Point
+from server.models import AssetInstance, FogStroke, RoomState, Shape, Stroke, Token, WireEvent, Point
 from server.rooms import (
+    MAX_FOG_STROKE_POINTS,
+    MAX_FOG_STROKES,
     MAX_CANVAS_COORD,
     MAX_STROKE_POINTS,
     MAX_STROKE_WIDTH,
@@ -325,6 +327,19 @@ class TestStrokeAdd:
                     id="s1", points=make_points(3), layer="invalid")
         assert room.state.strokes["s1"].layer == "draw"
 
+    async def test_stroke_add_invalid_layer_band_defaults_below_assets(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "STROKE_ADD",
+                    id="s1", points=make_points(3), layer_band="chaos")
+        assert room.state.strokes["s1"].layer_band == "below_assets"
+
+    async def test_stroke_add_preserves_layer_band(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(rm, room, room_id, "STROKE_ADD",
+                             id="s1", points=make_points(3), layer_band="above_assets")
+        assert room.state.strokes["s1"].layer_band == "above_assets"
+        assert result.payload["layer_band"] == "above_assets"
+
     async def test_stroke_add_adds_to_draw_order(self, gm_room):
         rm, room, room_id = gm_room
         await apply(rm, room, room_id, "STROKE_ADD", id="s1", points=make_points(3))
@@ -412,6 +427,19 @@ class TestShapeAdd:
         await apply(rm, room, room_id, "SHAPE_ADD",
                     id="sh1", type="rect", x1=0, y1=0, x2=10, y2=10, width=999.0)
         assert room.state.shapes["sh1"].width == MAX_STROKE_WIDTH
+
+    async def test_shape_add_invalid_layer_band_defaults_below_assets(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "SHAPE_ADD",
+                    id="sh1", type="rect", x1=0, y1=0, x2=10, y2=10, layer_band="void")
+        assert room.state.shapes["sh1"].layer_band == "below_assets"
+
+    async def test_shape_add_preserves_layer_band(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(rm, room, room_id, "SHAPE_ADD",
+                             id="sh1", type="rect", x1=0, y1=0, x2=10, y2=10, layer_band="above_assets")
+        assert room.state.shapes["sh1"].layer_band == "above_assets"
+        assert result.payload["layer_band"] == "above_assets"
 
     async def test_shape_add_adds_to_draw_order(self, gm_room):
         rm, room, room_id = gm_room
@@ -895,3 +923,72 @@ class TestTerrainPaint:
         room.dirty = False
         await apply(rm, room, room_id, "TERRAIN_STROKE_UNDO")
         assert room.dirty is False
+
+
+class TestFogPaint:
+    async def test_gm_can_enable_fog(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(rm, room, room_id, "FOG_SET_ENABLED", enabled=True, default_mode="covered")
+        assert result.type == "FOG_SET_ENABLED"
+        assert room.state.fog_paint.enabled is True
+        assert room.state.fog_paint.default_mode == "covered"
+
+    async def test_non_gm_cannot_enable_fog(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply_as_player(rm, room, room_id, "FOG_SET_ENABLED", enabled=True)
+        assert result.type == "ERROR"
+        assert room.state.fog_paint.enabled is False
+
+    async def test_gm_can_reset_fog(self, gm_room):
+        rm, room, room_id = gm_room
+        room.state.fog_paint.strokes["f1"] = FogStroke(id="f1", points=make_terrain_points(2))
+        room.state.fog_paint.undo_stack.append("f1")
+        result = await apply(rm, room, room_id, "FOG_RESET", mode="covered", enabled=True)
+        assert result.type == "FOG_RESET"
+        assert room.state.fog_paint.default_mode == "covered"
+        assert room.state.fog_paint.strokes == {}
+        assert room.state.fog_paint.undo_stack == []
+
+    async def test_gm_can_add_fog_stroke(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(
+            rm, room, room_id, "FOG_STROKE_ADD",
+            id="fg1", op="reveal", points=make_terrain_points(3), radius=80.0, opacity=0.8, hardness=0.5,
+        )
+        assert result.type == "FOG_STROKE_ADD"
+        assert room.state.fog_paint.enabled is True
+        assert room.state.fog_paint.strokes["fg1"].op == "reveal"
+
+    async def test_non_gm_cannot_add_fog_stroke(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply_as_player(rm, room, room_id, "FOG_STROKE_ADD", id="fg1", points=make_terrain_points(3))
+        assert result.type == "ERROR"
+        assert "fg1" not in room.state.fog_paint.strokes
+
+    async def test_fog_stroke_requires_two_points(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(rm, room, room_id, "FOG_STROKE_ADD", id="fg1", points=make_terrain_points(1))
+        assert result.type == "ERROR"
+
+    async def test_fog_stroke_exceeds_max_points_returns_error(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply(
+            rm, room, room_id, "FOG_STROKE_ADD",
+            id="fg1", points=make_terrain_points(MAX_FOG_STROKE_POINTS + 1),
+        )
+        assert result.type == "ERROR"
+
+    async def test_fog_stroke_limit_enforced(self, gm_room):
+        rm, room, room_id = gm_room
+        for i in range(MAX_FOG_STROKES):
+            room.state.fog_paint.strokes[f"fg{i}"] = FogStroke(
+                id=f"fg{i}",
+                points=[{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 1.0}],
+            )
+        result = await apply(rm, room, room_id, "FOG_STROKE_ADD", id="overflow", points=make_terrain_points(3))
+        assert result.type == "ERROR"
+
+    async def test_fog_stroke_op_defaults_to_reveal(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "FOG_STROKE_ADD", id="fg1", points=make_terrain_points(3), op="mystery")
+        assert room.state.fog_paint.strokes["fg1"].op == "reveal"

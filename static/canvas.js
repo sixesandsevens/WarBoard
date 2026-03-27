@@ -126,7 +126,9 @@
   const toolBtnErase = document.getElementById("toolBtnErase");
   const toolBtnRuler = document.getElementById("toolBtnRuler");
   const toolBtnTerrainPaint = document.getElementById("toolBtnTerrainPaint");
+  const toolBtnFogPaint = document.getElementById("toolBtnFogPaint");
   const terrainPaintPanel = document.getElementById("terrainPaintPanel");
+  const fogPaintPanel = document.getElementById("fogPaintPanel");
   const terrainMaterialPillsEl = document.getElementById("terrainMaterialPills");
   const terrainOpPaintBtn = document.getElementById("terrainOpPaint");
   const terrainOpEraseBtn = document.getElementById("terrainOpErase");
@@ -137,6 +139,17 @@
   const terrainHardnessSlider = document.getElementById("terrainHardnessSlider");
   const terrainHardnessVal = document.getElementById("terrainHardnessVal");
   const terrainUndoBtn = document.getElementById("terrainUndoBtn");
+  const fogEnabledToggle = document.getElementById("fogEnabledToggle");
+  const fogOpRevealBtn = document.getElementById("fogOpReveal");
+  const fogOpCoverBtn = document.getElementById("fogOpCover");
+  const fogRadiusSlider = document.getElementById("fogRadiusSlider");
+  const fogRadiusVal = document.getElementById("fogRadiusVal");
+  const fogOpacitySlider = document.getElementById("fogOpacitySlider");
+  const fogOpacityVal = document.getElementById("fogOpacityVal");
+  const fogHardnessSlider = document.getElementById("fogHardnessSlider");
+  const fogHardnessVal = document.getElementById("fogHardnessVal");
+  const fogCoverAllBtn = document.getElementById("fogCoverAllBtn");
+  const fogClearAllBtn = document.getElementById("fogClearAllBtn");
   const selectModeLabelEl = document.getElementById("selectModeLabel");
   const sessionPill = document.getElementById("sessionPill");
   const sessionResyncBadge = document.getElementById("sessionResyncBadge");
@@ -174,6 +187,7 @@
   const sessionDisconnectBtn = document.getElementById("sessionDisconnectBtn");
   const colorEl = document.getElementById("color");
   const sizeEl = document.getElementById("size");
+  const drawLayerBandEl = document.getElementById("drawLayerBand");
   const feetPerSqEl = document.getElementById("feetPerSq");
   const snapEl = document.getElementById("snap");
   const gridEl = document.getElementById("grid");
@@ -519,6 +533,24 @@
       .replaceAll("'", "&#39;");
   }
 
+  function normalizeLayerBand(value) {
+    return value === "above_assets" ? "above_assets" : "below_assets";
+  }
+
+  function drawingLayerBand() {
+    return normalizeLayerBand(drawLayerBandEl?.value);
+  }
+
+  function normalizeStrokeRecord(stroke) {
+    if (!stroke || typeof stroke !== "object") return stroke;
+    return { ...stroke, layer_band: normalizeLayerBand(stroke.layer_band) };
+  }
+
+  function normalizeShapeRecord(shape) {
+    if (!shape || typeof shape !== "object") return shape;
+    return { ...shape, layer_band: normalizeLayerBand(shape.layer_band) };
+  }
+
   function activateDrawerTab(tab, openDrawer = true) {
     const tabId = String(tab || "tokens");
     document.querySelectorAll(".tab-btn").forEach((b) => {
@@ -702,7 +734,7 @@
     toolColorPanel.classList.add("hidden");
     toolSizePanel.classList.add("hidden");
     toolTextPanel.classList.add("hidden");
-    // terrain paint panel stays visible while terrain_paint tool is active
+    // terrain/fog paint panels stay visible while those tools are active
     textPanelTargetShapeId = null;
     colorPanelTargetShapeId = null;
   }
@@ -719,7 +751,8 @@
     return !toolColorPanel.classList.contains("hidden") && toolColorPanel.contains(target)
       || !toolSizePanel.classList.contains("hidden") && toolSizePanel.contains(target)
       || !toolTextPanel.classList.contains("hidden") && toolTextPanel.contains(target)
-      || (terrainPaintPanel && !terrainPaintPanel.classList.contains("hidden") && terrainPaintPanel.contains(target));
+      || (terrainPaintPanel && !terrainPaintPanel.classList.contains("hidden") && terrainPaintPanel.contains(target))
+      || (fogPaintPanel && !fogPaintPanel.classList.contains("hidden") && fogPaintPanel.contains(target));
   }
 
   function openToolColorPanel(title = "Color", opts = {}) {
@@ -3031,6 +3064,12 @@
       strokes: {},
       undo_stack: [],
     },
+    fog_paint: {
+      enabled: false,
+      default_mode: "clear",
+      strokes: {},
+      undo_stack: [],
+    },
   };
 
   const playSessionState = {
@@ -3052,6 +3091,13 @@
     op: "paint",
   };
   let activePaintStroke = null;
+  const fogBrush = {
+    op: "reveal",
+    radius: 90,
+    opacity: 1.0,
+    hardness: 0.65,
+  };
+  let activeFogStroke = null;
   const packState = {
     packs: [],
     selectedPackId: "",
@@ -3991,6 +4037,145 @@
   }
   // ─── End Terrain Mask Subsystem ────────────────────────────────────────────
 
+  const FOG_MASK_TILE_WORLD = 1000;
+  const FOG_MASK_TILE_PX = 512;
+
+  const fogMasks = {
+    tiles: new Map(),
+    disp: null,
+    dispCtx: null,
+    dispPx: 0,
+  };
+
+  function fogMaskKey(tx, ty) { return `${tx},${ty}`; }
+
+  function resetFogTile(canvasEl) {
+    const c = canvasEl.getContext("2d");
+    c.clearRect(0, 0, FOG_MASK_TILE_PX, FOG_MASK_TILE_PX);
+    if (state.fog_paint?.default_mode === "covered") {
+      c.fillStyle = "rgba(255,255,255,1)";
+      c.fillRect(0, 0, FOG_MASK_TILE_PX, FOG_MASK_TILE_PX);
+    }
+  }
+
+  function getOrCreateFogTile(tx, ty) {
+    const key = fogMaskKey(tx, ty);
+    let tile = fogMasks.tiles.get(key);
+    if (!tile) {
+      tile = document.createElement("canvas");
+      tile.width = FOG_MASK_TILE_PX;
+      tile.height = FOG_MASK_TILE_PX;
+      fogMasks.tiles.set(key, tile);
+      resetFogTile(tile);
+    }
+    return tile;
+  }
+
+  function drawFogBrushDab(maskCtx, x, y, radiusPx, opacity, hardness, op) {
+    maskCtx.save();
+    maskCtx.globalCompositeOperation = op === "reveal" ? "destination-out" : "source-over";
+    const r = Math.max(1, radiusPx);
+    const inner = r * Math.max(0, Math.min(1, hardness));
+    const g = maskCtx.createRadialGradient(x, y, inner, x, y, r);
+    g.addColorStop(0, `rgba(255,255,255,${opacity})`);
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    maskCtx.fillStyle = g;
+    maskCtx.beginPath();
+    maskCtx.arc(x, y, r, 0, Math.PI * 2);
+    maskCtx.fill();
+    maskCtx.restore();
+  }
+
+  function applyFogStrokeToMasks(stroke) {
+    const { points, radius, opacity, hardness, op } = stroke || {};
+    if (!Array.isArray(points) || points.length < 2) return;
+    const spacing = Math.max(2, Number(radius || 60) * 0.35);
+    let prev = points[0];
+    for (let i = 1; i < points.length; i++) {
+      const cur = points[i];
+      const dx = cur.x - prev.x;
+      const dy = cur.y - prev.y;
+      const dist = Math.hypot(dx, dy) || 0;
+      const steps = Math.max(1, Math.floor(dist / spacing));
+      for (let s = 0; s <= steps; s++) {
+        const t = steps === 0 ? 0 : s / steps;
+        const x = prev.x + dx * t;
+        const y = prev.y + dy * t;
+        const { tx, ty } = worldToTile(x, y);
+        const { px, py } = worldToTilePx(x, y, tx, ty);
+        const radiusPx = (Number(radius || 60) / FOG_MASK_TILE_WORLD) * FOG_MASK_TILE_PX;
+        const dxs = [0], dys = [0];
+        if (px - radiusPx < 0) dxs.push(-1);
+        if (px + radiusPx > FOG_MASK_TILE_PX) dxs.push(1);
+        if (py - radiusPx < 0) dys.push(-1);
+        if (py + radiusPx > FOG_MASK_TILE_PX) dys.push(1);
+        for (const dtx of dxs) {
+          for (const dty of dys) {
+            const neighbor = getOrCreateFogTile(tx + dtx, ty + dty).getContext("2d");
+            drawFogBrushDab(
+              neighbor,
+              px - dtx * FOG_MASK_TILE_PX,
+              py - dty * FOG_MASK_TILE_PX,
+              radiusPx,
+              Number(opacity ?? 1.0),
+              Number(hardness ?? 0.6),
+              op === "cover" ? "cover" : "reveal",
+            );
+          }
+        }
+      }
+      prev = cur;
+    }
+  }
+
+  fogMasks.applyStroke = applyFogStrokeToMasks;
+  fogMasks.rebuildAllFromStrokes = function() {
+    fogMasks.tiles.clear();
+    const strokes = Object.values(state.fog_paint?.strokes || {});
+    for (const st of strokes) fogMasks.applyStroke(st);
+  };
+
+  function drawFogOverlays() {
+    if (!state.fog_paint?.enabled) return;
+    const { x0, y0, x1, y1 } = viewWorldRect();
+    const tx0 = Math.floor(x0 / FOG_MASK_TILE_WORLD) - 1;
+    const ty0 = Math.floor(y0 / FOG_MASK_TILE_WORLD) - 1;
+    const tx1 = Math.floor(x1 / FOG_MASK_TILE_WORLD) + 1;
+    const ty1 = Math.floor(y1 / FOG_MASK_TILE_WORLD) + 1;
+    const neededPx = Math.min(2048, Math.max(256, Math.ceil(FOG_MASK_TILE_WORLD * cam.z)));
+    if (fogMasks.dispPx !== neededPx) {
+      fogMasks.disp = document.createElement("canvas");
+      fogMasks.disp.width = neededPx;
+      fogMasks.disp.height = neededPx;
+      fogMasks.dispCtx = fogMasks.disp.getContext("2d");
+      fogMasks.dispPx = neededPx;
+    }
+    const dc = fogMasks.dispCtx;
+    const dp = fogMasks.dispPx;
+    ctx.save();
+    ctx.translate(cam.x, cam.y);
+    ctx.scale(cam.z, cam.z);
+    for (let ty = ty0; ty <= ty1; ty++) {
+      for (let tx = tx0; tx <= tx1; tx++) {
+        const mask = state.fog_paint.default_mode === "covered"
+          ? getOrCreateFogTile(tx, ty)
+          : fogMasks.tiles.get(fogMaskKey(tx, ty));
+        if (!mask) continue;
+        const wx = tx * FOG_MASK_TILE_WORLD;
+        const wy = ty * FOG_MASK_TILE_WORLD;
+        dc.clearRect(0, 0, dp, dp);
+        dc.globalCompositeOperation = "source-over";
+        dc.fillStyle = "rgba(0,0,0,1)";
+        dc.fillRect(0, 0, dp, dp);
+        dc.globalCompositeOperation = "destination-in";
+        dc.drawImage(mask, 0, 0, dp, dp);
+        dc.globalCompositeOperation = "source-over";
+        ctx.drawImage(fogMasks.disp, wx, wy, FOG_MASK_TILE_WORLD, FOG_MASK_TILE_WORLD);
+      }
+    }
+    ctx.restore();
+  }
+
   function drawTerrainBackground() {
     if (!terrain.patternA || !terrain.patternB || !terrain.patternC) return;
     const w = canvas.getBoundingClientRect().width;
@@ -4164,6 +4349,9 @@
     activeShapePreview = null;
     activeRuler = null;
     activePaintStroke = null;
+    activeFogStroke = null;
+    terrainMasks.rebuildAllFromStrokes();
+    fogMasks.rebuildAllFromStrokes();
     selectedTokenId = null;
     selectedAssetId = null;
     selectedShapeId = null;
@@ -4314,6 +4502,7 @@
     terrainStyleEl.value = state.terrain_style || "grassland";
     refreshTerrainBadge();
     if (toolBtnTerrainPaint) toolBtnTerrainPaint.classList.toggle("hidden", !gm);
+    if (toolBtnFogPaint) toolBtnFogPaint.classList.toggle("hidden", !gm);
 
     const arr = Array.from(players).sort();
     playerListEl.innerHTML = arr.map((id) => {
@@ -4740,11 +4929,12 @@
     ctx.restore();
   }
 
-  function drawStrokes() {
+  function drawStrokes(layerBand) {
     if (!state.layer_visibility.drawings) return;
     for (const id of state.draw_order.strokes) {
       const s = state.strokes.get(id);
       if (!s) continue;
+      if (normalizeLayerBand(s.layer_band) !== layerBand) continue;
       if (!s.points || s.points.length < 2) continue;
       ctx.save();
       ctx.lineCap = "round";
@@ -4762,7 +4952,7 @@
       ctx.restore();
     }
 
-    if (activeStroke && activeStroke.points.length >= 2) {
+    if (activeStroke && normalizeLayerBand(activeStroke.layer_band) === layerBand && activeStroke.points.length >= 2) {
       ctx.save();
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
@@ -4833,11 +5023,12 @@
     ctx.restore();
   }
 
-  function drawShapes() {
+  function drawShapes(layerBand) {
     if (!state.layer_visibility.shapes) return;
     for (const id of state.draw_order.shapes) {
       const sh = state.shapes.get(id);
       if (!sh) continue;
+      if (normalizeLayerBand(sh.layer_band) !== layerBand) continue;
       drawOneShape(sh, false);
       if (id === selectedShapeId) {
         const a = worldToScreen(sh.x1, sh.y1);
@@ -4861,7 +5052,7 @@
         ctx.restore();
       }
     }
-    if (activeShapePreview) drawOneShape(activeShapePreview, true);
+    if (activeShapePreview && normalizeLayerBand(activeShapePreview.layer_band) === layerBand) drawOneShape(activeShapePreview, true);
   }
 
   function drawAssetStatusBadges(center, w, h, asset) {
@@ -5183,10 +5374,13 @@
     drawBackground();
     if (state.background_mode === "terrain") drawTerrainOverlays();
     drawGrid();
-    drawStrokes();
-    drawShapes();
+    drawStrokes("below_assets");
+    drawShapes("below_assets");
     drawAssets();
+    drawStrokes("above_assets");
+    drawShapes("above_assets");
     drawTokens();
+    drawFogOverlays();
     drawMarqueeSelection();
     drawSelectionCountBadge();
     drawDragSpawnGhost();
@@ -5224,6 +5418,7 @@
     activeShapePreview = null;
     activeRuler = null;
     activePaintStroke = null;
+    activeFogStroke = null;
 
     state.room_id = s.room_id;
     state.gm_id = s.gm_id;
@@ -5247,9 +5442,9 @@
       state.tokens.set(id, { ...normalized, badges: normalizedBadgeList(normalized?.badges) });
     }
     state.strokes.clear();
-    for (const [id, st] of Object.entries(s.strokes || {})) state.strokes.set(id, st);
+    for (const [id, st] of Object.entries(s.strokes || {})) state.strokes.set(id, normalizeStrokeRecord(st));
     state.shapes.clear();
-    for (const [id, sh] of Object.entries(s.shapes || {})) state.shapes.set(id, sh);
+    for (const [id, sh] of Object.entries(s.shapes || {})) state.shapes.set(id, normalizeShapeRecord(sh));
     state.assets.clear();
     for (const [id, a] of Object.entries(s.assets || {})) state.assets.set(id, normalizePackBackedRecord(a));
     state.draw_order = {
@@ -5268,6 +5463,11 @@
       invalidateMaterialPatterns();
       terrainMasks.rebuildAllFromStrokes();
     }
+    state.fog_paint.enabled = !!s.fog_paint?.enabled;
+    state.fog_paint.default_mode = s.fog_paint?.default_mode === "covered" ? "covered" : "clear";
+    state.fog_paint.strokes = s.fog_paint?.strokes || {};
+    state.fog_paint.undo_stack = s.fog_paint?.undo_stack || [];
+    fogMasks.rebuildAllFromStrokes();
 
     if (selectedTokenId && !state.tokens.has(selectedTokenId)) selectedTokenId = null;
     if (selectedShapeId && !state.shapes.has(selectedShapeId)) selectedShapeId = null;
@@ -5276,6 +5476,7 @@
     if (hoveredTokenId && !state.tokens.has(hoveredTokenId)) hoveredTokenId = null;
     players.add(myId());
     if (state.gm_id) players.add(state.gm_id);
+    refreshFogPaintPanel();
     refreshGmUI();
     pruneUnusedPackBlobUrls();
     requestRender();
@@ -5314,6 +5515,12 @@
         strokes: { ...(state.terrain_paint?.strokes || {}) },
         undo_stack: [...(state.terrain_paint?.undo_stack || [])],
       },
+      fog_paint: {
+        enabled: !!state.fog_paint?.enabled,
+        default_mode: state.fog_paint?.default_mode === "covered" ? "covered" : "clear",
+        strokes: { ...(state.fog_paint?.strokes || {}) },
+        undo_stack: [...(state.fog_paint?.undo_stack || [])],
+      },
     };
   }
 
@@ -5327,6 +5534,7 @@
     "TOKEN_BADGE_TOGGLE", "TOKEN_MOVE", "STROKE_ADD", "STROKE_DELETE", "STROKE_SET_LOCK", "ERASE_AT", "SHAPE_ADD", "SHAPE_UPDATE", "SHAPE_DELETE", "SHAPE_SET_LOCK",
     "ASSET_INSTANCE_CREATE", "ASSET_INSTANCE_UPDATE", "ASSET_INSTANCE_DELETE",
     "TERRAIN_STROKE_ADD", "TERRAIN_STROKE_UNDO",
+    "FOG_STROKE_ADD", "FOG_RESET", "FOG_SET_ENABLED",
     "COGM_ADD", "COGM_REMOVE",
   ]);
 
@@ -5559,7 +5767,7 @@
     if (type === "STROKE_ADD") {
       const p = payload;
       if (p?.id) {
-        state.strokes.set(p.id, p);
+        state.strokes.set(p.id, normalizeStrokeRecord(p));
         state.draw_order.strokes = state.draw_order.strokes.filter((id) => id !== p.id);
         state.draw_order.strokes.push(p.id);
       }
@@ -5584,7 +5792,7 @@
     if (type === "SHAPE_ADD") {
       const p = payload;
       if (p?.id) {
-        const next = { ...p };
+        const next = normalizeShapeRecord({ ...p });
         if (!next.creator_id) next.creator_id = myId();
         state.shapes.set(p.id, next);
         state.draw_order.shapes = state.draw_order.shapes.filter((id) => id !== p.id);
@@ -5806,6 +6014,44 @@
       return;
     }
 
+    if (type === "FOG_SET_ENABLED") {
+      state.fog_paint.enabled = !!payload?.enabled;
+      state.fog_paint.default_mode = payload?.default_mode === "covered" ? "covered" : "clear";
+      fogMasks.rebuildAllFromStrokes();
+      refreshFogPaintPanel();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "FOG_RESET") {
+      state.fog_paint.enabled = !!payload?.enabled;
+      state.fog_paint.default_mode = payload?.default_mode === "covered" ? "covered" : "clear";
+      state.fog_paint.strokes = {};
+      state.fog_paint.undo_stack = [];
+      fogMasks.rebuildAllFromStrokes();
+      refreshFogPaintPanel();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "FOG_STROKE_ADD") {
+      const p = payload;
+      if (p?.id) {
+        if (!state.fog_paint.strokes[p.id]) {
+          state.fog_paint.strokes[p.id] = p;
+          fogMasks.applyStroke(p);
+        }
+        if (!state.fog_paint.undo_stack.includes(p.id)) state.fog_paint.undo_stack.push(p.id);
+        state.fog_paint.enabled = true;
+      }
+      refreshFogPaintPanel();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
     if (type === "COGM_ADD") {
       const tid = payload?.target_id;
       if (tid && !state.co_gm_ids.includes(tid)) state.co_gm_ids.push(tid);
@@ -5842,6 +6088,14 @@
     terrain.tileA = null;
     terrain.tileB = null;
     terrain.tileC = null;
+    state.terrain_paint.strokes = {};
+    state.terrain_paint.undo_stack = [];
+    state.fog_paint.enabled = false;
+    state.fog_paint.default_mode = "clear";
+    state.fog_paint.strokes = {};
+    state.fog_paint.undo_stack = [];
+    terrainMasks.rebuildAllFromStrokes();
+    fogMasks.rebuildAllFromStrokes();
     state.tokens.clear();
     state.strokes.clear();
     state.shapes.clear();
@@ -6220,7 +6474,7 @@
       if (ev.type === "STROKE_ADD") {
         const p = ev.payload;
         if (p?.id) {
-          state.strokes.set(p.id, p);
+          state.strokes.set(p.id, normalizeStrokeRecord(p));
           state.draw_order.strokes = state.draw_order.strokes.filter((id) => id !== p.id);
           state.draw_order.strokes.push(p.id);
         }
@@ -6282,7 +6536,7 @@
       if (ev.type === "SHAPE_ADD") {
         const p = ev.payload;
         if (p?.id) {
-          state.shapes.set(p.id, p);
+          state.shapes.set(p.id, normalizeShapeRecord(p));
           state.draw_order.shapes = state.draw_order.shapes.filter((id) => id !== p.id);
           state.draw_order.shapes.push(p.id);
         }
@@ -6294,7 +6548,7 @@
       if (ev.type === "SHAPE_UPDATE") {
         const p = ev.payload;
         if (p?.id) {
-          state.shapes.set(p.id, { ...(state.shapes.get(p.id) || {}), ...p });
+          state.shapes.set(p.id, normalizeShapeRecord({ ...(state.shapes.get(p.id) || {}), ...p }));
           if (!state.draw_order.shapes.includes(p.id)) state.draw_order.shapes.push(p.id);
         }
         refreshGmUI();
@@ -6350,6 +6604,41 @@
         }
         if (ids.length) {
           terrainMasks.rebuildAllFromStrokes();
+          requestRender();
+        }
+        return;
+      }
+
+      if (ev.type === "FOG_SET_ENABLED") {
+        state.fog_paint.enabled = !!ev.payload?.enabled;
+        state.fog_paint.default_mode = ev.payload?.default_mode === "covered" ? "covered" : "clear";
+        fogMasks.rebuildAllFromStrokes();
+        refreshFogPaintPanel();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "FOG_RESET") {
+        state.fog_paint.enabled = !!ev.payload?.enabled;
+        state.fog_paint.default_mode = ev.payload?.default_mode === "covered" ? "covered" : "clear";
+        state.fog_paint.strokes = {};
+        state.fog_paint.undo_stack = [];
+        fogMasks.rebuildAllFromStrokes();
+        refreshFogPaintPanel();
+        requestRender();
+        return;
+      }
+
+      if (ev.type === "FOG_STROKE_ADD") {
+        const p = ev.payload;
+        if (p?.id) {
+          if (!state.fog_paint.strokes[p.id]) {
+            state.fog_paint.strokes[p.id] = p;
+            fogMasks.applyStroke(p);
+          }
+          if (!state.fog_paint.undo_stack.includes(p.id)) state.fog_paint.undo_stack.push(p.id);
+          state.fog_paint.enabled = true;
+          refreshFogPaintPanel();
           requestRender();
         }
         return;
@@ -6413,7 +6702,7 @@
     log(`UI INIT ERROR: ${e?.message || e}`);
     toast(`UI init error: ${e?.message || e}`);
   }
-  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnTerrainPaint].forEach((btn) => {
+  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnTerrainPaint, toolBtnFogPaint].forEach((btn) => {
     if (!btn) return;
     btn.onclick = () => setTool(btn.dataset.tool);
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
@@ -6501,6 +6790,48 @@
   if (terrainUndoBtn) {
     terrainUndoBtn.onclick = () => { if (isGM()) send("TERRAIN_STROKE_UNDO", { count: 1 }); };
   }
+  function refreshFogPaintPanel() {
+    if (fogEnabledToggle) fogEnabledToggle.checked = !!state.fog_paint?.enabled;
+    if (fogOpRevealBtn) fogOpRevealBtn.classList.toggle("active", fogBrush.op === "reveal");
+    if (fogOpCoverBtn) fogOpCoverBtn.classList.toggle("active", fogBrush.op === "cover");
+    if (fogRadiusSlider) fogRadiusSlider.value = String(Math.round(fogBrush.radius));
+    if (fogRadiusVal) fogRadiusVal.textContent = String(Math.round(fogBrush.radius));
+    if (fogOpacitySlider) fogOpacitySlider.value = String(Math.round(fogBrush.opacity * 100));
+    if (fogOpacityVal) fogOpacityVal.textContent = `${Math.round(fogBrush.opacity * 100)}%`;
+    if (fogHardnessSlider) fogHardnessSlider.value = String(Math.round(fogBrush.hardness * 100));
+    if (fogHardnessVal) fogHardnessVal.textContent = `${Math.round(fogBrush.hardness * 100)}%`;
+  }
+  if (fogEnabledToggle) {
+    fogEnabledToggle.onchange = () => {
+      if (!isGM()) {
+        fogEnabledToggle.checked = !!state.fog_paint?.enabled;
+        return;
+      }
+      send("FOG_SET_ENABLED", { enabled: !!fogEnabledToggle.checked, default_mode: state.fog_paint?.default_mode || "clear" });
+    };
+  }
+  if (fogOpRevealBtn) fogOpRevealBtn.onclick = () => { fogBrush.op = "reveal"; refreshFogPaintPanel(); };
+  if (fogOpCoverBtn) fogOpCoverBtn.onclick = () => { fogBrush.op = "cover"; refreshFogPaintPanel(); };
+  if (fogRadiusSlider) {
+    fogRadiusSlider.oninput = () => {
+      fogBrush.radius = Number(fogRadiusSlider.value);
+      refreshFogPaintPanel();
+    };
+  }
+  if (fogOpacitySlider) {
+    fogOpacitySlider.oninput = () => {
+      fogBrush.opacity = Number(fogOpacitySlider.value) / 100;
+      refreshFogPaintPanel();
+    };
+  }
+  if (fogHardnessSlider) {
+    fogHardnessSlider.oninput = () => {
+      fogBrush.hardness = Number(fogHardnessSlider.value) / 100;
+      refreshFogPaintPanel();
+    };
+  }
+  if (fogCoverAllBtn) fogCoverAllBtn.onclick = () => { if (isGM()) send("FOG_RESET", { mode: "covered", enabled: true }); };
+  if (fogClearAllBtn) fogClearAllBtn.onclick = () => { if (isGM()) send("FOG_RESET", { mode: "clear", enabled: true }); };
   const applyTextDraft = () => {
     const v = String(toolTextInput?.value || "").trim();
     if (textPanelTargetShapeId) {
@@ -7321,6 +7652,7 @@
     toolBtnErase.classList.toggle("active", t === "eraser");
     toolBtnRuler.classList.toggle("active", t === "ruler");
     if (toolBtnTerrainPaint) toolBtnTerrainPaint.classList.toggle("active", t === "terrain_paint");
+    if (toolBtnFogPaint) toolBtnFogPaint.classList.toggle("active", t === "fog_paint");
     if (selectModeLabelEl) selectModeLabelEl.classList.toggle("hidden", t !== "move");
     if (terrainPaintPanel) {
       if (t === "terrain_paint") {
@@ -7329,6 +7661,15 @@
         refreshTerrainPaintPanel();
       } else {
         terrainPaintPanel.classList.add("hidden");
+      }
+    }
+    if (fogPaintPanel) {
+      if (t === "fog_paint") {
+        fogPaintPanel.classList.remove("hidden");
+        positionFogPaintPanel();
+        refreshFogPaintPanel();
+      } else {
+        fogPaintPanel.classList.add("hidden");
       }
     }
   }
@@ -7343,11 +7684,23 @@
     const y = topRect.bottom + 8;
     clampMenuToViewport(terrainPaintPanel, x, y);
   }
+  function positionFogPaintPanel() {
+    if (!fogPaintPanel) return;
+    const topEl = document.getElementById("top");
+    const topRect = topEl ? topEl.getBoundingClientRect() : { bottom: 56 };
+    const pad = 10;
+    const x = window.innerWidth - fogPaintPanel.offsetWidth - pad;
+    const y = topRect.bottom + 8;
+    clampMenuToViewport(fogPaintPanel, x, y);
+  }
   function setTool(next) {
-    if (next === "terrain_paint" && !isGM()) return;
+    if ((next === "terrain_paint" || next === "fog_paint") && !isGM()) return;
     const prev = tool();
     if (prev === "terrain_paint" && next !== "terrain_paint" && activePaintStroke && isGM()) {
       commitActiveTerrainStroke();
+    }
+    if (prev === "fog_paint" && next !== "fog_paint" && activeFogStroke && isGM()) {
+      commitActiveFogStroke();
     }
     if (next === "shape") {
       toolEl.value = isShapeTool(toolEl.value) ? toolEl.value : lastShapeTool;
@@ -7364,6 +7717,7 @@
       else if (current === "eraser") flashToolActivate(toolBtnErase);
       else if (current === "ruler") flashToolActivate(toolBtnRuler);
       else if (current === "terrain_paint" && toolBtnTerrainPaint) flashToolActivate(toolBtnTerrainPaint);
+      else if (current === "fog_paint" && toolBtnFogPaint) flashToolActivate(toolBtnFogPaint);
     }
     refreshToolButtons();
     updateCanvasCursor();
@@ -7393,6 +7747,7 @@
       if (k === "e") { setTool("eraser"); e.preventDefault(); return; }
       if (k === "r") { setTool("ruler"); e.preventDefault(); return; }
       if (k === "f" && isGM()) { setTool("terrain_paint"); e.preventDefault(); return; }
+      if (k === "h" && isGM()) { setTool("fog_paint"); e.preventDefault(); return; }
       if (k === "z" && e.ctrlKey && tool() === "terrain_paint" && isGM()) {
         send("TERRAIN_STROKE_UNDO", { count: 1 });
         e.preventDefault();
@@ -7462,6 +7817,9 @@
   window.addEventListener("resize", () => {
     if (tool() === "terrain_paint" && terrainPaintPanel && !terrainPaintPanel.classList.contains("hidden")) {
       positionTerrainPaintPanel();
+    }
+    if (tool() === "fog_paint" && fogPaintPanel && !fogPaintPanel.classList.contains("hidden")) {
+      positionFogPaintPanel();
     }
   });
 
@@ -7719,7 +8077,15 @@
     }
 
     if (t === "pen") {
-      activeStroke = { id: makeId(), points: [{ x: wpos.x, y: wpos.y }], color: brushColor(), width: brushSize(), locked: false, layer: "draw" };
+      activeStroke = {
+        id: makeId(),
+        points: [{ x: wpos.x, y: wpos.y }],
+        color: brushColor(),
+        width: brushSize(),
+        locked: false,
+        layer: "draw",
+        layer_band: drawingLayerBand(),
+      };
       requestRender();
       return;
     }
@@ -7740,6 +8106,25 @@
       return;
     }
 
+    if (t === "fog_paint" && isGM()) {
+      if (!state.fog_paint?.enabled) {
+        toast("Enable fog first, or use Cover All / Clear All.");
+        refreshFogPaintPanel();
+        return;
+      }
+      activeFogStroke = {
+        id: makeId(),
+        op: fogBrush.op,
+        points: [{ x: wpos.x, y: wpos.y }],
+        radius: fogBrush.radius,
+        opacity: fogBrush.opacity,
+        hardness: fogBrush.hardness,
+      };
+      fogMasks.applyStroke(activeFogStroke);
+      requestRender();
+      return;
+    }
+
     if (t === "eraser") {
       activeStroke = null;
       activeShapePreview = null;
@@ -7751,7 +8136,20 @@
     }
 
     if (t === "rect" || t === "circle" || t === "line") {
-      activeShapePreview = { id: makeId(), type: t, x1: wpos.x, y1: wpos.y, x2: wpos.x, y2: wpos.y, color: brushColor(), width: brushSize(), fill: false, locked: false, layer: "draw" };
+      activeShapePreview = {
+        id: makeId(),
+        type: t,
+        x1: wpos.x,
+        y1: wpos.y,
+        x2: wpos.x,
+        y2: wpos.y,
+        color: brushColor(),
+        width: brushSize(),
+        fill: false,
+        locked: false,
+        layer: "draw",
+        layer_band: drawingLayerBand(),
+      };
       requestRender();
       return;
     }
@@ -7775,6 +8173,7 @@
         fill: false,
         locked: false,
         layer: "draw",
+        layer_band: drawingLayerBand(),
         creator_id: myId(),
       });
       return;
@@ -7927,6 +8326,22 @@
       return;
     }
 
+    if (t === "fog_paint" && activeFogStroke && isGM()) {
+      const pts = activeFogStroke.points;
+      const last = pts[pts.length - 1];
+      const dx = wpos.x - last.x;
+      const dy = wpos.y - last.y;
+      const minDist = fogBrush.radius * 0.15;
+      if (dx * dx + dy * dy >= minDist * minDist && pts.length < 2000) {
+        const newPt = { x: wpos.x, y: wpos.y };
+        pts.push(newPt);
+        const prevPt = pts[pts.length - 2];
+        fogMasks.applyStroke({ ...activeFogStroke, points: [prevPt, newPt] });
+        requestRender();
+      }
+      return;
+    }
+
     if (t === "eraser" && erasingActive && (e.buttons & 1) === 1) {
       doEraseAt(wpos.x, wpos.y);
       return;
@@ -8027,6 +8442,30 @@
     requestRender();
   }
 
+  function commitActiveFogStroke() {
+    if (!activeFogStroke || !isGM()) return;
+    const st = activeFogStroke;
+    activeFogStroke = null;
+    if (!Array.isArray(st.points) || st.points.length < 1) return;
+    if (st.points.length === 1) {
+      const p0 = st.points[0];
+      st.points = [p0, { x: Number(p0.x), y: Number(p0.y) }];
+    }
+    state.fog_paint.enabled = true;
+    state.fog_paint.strokes[st.id] = st;
+    if (!state.fog_paint.undo_stack.includes(st.id)) state.fog_paint.undo_stack.push(st.id);
+    send("FOG_STROKE_ADD", {
+      id: st.id,
+      op: st.op,
+      points: st.points,
+      radius: st.radius,
+      opacity: st.opacity,
+      hardness: st.hardness,
+    });
+    refreshFogPaintPanel();
+    requestRender();
+  }
+
   function endPointer(e) {
     if (dragSpawn) {
       if (dragSpawnWorld && dragSpawnOverCanvas) {
@@ -8124,6 +8563,7 @@
 
     // Commit terrain stroke even if tool changed before release.
     if (activePaintStroke && isGM()) commitActiveTerrainStroke();
+    if (activeFogStroke && isGM()) commitActiveFogStroke();
 
     if (t === "pen" && activeStroke) {
       if (activeStroke.points.length >= 2) {
@@ -8137,6 +8577,7 @@
             width: activeStroke.width,
             locked: false,
             layer: "draw",
+            layer_band: normalizeLayerBand(activeStroke.layer_band),
           });
         } else {
           let idx = 0;
@@ -8150,6 +8591,7 @@
               width: activeStroke.width,
               locked: false,
               layer: "draw",
+              layer_band: normalizeLayerBand(activeStroke.layer_band),
             });
           }
         }
@@ -8174,6 +8616,7 @@
         fill: false,
         locked: false,
         layer: "draw",
+        layer_band: normalizeLayerBand(sh.layer_band),
         creator_id: myId(),
       });
       activeShapePreview = null;

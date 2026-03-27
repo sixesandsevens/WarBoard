@@ -21,6 +21,7 @@
         <button id="toolBtnErase" class="tool-btn" data-tool="eraser" data-tip="Erase drawings">🧽 Erase</button>
         <button id="toolBtnRuler" class="tool-btn" data-tool="ruler" data-tip="Measure distance">📏 Ruler</button>
         <button id="toolBtnTerrainPaint" class="tool-btn gm-only" data-tool="terrain_paint" data-tip="Paint terrain overlays (GM only)">🖌 Terrain</button>
+        <button id="toolBtnFogPaint" class="tool-btn gm-only" data-tool="fog_paint" data-tip="Paint fog of war (GM only)">🌫 Fog</button>
       </div>
       <span id="selectModeLabel" class="pill hidden">Select Mode</span>
       <button id="spawn" class="top-action-btn" data-tip="Place new token">Spawn Token</button>
@@ -75,11 +76,18 @@
         <option value="text">Text</option>
         <option value="ruler">Ruler</option>
         <option value="terrain_paint">Terrain Paint</option>
+        <option value="fog_paint">Fog Paint</option>
       </select>
     </label>
 
     <label style="display:none;">Color <input id="color" type="color" value="#ffffff"></label>
     <label style="display:none;">Size <input id="size" type="number" value="3" min="1" max="30" style="width:70px"></label>
+    <label>Draw Layer
+      <select id="drawLayerBand">
+        <option value="below_assets">Below Assets</option>
+        <option value="above_assets">Above Assets</option>
+      </select>
+    </label>
     <label>ft/sq <input id="feetPerSq" type="number" value="5" min="1" max="100" style="width:70px"></label>
 
     <label><input type="checkbox" id="snap" checked> Snap</label>
@@ -376,6 +384,30 @@
         <div style="font-size:11px; opacity:.7;">Hardness <span id="terrainHardnessVal">40%</span></div>
         <input id="terrainHardnessSlider" type="range" min="0" max="100" step="5" value="40">
         <button id="terrainUndoBtn" class="ghost" style="margin-top:4px; font-size:12px;">↩ Undo Stroke</button>
+      </div>
+    </div>
+    <div id="fogPaintPanel" class="ctx hidden" role="dialog" aria-label="Fog brush" style="min-width:220px;">
+      <div class="ctx-title">Fog of War</div>
+      <div style="padding:8px 10px; display:flex; flex-direction:column; gap:8px;">
+        <label style="display:flex; align-items:center; gap:8px; font-size:12px;">
+          <input id="fogEnabledToggle" type="checkbox">
+          <span>Fog Enabled</span>
+        </label>
+        <div style="font-size:11px; opacity:.7;">Brush</div>
+        <div style="display:flex; gap:6px;">
+          <button id="fogOpReveal" class="ghost active" style="flex:1; font-size:12px; padding:4px 6px;">Reveal</button>
+          <button id="fogOpCover" class="ghost" style="flex:1; font-size:12px; padding:4px 6px;">Cover</button>
+        </div>
+        <div style="font-size:11px; opacity:.7;">Radius <span id="fogRadiusVal">90</span></div>
+        <input id="fogRadiusSlider" type="range" min="10" max="300" step="5" value="90">
+        <div style="font-size:11px; opacity:.7;">Opacity <span id="fogOpacityVal">100%</span></div>
+        <input id="fogOpacitySlider" type="range" min="10" max="100" step="5" value="100">
+        <div style="font-size:11px; opacity:.7;">Hardness <span id="fogHardnessVal">65%</span></div>
+        <input id="fogHardnessSlider" type="range" min="0" max="100" step="5" value="65">
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:4px;">
+          <button id="fogCoverAllBtn" class="ghost" style="flex:1; min-width:88px; font-size:12px;">Cover All</button>
+          <button id="fogClearAllBtn" class="ghost" style="flex:1; min-width:88px; font-size:12px;">Clear All</button>
+        </div>
       </div>
     </div>
     <div id="uiTooltip" class="ui-tooltip hidden"></div>

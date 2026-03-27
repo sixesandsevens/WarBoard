@@ -36,6 +36,10 @@ EventType = Literal[
     "ASSET_INSTANCE_DELETE",
     "TERRAIN_STROKE_ADD",
     "TERRAIN_STROKE_UNDO",
+    "FOG_STATE_SYNC",
+    "FOG_STROKE_ADD",
+    "FOG_RESET",
+    "FOG_SET_ENABLED",
     "COGM_ADD",
     "COGM_REMOVE",
     "COGM_UPDATE",
@@ -82,6 +86,7 @@ class Stroke(BaseModel):
     creator_id: Optional[str] = None
     locked: bool = False
     layer: Literal["map", "draw", "notes"] = "draw"
+    layer_band: Literal["below_assets", "above_assets"] = "below_assets"
 
 
 class Shape(BaseModel):
@@ -99,6 +104,7 @@ class Shape(BaseModel):
     fill: bool = False
     locked: bool = False
     layer: Literal["map", "draw", "notes"] = "draw"
+    layer_band: Literal["below_assets", "above_assets"] = "below_assets"
 
 
 class AssetInstance(BaseModel):
@@ -141,6 +147,24 @@ class TerrainPaintState(BaseModel):
     undo_stack: List[str] = Field(default_factory=list)
 
 
+class FogStroke(BaseModel):
+    id: str
+    op: Literal["cover", "reveal"] = "reveal"
+    points: List[dict] = Field(default_factory=list)
+    radius: float = 60.0
+    opacity: float = 1.0
+    hardness: float = 0.6
+    created_by: Optional[str] = None
+    created_at: Optional[float] = None
+
+
+class FogPaintState(BaseModel):
+    enabled: bool = False
+    default_mode: Literal["clear", "covered"] = "clear"
+    strokes: Dict[str, "FogStroke"] = Field(default_factory=dict)
+    undo_stack: List[str] = Field(default_factory=list)
+
+
 class RoomState(BaseModel):
     room_id: str
     version: int = 0
@@ -165,6 +189,7 @@ class RoomState(BaseModel):
     assets: Dict[str, AssetInstance] = Field(default_factory=dict)
     draw_order: Dict[str, List[str]] = Field(default_factory=lambda: {"strokes": [], "shapes": [], "assets": []})
     terrain_paint: TerrainPaintState = Field(default_factory=TerrainPaintState)
+    fog_paint: FogPaintState = Field(default_factory=FogPaintState)
 
 
 class ClientHello(BaseModel):
