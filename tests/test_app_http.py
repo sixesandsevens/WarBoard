@@ -302,6 +302,22 @@ class TestGameplaySessionsApi:
         assert session.status_code == 200
         assert session.json()["user_role"] == "player"
 
+    async def test_session_members_api_includes_current_room_name(self, auth_client, second_auth_client):
+        created = await auth_client.post("/api/rooms", json={"name": "Session Delta"})
+        room_id = created.json()["room_id"]
+        join_code = created.json()["join_code"]
+        attached = await auth_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Roster Session"})
+        session_id = attached.json()["id"]
+
+        joined = await second_auth_client.post("/api/join", json={"code": join_code})
+        assert joined.status_code == 200
+
+        members = await auth_client.get(f"/api/sessions/{session_id}/members")
+        assert members.status_code == 200
+        player_row = next(member for member in members.json()["members"] if member["username"] == "player_user")
+        assert player_row["current_room_id"] == room_id
+        assert player_row["current_room_name"] == "Session Delta"
+
     async def test_gm_can_share_private_pack_to_session(self, auth_client):
         created = await auth_client.post("/api/rooms", json={"name": "Share Room"})
         room_id = created.json()["room_id"]

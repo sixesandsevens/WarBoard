@@ -420,15 +420,25 @@ def list_game_session_members(session_id: str) -> List[Dict[str, object]]:
         members = s.exec(select(GameSessionMemberRow).where(GameSessionMemberRow.session_id == session_id)).all()
         user_ids = [m.user_id for m in members]
         users = {row.user_id: row for row in s.exec(select(UserRow).where(UserRow.user_id.in_(user_ids))).all()} if user_ids else {}
+        room_rows = s.exec(select(RoomMetaRow).where(RoomMetaRow.session_id == session_id)).all()
+        room_by_id = {row.room_id: row for row in room_rows}
     out: List[Dict[str, object]] = []
     for member in members:
         user = users.get(member.user_id)
+        current_room_id = ""
+        current_room_name = ""
+        if user and user.last_room_id and user.last_room_id in room_by_id:
+            current_room_id = user.last_room_id
+            meta = room_by_id[user.last_room_id]
+            current_room_name = meta.display_name or meta.name or meta.room_id
         out.append(
             {
                 "user_id": member.user_id,
                 "username": user.username if user else f"user-{member.user_id}",
                 "role": member.role,
                 "joined_at": member.joined_at,
+                "current_room_id": current_room_id,
+                "current_room_name": current_room_name,
             }
         )
     out.sort(key=lambda row: ({"gm": 0, "co_gm": 1, "player": 2}.get(str(row.get("role")), 9), str(row.get("username"))))

@@ -86,6 +86,7 @@ from .storage import (
 )
 
 app = FastAPI(title="WarHamster")
+logger = logging.getLogger("warhamster")
 BASE_DIR = Path(__file__).resolve().parent.parent
 PACKS_DIR = BASE_DIR / "packs"
 STATIC_DIR = BASE_DIR / "static"
@@ -719,15 +720,26 @@ def get_pack_api(pack_id: str, req: Request):
 
 @app.get("/api/assets")
 def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = "", session_id: str = ""):
+    started_at = time.perf_counter()
     user = _require_user(req)
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
     current_session_id = str(session_id or "").strip() or None
     if current_session_id and not get_game_session_role(current_session_id, user.user_id):
         raise HTTPException(status_code=403, detail="Not a member of this session")
-    return {
-        "assets": list_all_assets_for_user(user.user_id, q=q, tag=tag, folder=folder, session_id=current_session_id)
-    }
+    assets = list_all_assets_for_user(user.user_id, q=q, tag=tag, folder=folder, session_id=current_session_id)
+    if req.query_params.get("src") == "assetlib":
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        logger.info(
+            "assetlib.list user_id=%s session_id=%s count=%s q=%r folder=%r elapsed_ms=%.1f",
+            user.user_id,
+            current_session_id or "-",
+            len(assets),
+            q,
+            folder,
+            elapsed_ms,
+        )
+    return {"assets": assets}
 
 
 @app.get("/api/private-packs")
@@ -743,6 +755,7 @@ def list_private_packs_api(req: Request, session_id: str = ""):
 
 @app.get("/api/assets/file/{asset_id}")
 def get_asset_file_api(asset_id: str, req: Request):
+    started_at = time.perf_counter()
     user = _require_user(req)
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
@@ -757,6 +770,14 @@ def get_asset_file_api(asset_id: str, req: Request):
         file_path = UPLOADS_DIR / rel.replace("/uploads/", "", 1)
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(status_code=404, detail="Asset file not found")
+        if req.query_params.get("src") == "assetlib":
+            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            logger.info(
+                "assetlib.file type=upload user_id=%s asset_id=%s elapsed_ms=%.1f",
+                user.user_id,
+                asset_id,
+                elapsed_ms,
+            )
         return FileResponse(
             str(file_path),
             media_type=upload.mime or _image_mime_from_ext(file_path.suffix),
@@ -782,6 +803,15 @@ def get_asset_file_api(asset_id: str, req: Request):
     file_path = PRIVATE_PACKS_DIR / str(pack.slug) / "originals" / f"{asset_id}{ext}"
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Asset file not found")
+    if req.query_params.get("src") == "assetlib":
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        logger.info(
+            "assetlib.file type=pack user_id=%s asset_id=%s pack_slug=%s elapsed_ms=%.1f",
+            user.user_id,
+            asset_id,
+            pack.slug,
+            elapsed_ms,
+        )
     return FileResponse(
         str(file_path),
         media_type=pack_asset.mime or _image_mime_from_ext(ext),

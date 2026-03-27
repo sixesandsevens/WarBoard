@@ -75,6 +75,7 @@
   const sessionSummaryTextEl = document.getElementById("sessionSummaryText");
   const sessionRoomsListEl = document.getElementById("sessionRoomsList");
   const sessionMembersListEl = document.getElementById("sessionMembersList");
+  const sessionActivityListEl = document.getElementById("sessionActivityList");
   const roomMovePromptEl = document.getElementById("roomMovePrompt");
   const roomMovePromptBackdropEl = document.getElementById("roomMovePromptBackdrop");
   const roomMovePromptTitleEl = document.getElementById("roomMovePromptTitle");
@@ -108,6 +109,7 @@
   const assetSessionManageListEl = document.getElementById("assetSessionManageList");
   const assetSearchChipsEl = document.getElementById("assetSearchChips");
   const assetSearchHintEl = document.getElementById("assetSearchHint");
+  const assetDebugSummaryEl = document.getElementById("assetDebugSummary");
   const assetViewModeEl = document.getElementById("assetViewMode");
   const assetPackFilterEl = document.getElementById("assetPackFilter");
   const assetTypeFilterEl = document.getElementById("assetTypeFilter");
@@ -247,6 +249,30 @@
     setTimeout(() => {
       try { el.remove(); } catch (_) {}
     }, 2600);
+  }
+
+  function formatShortTime(ts) {
+    const value = Number(ts || 0);
+    if (!value) return "";
+    try {
+      return new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function addSessionActivity(message, options = {}) {
+    const text = String(message || "").trim();
+    if (!text) return;
+    const entry = {
+      id: makeId(),
+      message: text,
+      ts: Number(options.ts || Date.now()),
+      kind: String(options.kind || "notice"),
+    };
+    const current = Array.isArray(playSessionState.activity) ? playSessionState.activity : [];
+    playSessionState.activity = [entry, ...current].slice(0, 18);
+    renderSessionSummary();
   }
 
   function setLogCollapsed(collapsed) {
@@ -2235,6 +2261,68 @@
     return String(playSessionState.id || "").trim();
   }
 
+  function resetAssetDiagnostics() {
+    assetState.diagnostics = {};
+    assetState.diagnosticsOrder = [];
+    renderAssetDebugSummary();
+  }
+
+  function recordAssetDiagnostic(asset, patch = {}) {
+    const key = assetUsageKey(asset);
+    if (!key) return;
+    const current = assetState.diagnostics[key] || {
+      id: key,
+      name: String(asset?.name || "Asset"),
+      pack: String(asset?.pack_slug || "").trim() || "uploads",
+    };
+    assetState.diagnostics[key] = { ...current, ...patch };
+    assetState.diagnosticsOrder = [key, ...assetState.diagnosticsOrder.filter((entry) => entry !== key)].slice(0, 10);
+    if (assetState.debugNet) renderAssetDebugSummary();
+  }
+
+  function renderAssetDebugSummary() {
+    if (!assetDebugSummaryEl) return;
+    if (!assetState.debugNet) {
+      assetDebugSummaryEl.style.display = "none";
+      assetDebugSummaryEl.innerHTML = "";
+      return;
+    }
+    const rows = assetState.diagnosticsOrder
+      .map((key) => assetState.diagnostics[key])
+      .filter(Boolean)
+      .map((entry) => {
+        const metaAt = Number(entry.metadataReceivedAt || 0);
+        const requestAt = Number(entry.requestStartAt || 0);
+        const loadAt = Number(entry.imageLoadedAt || 0);
+        const visibleAt = Number(entry.firstVisibleAt || 0);
+        const requestLag = metaAt && requestAt ? Math.max(0, requestAt - metaAt) : 0;
+        const loadLag = requestAt && loadAt ? Math.max(0, loadAt - requestAt) : 0;
+        const visibleLag = metaAt && visibleAt ? Math.max(0, visibleAt - metaAt) : 0;
+        return `
+          <div style="display:flex; gap:8px; align-items:flex-start; margin:3px 0; flex-wrap:wrap;">
+            <span style="font-weight:600;">${escapeHtml(String(entry.name || "Asset"))}</span>
+            <span style="opacity:.7;">${escapeHtml(String(entry.pack || "uploads"))}</span>
+            <span style="opacity:.85;">meta->req ${requestLag}ms</span>
+            <span style="opacity:.85;">req->load ${loadLag}ms</span>
+            <span style="opacity:.85;">meta->visible ${visibleLag}ms</span>
+          </div>
+        `;
+      });
+    assetDebugSummaryEl.style.display = "block";
+    assetDebugSummaryEl.innerHTML = rows.length
+      ? `<div style="font-weight:600; margin-bottom:4px;">Recent Asset Timing</div>${rows.join("")}`
+      : `<div style="opacity:.75;">Recent Asset Timing will appear here once previews start loading.</div>`;
+  }
+
+  function assetByUsageKey(key) {
+    const raw = String(key || "").trim();
+    if (!raw) return null;
+    for (const item of assetState.items) {
+      if (assetUsageKey(item) === raw) return item;
+    }
+    return null;
+  }
+
   function assetSessionQuery() {
     const sessionId = currentAssetSessionId();
     return sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : "";
@@ -2631,8 +2719,8 @@
       const previewUrl = withAssetLibSrc(assetPreviewUrl(a));
       const escapedPreview = escapeHtml(previewUrl);
       const thumbAttrs = previewUrl
-        ? `src="${ASSET_THUMB_PLACEHOLDER}" data-src="${escapedPreview}" loading="lazy"`
-        : `src="${ASSET_THUMB_PLACEHOLDER}" loading="lazy"`;
+        ? `src="${ASSET_THUMB_PLACEHOLDER}" data-src="${escapedPreview}" data-asset-key="${escapeHtml(assetUsageKey(a))}" loading="lazy"`
+        : `src="${ASSET_THUMB_PLACEHOLDER}" data-asset-key="${escapeHtml(assetUsageKey(a))}" loading="lazy"`;
       const width = Math.max(1, Number(a?.width || 0));
       const height = Math.max(1, Number(a?.height || 0));
       const previewAspect = (width > 0 && height > 0) ? `${width}/${height}` : "1/1";
@@ -2937,12 +3025,17 @@
   async function refreshAssetsPanel() {
     if (assetState.loading) return;
     assetState.loading = true;
+    const metadataReceivedAt = Date.now();
     try {
       const [data] = await Promise.all([
         apiGet(`/api/assets?src=assetlib${assetSessionQuery()}`),
         refreshAssetSessionPackData(),
       ]);
       assetState.items = Array.isArray(data.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];
+      resetAssetDiagnostics();
+      for (const item of assetState.items) {
+        recordAssetDiagnostic(item, { metadataReceivedAt });
+      }
       assetState.loaded = true;
       assetState.filterKey = "";
       assetState.renderCount = assetState.pageSize;
@@ -2955,6 +3048,7 @@
     } catch (e) {
       assetState.items = [];
       assetState.loaded = false;
+      resetAssetDiagnostics();
       resetAssetSessionPackState();
       if (assetGridEl) assetGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Asset load failed</div>`;
       log(`ASSETS ERROR: ${e.message || e}`);
@@ -2999,6 +3093,15 @@
       for (const img of thumbs) {
         const src = img.getAttribute("data-src");
         if (!src) continue;
+        const asset = assetByUsageKey(img.getAttribute("data-asset-key"));
+        if (asset) recordAssetDiagnostic(asset, { requestStartAt: Date.now() });
+        img.onload = () => {
+          if (asset) {
+            const imageLoadedAt = Date.now();
+            recordAssetDiagnostic(asset, { imageLoadedAt });
+            requestAnimationFrame(() => recordAssetDiagnostic(asset, { firstVisibleAt: Date.now() }));
+          }
+        };
         img.src = src;
         img.removeAttribute("data-src");
       }
@@ -3010,7 +3113,17 @@
           if (!entry.isIntersecting) continue;
           const img = entry.target;
           const src = img.getAttribute("data-src");
-          if (src) img.src = src;
+          if (src) {
+            const asset = assetByUsageKey(img.getAttribute("data-asset-key"));
+            if (asset) recordAssetDiagnostic(asset, { requestStartAt: Date.now() });
+            img.onload = () => {
+              if (!asset) return;
+              const imageLoadedAt = Date.now();
+              recordAssetDiagnostic(asset, { imageLoadedAt });
+              requestAnimationFrame(() => recordAssetDiagnostic(asset, { firstVisibleAt: Date.now() }));
+            };
+            img.src = src;
+          }
           img.removeAttribute("data-src");
           obs.unobserve(img);
         }
@@ -3211,6 +3324,7 @@
     rooms: [],
     members: [],
     current_room: null,
+    activity: [],
   };
   let pendingRoomMoveOffer = null;
   let pendingArrivalNotice = "";
@@ -3322,6 +3436,8 @@
     alphaFilter: "all",
     sizeFilter: "all",
     sortMode: "recent",
+    diagnostics: {},
+    diagnosticsOrder: [],
     recentUsed: loadAssetRecentUsage(),
     recentVersion: 0,
     kindOverride: loadAssetKindOverrides(),
@@ -4410,6 +4526,7 @@
     playSessionState.rooms = [];
     playSessionState.members = [];
     playSessionState.current_room = null;
+    playSessionState.activity = [];
     if (hadSession) {
       assetState.loaded = false;
       resetAssetSessionPackState();
@@ -4431,6 +4548,7 @@
     playSessionState.rooms = Array.isArray(session.rooms) ? session.rooms : [];
     playSessionState.members = Array.isArray(session.members) ? session.members : [];
     playSessionState.current_room = session.current_room || null;
+    if (String(playSessionState.id || "") !== prevSessionId) playSessionState.activity = [];
     if (String(playSessionState.id || "") !== prevSessionId) {
       assetState.loaded = false;
       resetAssetSessionPackState();
@@ -4521,7 +4639,7 @@
   }
 
   function renderSessionSummary() {
-    if (!sessionSummaryTextEl || !sessionRoomsListEl || !sessionMembersListEl) return;
+    if (!sessionSummaryTextEl || !sessionRoomsListEl || !sessionMembersListEl || !sessionActivityListEl) return;
     const hasSession = !!playSessionState.id;
     if (!hasSession) {
       sessionSummaryTextEl.textContent = pendingRoomMoveOffer
@@ -4529,6 +4647,7 @@
         : "No session attached to this room yet.";
       sessionRoomsListEl.innerHTML = `<div style="opacity:.7">(standalone room)</div>`;
       sessionMembersListEl.innerHTML = `<div style="opacity:.7">(no session roster)</div>`;
+      sessionActivityListEl.innerHTML = `<div style="opacity:.7">(no session activity)</div>`;
       if (createSessionBtnEl) {
         createSessionBtnEl.disabled = !isGM();
         createSessionBtnEl.textContent = "Create Session Here";
@@ -4612,12 +4731,22 @@
     });
 
     const memberRows = playSessionState.members.map((member) => `
-      <div style="display:flex; gap:6px; align-items:center; margin:4px 0;">
-        <span>${member.username || "User"}</span>
-        <span style="opacity:.65; text-transform:capitalize;">${String(member.role || "player").replace(/_/g, " ")}</span>
+      <div style="display:flex; gap:6px; align-items:center; justify-content:space-between; margin:4px 0; flex-wrap:wrap;">
+        <div style="display:flex; gap:6px; align-items:center; min-width:0;">
+          <span>${member.username || "User"}</span>
+          <span style="opacity:.9; text-transform:capitalize; border:1px solid rgba(255,255,255,0.16); border-radius:999px; padding:1px 6px; font-size:11px;">${String(member.role || "player").replace(/_/g, " ")}</span>
+        </div>
+        <span style="opacity:.65;">${escapeHtml(String(member.current_room_name || "Away from session room"))}</span>
       </div>
     `);
     sessionMembersListEl.innerHTML = memberRows.join("") || `<div style="opacity:.7">(no members)</div>`;
+    const activityRows = (Array.isArray(playSessionState.activity) ? playSessionState.activity : []).map((entry) => `
+      <div style="display:flex; gap:8px; align-items:flex-start; margin:4px 0;">
+        <span style="opacity:.55; min-width:52px;">${escapeHtml(formatShortTime(entry.ts))}</span>
+        <span style="opacity:.92;">${escapeHtml(String(entry.message || ""))}</span>
+      </div>
+    `);
+    sessionActivityListEl.innerHTML = activityRows.join("") || `<div style="opacity:.7">(no session activity yet)</div>`;
   }
 
   function refreshGmUI() {
@@ -6351,6 +6480,7 @@
         if (pendingArrivalNotice) {
           toast(pendingArrivalNotice);
           log(pendingArrivalNotice);
+          addSessionActivity(pendingArrivalNotice, { kind: "arrival" });
           pendingArrivalNotice = "";
         }
         log(`STATE_SYNC v${state.version} gm=${state.gm_id} strokes=${state.strokes.size} shapes=${state.shapes.size}`);
@@ -6374,12 +6504,15 @@
 
       if (ev.type === "SESSION_ROOM_MOVE_OFFER") {
         setPendingRoomMoveOffer(ev.payload || null);
-        toast(`${ev.payload?.requested_by || "GM"} requested that players join ${ev.payload?.target_room_name || ev.payload?.target_room_id || "another room"}.`);
+        const moveMessage = `${ev.payload?.requested_by || "GM"} requested that players join ${ev.payload?.target_room_name || ev.payload?.target_room_id || "another room"}.`;
+        toast(moveMessage);
+        addSessionActivity(moveMessage, { kind: "move_offer" });
         return;
       }
 
       if (ev.type === "SESSION_ROOM_MOVE_EXECUTE") {
         const targetName = ev.payload?.target_room_name || ev.payload?.target_room_id || "another room";
+        addSessionActivity(`${ev.payload?.requested_by || "GM"} moved players to ${targetName}.`, { kind: "move_force" });
         void executeIncomingRoomMove(ev.payload || null, {
           notice: `${ev.payload?.requested_by || "GM"} moved you to ${targetName}.`,
         });
@@ -6390,6 +6523,7 @@
         if (ev.payload?.message) {
           toast(ev.payload.message);
           log(`SESSION NOTICE: ${ev.payload.message}`);
+          addSessionActivity(ev.payload.message, { kind: "notice" });
         }
         return;
       }
@@ -6807,10 +6941,15 @@
   }
 
   async function switchRoom(newRoomId) {
+    const priorRoomId = roomEl.value.trim();
     prepareForRoomTransition();
     roomEl.value = newRoomId;
     snapshotRoomLabelEl.textContent = newRoomId;
     await refreshSnapshotsPanel();
+    if (playSessionState.id && priorRoomId && priorRoomId !== newRoomId) {
+      const nextRoom = playSessionState.rooms.find((room) => room.id === newRoomId);
+      addSessionActivity(`Switching from ${priorRoomId} to ${nextRoom?.display_name || newRoomId}.`, { kind: "switch" });
+    }
     connectWS(true);
   }
 
@@ -7375,6 +7514,7 @@
         localStorage.setItem(ASSET_DEBUG_NET_KEY, assetState.debugNet ? "1" : "0");
       } catch (_) {}
       log(`Asset network debug ${assetState.debugNet ? "enabled" : "disabled"}.`);
+      renderAssetDebugSummary();
     });
   }
   if (assetSetSelectEl) {
@@ -7633,6 +7773,7 @@
         ? await apiPost(`/api/sessions/${encodeURIComponent(playSessionState.id)}/rooms`, { name, room_id: roomId })
         : await apiPost("/api/rooms", { name, room_id: roomId });
       log(`ROOM CREATED ${created.room_id}`);
+      if (playSessionState.id) addSessionActivity(`Created room ${name || created.room_id}.`, { kind: "room_create" });
       if (created.room_id) await switchRoom(created.room_id);
       await refreshCurrentSessionState();
       await refreshRoomsPanel();
@@ -7672,6 +7813,7 @@
       const session = await apiPost(`/api/rooms/${encodeURIComponent(rid)}/attach-session`, { name });
       applyPlaySessionState(session);
       log(`SESSION CREATED ${session.id}`);
+      addSessionActivity(`Session ${session.name || session.id} attached to this room.`, { kind: "session_create" });
       await refreshRoomsPanel();
     } catch (e) {
       log(`CREATE SESSION ERROR: ${e.message || e}`);

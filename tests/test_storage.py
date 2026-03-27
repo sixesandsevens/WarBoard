@@ -394,6 +394,20 @@ class TestGameplaySessions:
         sessions = list_game_sessions_for_user(player.user_id)
         assert any(entry["id"] == session.session_id for entry in sessions)
 
+    def test_session_members_include_current_room_name(self):
+        gm = _make_user("roster_gm")
+        player = _make_user("roster_player")
+        room_id = _make_room(room_id="roster-room", owner_id=gm.user_id)
+        session = create_game_session("Roster Test", gm.user_id)
+        assign_room_to_game_session(room_id, session.session_id, display_name="Prison Cells")
+        add_game_session_member(session.session_id, player.user_id, "player")
+        update_user_last_room(player.user_id, room_id)
+
+        memberships = list_game_session_members(session.session_id)
+        player_row = next(member for member in memberships if member["user_id"] == player.user_id)
+        assert player_row["current_room_id"] == room_id
+        assert player_row["current_room_name"] == "Prison Cells"
+
     def test_session_shared_pack_visibility_extends_asset_library(self):
         gm = _make_user("asset_gm")
         player = _make_user("asset_player")
