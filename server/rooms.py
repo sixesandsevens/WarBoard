@@ -134,6 +134,28 @@ class RoomManager:
         async with self._lock:
             self._rooms.pop(room_id, None)
 
+    async def kick_all_and_drop(self, room_id: str) -> None:
+        """Notify all connected clients the room is being deleted, close their sockets, then drop the room."""
+        async with self._lock:
+            room = self._rooms.get(room_id)
+            sockets = list(room.sockets) if room else []
+        if sockets:
+            msg = WireEvent(
+                type="SESSION_SYSTEM_NOTICE",
+                payload={"message": "This room has been deleted.", "redirect": "/static/app.html"},
+            ).model_dump_json()
+            async def _kick(ws: WebSocket) -> None:
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    pass
+                try:
+                    await ws.close(code=1001)
+                except Exception:
+                    pass
+            await asyncio.gather(*(_kick(s) for s in sockets), return_exceptions=True)
+        await self.drop_room(room_id)
+
     async def connect(self, room_id: str, ws: WebSocket) -> Room:
         room = await self.get_or_create_room(room_id)
         room.sockets.add(ws)

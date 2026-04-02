@@ -147,6 +147,27 @@
         right.appendChild(copyBtn);
       }
 
+      if(r.role === 'owner'){
+        const delBtn = document.createElement('button');
+        delBtn.className='ghost';
+        delBtn.style.cssText='flex:0; color:#ffb3b3;';
+        delBtn.textContent='Delete';
+        delBtn.onclick = async ()=>{
+          if(!confirm(`Delete "${r.name}"? This cannot be undone and will disconnect anyone currently in the room.`)) return;
+          delBtn.disabled = true;
+          delBtn.textContent = 'Deleting…';
+          try{
+            await api(`/api/rooms/${encodeURIComponent(r.room_id)}`, {method:'DELETE'});
+            await refresh();
+          }catch(e){
+            alert('Delete failed: ' + e.message);
+            delBtn.disabled = false;
+            delBtn.textContent = 'Delete';
+          }
+        };
+        right.appendChild(delBtn);
+      }
+
       div.appendChild(left);
       div.appendChild(right);
       roomsEl.appendChild(div);

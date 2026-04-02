@@ -1367,6 +1367,7 @@ async def delete_room(room_id: str, req: Request, gm_key: str | None = None):
     state = RoomState.model_validate_json(raw)
     if not _gm_authorized(state, user.user_id, gm_key):
         raise HTTPException(status_code=403, detail="GM only")
+    await rm.kick_all_and_drop(room_id)
     delete_room_record(room_id)
     return {"ok": True}
 

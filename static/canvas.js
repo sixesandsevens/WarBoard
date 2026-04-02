@@ -574,7 +574,7 @@
   }
 
   function drawingLayerBand() {
-    return normalizeLayerBand(drawLayerBandEl?.value);
+    return "above_assets";
   }
 
   function normalizeStrokeRecord(stroke) {
@@ -1364,9 +1364,9 @@
 
   function canEditTokenLocal(token) {
     if (!token) return false;
+    if (token.locked) return false;
     if (isGM()) return true;
     if (state.lockdown) return false;
-    if (token.locked) return false;
     return !!state.allow_all_move;
   }
 
@@ -1380,18 +1380,18 @@
 
   function canEditShapeLocal(shape) {
     if (!shape) return false;
+    if (shape.locked) return false;
     if (isGM()) return true;
     if (state.lockdown) return false;
-    if (shape.locked) return false;
     if (state.allow_all_move) return true;
     return !!(shape.creator_id && shape.creator_id === myId());
   }
 
   function canEditAssetLocal(asset) {
     if (!asset) return false;
+    if (asset.locked) return false;
     if (isGM()) return true;
     if (state.lockdown) return false;
-    if (asset.locked) return false;
     if (state.allow_all_move) return true;
     return !!(asset.creator_id && asset.creator_id === myId());
   }
@@ -2807,6 +2807,40 @@
       const idx = Number(card.getAttribute("data-asset-idx"));
       const a = visibleRows[idx];
       if (!a) return;
+      // Shared drag-to-canvas handler for all asset card types
+      const startAssetDrag = (e, onNoDropClick) => {
+        if (e.button !== 0) return;
+        if (e.target && e.target.closest && e.target.closest("button[data-asset-action]")) return;
+        assetSuppressCardClick = true;
+        const capturedAsset = { ...a, kind: "asset" };
+        dragSpawn = capturedAsset;
+        dragSpawnWorld = null;
+        dragSpawnOverCanvas = false;
+        updateCanvasCursor();
+        markAssetRecentlyUsed(a);
+        e.preventDefault();
+        const onDragUp = (upEvent) => {
+          window.removeEventListener("pointerup", onDragUp);
+          const stillDragging = dragSpawn === capturedAsset;
+          dragSpawn = null;
+          dragSpawnWorld = null;
+          dragSpawnOverCanvas = false;
+          updateCanvasCursor();
+          requestRender();
+          if (!stillDragging) return;
+          const rect = canvas.getBoundingClientRect();
+          const cx = upEvent.clientX;
+          const cy = upEvent.clientY;
+          if (cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) {
+            const wpos = screenToWorld(cx - rect.left, cy - rect.top);
+            spawnPackAsset(capturedAsset, snap(wpos.x), snap(wpos.y));
+          } else if (onNoDropClick) {
+            assetSuppressCardClick = false;
+          }
+        };
+        window.addEventListener("pointerup", onDragUp);
+      };
+
       if (!isMapWorkflow) {
         card.onclick = () => {
           if (assetSuppressCardClick) {
@@ -2825,14 +2859,7 @@
         };
         card.onpointerdown = (e) => {
           if (!assetState.placeMode) return;
-          if (e.button !== 0) return;
-          assetSuppressCardClick = true;
-          dragSpawn = { ...a, kind: "asset" };
-          dragSpawnWorld = null;
-          dragSpawnOverCanvas = false;
-          updateCanvasCursor();
-          markAssetRecentlyUsed(a);
-          e.preventDefault();
+          startAssetDrag(e, null);
         };
       } else {
         card.onclick = () => {
@@ -2841,6 +2868,9 @@
             return;
           }
           openMapPreview(a);
+        };
+        card.onpointerdown = (e) => {
+          startAssetDrag(e, () => openMapPreview(a));
         };
       }
       {
@@ -3298,7 +3328,7 @@
     terrain_paint: {
       materials: {
         mud:       { id: "mud",       label: "Mud",       style: "dirt",      seedOfs: 101, mode: "macro_soft", scale: 1.0, zOrder: 0 },
-        stone:     { id: "stone",     label: "Rocky",     style: "grassland", seedOfs: 202, mode: "micro",      scale: 1.0, zOrder: 1 },
+        stone:     { id: "stone",     label: "Grass",     style: "grassland", seedOfs: 202, mode: "micro",      scale: 1.0, zOrder: 1 },
         dirt_road: { id: "dirt_road", label: "Dirt Road", style: "dirt",      seedOfs: 505, mode: "micro",      scale: 1.0, zOrder: 2 },
         cobble:    { id: "cobble",    label: "Cobble",    style: "cobble",    seedOfs: 404, mode: "cobble",     scale: 1.0, zOrder: 3, transparentBase: true },
         slime:     { id: "slime",     label: "Water",     style: "water",     seedOfs: 303, mode: "macro_soft", scale: 1.0, zOrder: 4 },
@@ -3505,7 +3535,7 @@
   }
 
   const cam = { x: 80, y: 60, z: 1 };
-  const ui = { gridSize: 50, snap: true, showGrid: true, feetPerSq: 5, tokenSpawnScale: 1.0, textDraft: "Text", textFontSize: 24, lockAssetMove: loadAssetMoveLock() };
+  const ui = { gridSize: 72, snap: true, showGrid: true, feetPerSq: 5, tokenSpawnScale: 1.0, textDraft: "Text", textFontSize: 24, lockAssetMove: loadAssetMoveLock() };
 
   let draggingTokenId = null;
   let draggingAssetId = null;
@@ -5337,7 +5367,6 @@
   function drawAssetStatusBadges(center, w, h, asset) {
     if (cam.z < 0.35) return;
     const badges = [];
-    if (asset?.locked) badges.push({ label: "LOCK", color: "rgba(255,80,80,0.92)", width: 38 });
     if (asset?.is_overlay) badges.push({ label: "OVR", color: "rgba(90,120,255,0.92)", width: 31 });
     if (!badges.length) return;
     const startX = center.x - (w / 2) + 6;
@@ -5396,9 +5425,9 @@
         ctx.fillRect(-w / 2, -h / 2, w, h);
       }
       const selected = id === selectedAssetId;
-      if (selected || a.locked) {
+      if (selected) {
         ctx.lineWidth = Math.max(2, 2 * cam.z);
-        ctx.strokeStyle = selected ? "#00d1ff" : "rgba(255,0,0,0.85)";
+        ctx.strokeStyle = "#00d1ff";
         ctx.strokeRect(-w / 2, -h / 2, w, h);
       }
       ctx.restore();
@@ -5469,14 +5498,9 @@
       }
       ctx.lineWidth = Math.max(2, 2 * cam.z);
       const selected = selectedTokenIds.has(id) || id === selectedTokenId;
-      ctx.strokeStyle = selected ? "#00d1ff" : "rgba(255,255,255,0.45)";
+      ctx.strokeStyle = selected ? "#00d1ff" : t.locked ? "rgba(255,0,0,0.8)" : "rgba(255,255,255,0.45)";
       ctx.stroke();
 
-      if (t.locked) {
-        ctx.strokeStyle = "rgba(255,0,0,0.8)";
-        ctx.lineWidth = Math.max(2, 2 * cam.z);
-        ctx.stroke();
-      }
 
       drawTokenBadges(t, s, r);
 
@@ -6525,6 +6549,10 @@
           log(`SESSION NOTICE: ${ev.payload.message}`);
           addSessionActivity(ev.payload.message, { kind: "notice" });
         }
+        if (ev.payload?.redirect) {
+          try { if (ws) ws.close(); } catch {}
+          setTimeout(() => { location.href = ev.payload.redirect; }, 1500);
+        }
         return;
       }
 
@@ -6976,6 +7004,13 @@
   const redoBtnEl = document.getElementById("redo");
   if (redoBtnEl) redoBtnEl.onclick = () => send("REDO", {});
 
+  const centerViewBtnEl = document.getElementById("centerViewBtn");
+  if (centerViewBtnEl) centerViewBtnEl.onclick = () => {
+    cam.x = (canvas.clientWidth || canvas.width) / 2;
+    cam.y = (canvas.clientHeight || canvas.height) / 2;
+    requestRender();
+  };
+
   if (drawerToggle) drawerToggle.onclick = () => drawer.classList.toggle("hidden");
   if (drawerClose) drawerClose.onclick = () => drawer.classList.add("hidden");
   document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -7315,6 +7350,9 @@
       ensureStaleWatchdog();
     } finally {
       appInitialized = true;
+    }
+    if (me && me.username && roomEl.value.trim()) {
+      connectWS(true);
     }
   })();
   const applyToolColor = () => {
@@ -8128,7 +8166,7 @@
 
     const oldZ = cam.z;
     const zoomFactor = (e.deltaY < 0) ? 1.12 : 0.89;
-    const newZ = clamp(cam.z * zoomFactor, 0.25, 3);
+    const newZ = clamp(cam.z * zoomFactor, 0.05, 3);
 
     const wx = (mx - cam.x) / oldZ;
     const wy = (my - cam.y) / oldZ;
@@ -8302,17 +8340,20 @@
           return;
         }
         if (!selectedTokenIds.has(hit)) selectOnly(hit);
-        const moveIds = selectedIdsIncludingGroups();
-        activeDragMoveSeq = ++moveSeqCounter;
-        draggingTokenId = hit;
-        draggingShapeId = null;
-        shapeDragOrigin = null;
-        draggingTokenIds = moveIds;
-        dragMoveStartWorld = { x: wpos.x, y: wpos.y };
-        dragStartTokenPositions = new Map();
-        for (const id of moveIds) {
-          const tok = state.tokens.get(id);
-          if (tok) dragStartTokenPositions.set(id, { x: tok.x, y: tok.y });
+        const tok0 = state.tokens.get(hit);
+        if (canEditTokenLocal(tok0)) {
+          const moveIds = selectedIdsIncludingGroups();
+          activeDragMoveSeq = ++moveSeqCounter;
+          draggingTokenId = hit;
+          draggingShapeId = null;
+          shapeDragOrigin = null;
+          draggingTokenIds = moveIds;
+          dragMoveStartWorld = { x: wpos.x, y: wpos.y };
+          dragStartTokenPositions = new Map();
+          for (const id of moveIds) {
+            const tok = state.tokens.get(id);
+            if (tok) dragStartTokenPositions.set(id, { x: tok.x, y: tok.y });
+          }
         }
       } else if (assetHit) {
         selectedTokenId = null;

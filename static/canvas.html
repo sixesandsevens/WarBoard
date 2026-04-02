@@ -34,6 +34,7 @@
       </span>
       <button id="undo" class="top-action-btn" data-tip="Undo last action">Undo</button>
       <button id="redo" class="top-action-btn" data-tip="Redo last undone action">Redo</button>
+      <button id="centerViewBtn" class="top-action-btn" data-tip="Center view on origin (0,0)">⊕ Center</button>
     </div>
     <label style="display:none;">Room <input id="room" value="demo"></label>
     <label style="display:none;">Client ID <input id="cid" value="chris"></label>
@@ -82,16 +83,10 @@
 
     <label style="display:none;">Color <input id="color" type="color" value="#ffffff"></label>
     <label style="display:none;">Size <input id="size" type="number" value="3" min="1" max="30" style="width:70px"></label>
-    <label>Draw Layer
-      <select id="drawLayerBand">
-        <option value="below_assets">Below Assets</option>
-        <option value="above_assets">Above Assets</option>
-      </select>
-    </label>
-    <label>ft/sq <input id="feetPerSq" type="number" value="5" min="1" max="100" style="width:70px"></label>
+<label>ft/sq <input id="feetPerSq" type="number" value="5" min="1" max="100" style="width:70px"></label>
 
     <label><input type="checkbox" id="snap" checked> Snap</label>
-    <label>Grid <input id="grid" value="50" style="width:70px"></label>
+    <label>Grid <input id="grid" value="72" style="width:70px"></label>
     <label><input type="checkbox" id="showGrid" checked> Grid</label>
 
     <label><input type="checkbox" id="layerGrid" checked> Layer Grid</label>
