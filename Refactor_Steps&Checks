@@ -1,0 +1,1396 @@
+Use this file as a reference for each step. Confirm with me before moving onto the next step. 
+
+
+Refactor strategy
+Core rule
+
+Do this as a series of behavior-preserving extraction passes.
+
+That means:
+
+move code
+rewire imports/calls
+run tests
+only then consider cleanup
+
+Not:
+
+“While I’m in here I’ll redesign the whole thing.”
+
+That is how a “quick cleanup” becomes a six-hour fistfight with yourself.
+
+Phase 0 — Safety rails first
+
+Before moving code around, tighten your safety net.
+
+0.1 Run and verify tests locally
+
+Use your real dev environment, not this container goblin cave.
+
+Target suites:
+
+tests/test_storage.py
+tests/test_rooms.py
+tests/test_app_http.py
+0.2 Add a few smoke tests if missing
+
+Before touching canvas.js, backend refactors are safer than frontend ones because the backend already has decent test coverage.
+
+For the frontend, if you don’t already have them, at least keep a manual smoke checklist:
+
+login still works
+room create/join still works
+draw still works
+token create/move/delete still works
+assets still upload/place/delete
+terrain still renders and repaints
+fog still paints/clears
+undo/redo still works
+snapshots still work
+room transfer prompt still works
+co-GM / GM restrictions still behave
+
+That checklist becomes your sanity anchor after each split.
+
+0.3 Create one temporary tracking doc
+
+Make a simple REFACTOR_PLAN.md or issue checklist with:
+
+task name
+moved from
+moved to
+tests run
+manual checks run
+
+Future-you will thank you instead of trying to murder you.
+
+Phase 1 — Split static/canvas.js without changing architecture
+
+This is the highest-value move in the whole project.
+
+Goal
+
+Keep plain JS. Keep the current app model. Just stop making one file own the whole universe.
+
+Important rule
+
+Do not try to invent a perfect client architecture first.
+Just extract by responsibility.
+
+Recommended target structure
+static/
+  canvas/
+    index.js
+    state.js
+    api.js
+    auth.js
+    ui.js
+    render.js
+    network.js
+    selection.js
+    tokens.js
+    assets.js
+    terrain.js
+    fog.js
+    sessions.js
+    offline.js
+    utils.js
+
+You can tweak names, but the point is to create natural fault lines.
+
+1.1 First extraction pass: low-risk utility modules
+
+These are easiest because they tend to have fewer tentacles.
+
+Move first:
+logging helpers
+toast helpers
+tooltip helpers
+formatting helpers
+tiny DOM helpers
+generic clamp/debounce/throttle/math helpers
+pure utility functions
+Likely target:
+canvas/utils.js
+maybe canvas/ui.js
+Why first
+
+It reduces file size immediately without destabilizing core game behavior.
+
+1.2 Extract API helpers
+
+Anything like:
+
+fetch wrappers
+upload helpers
+auth/session HTTP calls
+asset library API calls
+snapshot API calls
+room/session creation/join helpers
+Target
+canvas/api.js
+Benefit
+
+Separates “talk to server” from “what UI does with the answer.”
+
+That’s a very clean win.
+
+1.3 Extract websocket logic
+
+Move:
+
+connect/reconnect logic
+socket lifecycle
+heartbeat/reconnect handling
+message receive dispatch
+send wrappers
+sync handling / hello flow
+Target
+canvas/network.js
+Important
+
+Do not redesign the protocol yet. Just relocate it.
+
+Why this matters
+
+Right now networking is probably entangled with rendering and UI. Separating it will make bugs much easier to chase.
+
+1.4 Extract terrain and fog into separate modules
+
+These are natural subsystems already.
+
+Move terrain-related code into:
+canvas/terrain.js
+
+Likely includes:
+
+terrain texture/material generation
+paint mask logic
+terrain rendering helpers
+terrain state helpers
+terrain-related UI actions
+Move fog-related code into:
+canvas/fog.js
+
+Likely includes:
+
+fog mask storage
+fog stroke application
+fog render masking
+fog-related toggles/tools
+Why this is a great split
+
+These systems are complex enough to deserve isolation, and they’re also good examples of feature modules that should not be mixed with login, lobby UI, and pack filtering nonsense.
+
+1.5 Extract asset library logic
+
+Move:
+
+asset panel behavior
+asset search/filtering
+pack browsing and entitlement displays
+placement defaults
+saved filters / sets if present
+asset usage overrides and presets
+Target
+canvas/assets.js
+Why
+
+Your asset system is already a real product feature. It should stop living in the same pile as generic canvas input plumbing.
+
+1.6 Extract session/lobby/room-move UI logic
+
+Move:
+
+session modal logic
+join/move prompts
+current session state UI
+room switching prompts
+pack sharing session logic on the client side
+Target
+canvas/sessions.js
+Why
+
+This is a distinct product workflow. It should not be mixed into raw board interaction code.
+
+1.7 Extract render orchestration
+
+Move:
+
+canvas draw loop
+viewport/render orchestration
+grid rendering
+asset rendering
+token rendering
+shape/stroke render orchestration
+overlay rendering
+selection box rendering
+Target
+canvas/render.js
+Important
+
+If render depends heavily on shared globals, that’s okay at first. You are not required to solve state purity on pass one.
+
+Why
+
+Rendering is one of the biggest conceptual domains in the app. Giving it its own home is huge.
+
+1.8 Extract selection + token interaction
+
+Move:
+
+selected IDs/group handling
+marquee logic
+drag state
+token interaction state
+maybe context menu selection behavior
+Target
+canvas/selection.js
+possibly canvas/tokens.js
+Note
+
+If token-specific code is large enough, give it its own file. If not, let selection own it temporarily.
+
+1.9 Create canvas/state.js
+
+This does not have to be Redux or fancy.
+
+Just centralize shared mutable state.
+
+Example direction:
+
+export const state = {
+  room: null,
+  me: null,
+  ws: null,
+  terrain: {},
+  fog: {},
+  selection: {},
+  session: {},
+  assets: {},
+  ui: {},
+};
+
+Even if this is just a shared object, that alone improves clarity because every module now imports the same state rather than inventing neighboring globals like raccoons in adjacent trash cans.
+
+1.10 Leave index.js as the composition root
+
+index.js should become the “wire-up” file:
+
+import modules
+initialize app
+bind DOM events
+bootstrap auth/session state
+start render/network lifecycle
+
+That way index.js becomes readable instead of mythological.
+
+Phase 2 — Clean up server/app.py
+
+Once the frontend is less cursed, attack the backend routing shell.
+
+Goal
+
+Keep FastAPI and current routes. Just stop app.py from doing every job personally.
+
+Recommended target structure
+server/
+  app.py
+  auth_helpers.py
+  upload_helpers.py
+  session_helpers.py
+  ws_helpers.py
+
+You can rename these however you want. The idea is extraction by function, not architecture astronautics.
+
+2.1 Extract auth/session helper functions
+
+Move things like:
+
+current-user/session lookup helpers
+cookie/session helper logic
+membership/ownership checks reused across routes
+auth-related utility functions
+Target
+server/auth_helpers.py
+Why
+
+These are cross-cutting concerns and should not stay sprinkled inside route code.
+
+2.2 Extract upload/image/ZIP logic
+
+This one is a very strong candidate.
+
+Move:
+
+extension/MIME helpers
+image validation
+thumbnail generation
+ZIP member sanitization
+upload processing helpers
+asset import helpers
+Target
+server/upload_helpers.py
+Why
+
+This logic is practical, valuable, and very separable from route declarations.
+
+Also, upload code has a way of quietly becoming a monster if left in the main app file.
+
+2.3 Extract gameplay-session / room-move orchestration helpers
+
+Move:
+
+session summary assembly
+room move offer/force helpers
+maybe shared pack-related session response composition
+Target
+server/session_helpers.py
+Why
+
+These workflows are product logic, not route plumbing.
+
+2.4 Extract websocket endpoint support helpers
+
+You may or may not need this immediately.
+
+Possible move:
+
+parse/validate ws input helpers
+initial hello / room join helper functions
+support functions called by ws_room
+Target
+server/ws_helpers.py
+Important
+
+I would not rush to split the websocket endpoint itself into a grand subsystem until after the easy extractions above. Start with helpers first.
+
+Phase 3 — Split server/storage.py by domain
+
+This should happen before the file grows another few hundred lines and begins charging rent.
+
+Goal
+
+Preserve function names and behavior as much as possible, but split the module into domain buckets.
+
+Recommended structure
+server/
+  storage/
+    __init__.py
+    models.py
+    db.py
+    auth.py
+    rooms.py
+    assets.py
+    sessions.py
+    snapshots.py
+
+If that feels too ambitious right now, do a flatter version first:
+
+server/
+  storage_models.py
+  storage_db.py
+  storage_auth.py
+  storage_rooms.py
+  storage_assets.py
+  storage_sessions.py
+
+Either is fine.
+
+3.1 Extract model definitions first
+
+Move SQLModel table classes into:
+
+storage_models.py or storage/models.py
+Why first
+
+This is the cleanest split and usually lowest risk.
+
+3.2 Extract DB init / engine / session scaffolding
+
+Move:
+
+engine/session creation
+init_db()
+low-level DB bootstrapping
+PRAGMA setup if present
+Target
+storage_db.py or storage/db.py
+3.3 Extract auth persistence
+
+Move:
+
+user creation/fetch
+session create/get/delete
+auth lookup helpers
+Target
+storage_auth.py
+3.4 Extract room + membership persistence
+
+Move:
+
+room CRUD
+room metadata persistence
+room membership management
+join code creation/resolution if room-related
+Target
+storage_rooms.py
+3.5 Extract assets + packs
+
+Move:
+
+asset rows
+asset CRUD
+asset listing
+private packs
+entitlements
+pack asset listing
+shared pack relationships if tightly coupled
+Target
+storage_assets.py
+
+This is a very natural boundary in your project.
+
+3.6 Extract gameplay sessions + snapshots
+
+Move:
+
+play sessions
+room-sharing/session-sharing relationships
+snapshots if they fit better here, or separate them
+Target
+storage_sessions.py
+maybe storage_snapshots.py
+3.7 Re-export from a stable top-level interface
+
+Very important for low-risk refactoring.
+
+Your storage/__init__.py or top-level storage.py compatibility shim can re-export current functions so the rest of the code doesn’t immediately need massive import rewrites.
+
+That way you can split internals without detonating every import at once.
+
+Sneaky. Effective. Very human.
+
+Phase 4 — Split server/rooms.py event families
+
+This is not urgent before the frontend split, but it’s the next big backend quality move.
+
+Goal
+
+Keep RoomManager as the orchestration brain while extracting event-application families.
+
+Recommended structure
+server/
+  room_events/
+    __init__.py
+    tokens.py
+    strokes.py
+    shapes.py
+    assets.py
+    terrain.py
+    fog.py
+
+Or flatter if you prefer.
+
+4.1 Keep RoomManager in charge
+
+Do not dissolve the room manager into mist.
+
+Let it remain responsible for:
+
+room lifecycle
+connection tracking
+presence
+history/undo-redo orchestration
+autosave
+event dispatch
+broadcast coordination
+
+That part is good.
+
+4.2 Extract _apply_* families into helpers/modules
+
+Candidates:
+
+_apply_token_event
+_apply_stroke_event
+_apply_shape_event
+_apply_asset_event
+_apply_terrain_event
+_apply_fog_event
+Example shape
+
+Have helpers like:
+
+def apply_token_event(room_state, payload, context): ...
+
+Where context can include:
+
+actor identity
+permission helpers
+mutation helpers
+limits/constants
+maybe history hooks where needed
+Why
+
+This makes each family easier to reason about and test independently without losing the centralized architecture.
+
+4.3 Consider extracting permission helpers too
+
+If permission logic is starting to spread across event families, consider a dedicated helper module later:
+
+room_permissions.py
+
+But I would only do that once you see actual duplication. Don’t refactor into imaginary future duplication.
+
+Phase 5 — Tighten the event contract
+
+This is the “future bug prevention” phase.
+
+You already have a real client/server event protocol. Right now it’s probably maintained mostly by discipline and tribal knowledge.
+
+Let’s make it less tribal.
+
+Goal
+
+Create a single source of truth for event types and expected payload shapes.
+
+5.1 Centralize event type names
+
+Whether this is in Python, JS, or a tiny shared document, define the canonical event universe.
+
+Even a file like:
+
+docs/protocol.md
+
+or
+
+server/protocol.py
+
+or
+
+static/canvas/protocol.js
+
+would help.
+
+At minimum document:
+
+event type
+sender
+payload fields
+server authority behavior
+broadcast behavior
+5.2 Validate payload shapes more explicitly
+
+You do not necessarily need full schema-generation wizardry right now.
+
+But if specific event payloads are getting hairy, formalize them more:
+
+token move payloads
+asset placement payloads
+terrain stroke payloads
+fog payloads
+room-move/session control payloads
+
+That reduces subtle drift between client and server.
+
+Phase 6 — Documentation pass after refactor
+
+This phase sounds boring and therefore many people skip it and then wonder why the project feels like an abandoned mall.
+
+Do a short architecture refresh when the dust settles.
+
+Add/update:
+README.md architecture section
+docs/refactor-notes.md or docs/architecture.md
+module map for frontend
+module map for backend
+event protocol summary
+
+This doesn’t need to be fancy. Just truthful.
+
+Recommended execution order
+
+Here’s the order I’d personally use.
+
+Pass A — easiest wins
+extract canvas utility helpers
+extract canvas API helpers
+extract canvas network helpers
+extract canvas terrain and fog modules
+
+These give huge readability gains without immediately touching the most delicate interaction code.
+
+Pass B — feature domain splits
+extract canvas assets
+extract canvas sessions/room-move flow
+extract canvas render orchestration
+extract canvas selection/token interaction
+create canvas/state.js
+leave canvas/index.js as bootstrap shell
+Pass C — backend cleanup
+extract app.py upload helpers
+extract app.py auth/session helpers
+extract app.py session-room orchestration helpers
+Pass D — persistence split
+extract storage models
+extract DB scaffolding
+extract auth persistence
+extract rooms/membership persistence
+extract assets/packs
+extract sessions/snapshots
+Pass E — room event cleanup
+extract room event families from rooms.py
+document event protocol
+architecture doc refresh
+What not to do during this refactor
+
+Very important.
+
+Do not:
+switch frontend frameworks
+replace SQLite
+redesign the multiplayer model
+rewrite the websocket protocol from scratch
+mix feature additions into the extraction passes
+“clean up everything while you’re here”
+
+Every one of those is a trap disguised as ambition.
+
+Suggested Codex task slices
+
+Here’s how I’d hand this to Codex in manageable chunks.
+
+Task 1
+
+Extract low-risk utility/helper functions from static/canvas.js into static/canvas/utils.js and static/canvas/ui.js, update imports/script loading, preserve behavior, no functional changes.
+
+Task 2
+
+Extract HTTP/API helper functions from static/canvas.js into static/canvas/api.js, preserve all existing behavior and call signatures.
+
+Task 3
+
+Extract websocket lifecycle and message send/receive helpers from static/canvas.js into static/canvas/network.js, preserve reconnect and sync behavior exactly.
+
+Task 4
+
+Extract terrain-related state, rendering helpers, and paint logic from static/canvas.js into static/canvas/terrain.js.
+
+Task 5
+
+Extract fog-related state, rendering helpers, and paint logic from static/canvas.js into static/canvas/fog.js.
+
+Task 6
+
+Extract asset library, pack browser, asset filter, and asset placement helpers from static/canvas.js into static/canvas/assets.js.
+
+Task 7
+
+Extract session/lobby/room-move UI and state helpers from static/canvas.js into static/canvas/sessions.js.
+
+Task 8
+
+Extract rendering orchestration from static/canvas.js into static/canvas/render.js, preserving current draw order and viewport behavior.
+
+Task 9
+
+Create static/canvas/state.js and migrate shared mutable state into it with minimal behavior changes.
+
+Task 10
+
+Extract upload/image/ZIP helper logic from server/app.py into server/upload_helpers.py, preserving all route behavior and tests.
+
+Task 11
+
+Extract auth/session utility helpers from server/app.py into server/auth_helpers.py.
+
+Task 12
+
+Split server/storage.py by domain, starting with model definitions and DB setup, while preserving the public import surface.
+
+Task 13
+
+Extract room event family handlers from server/rooms.py into dedicated helper modules while keeping RoomManager as orchestrator.
+
+
+------
+
+Refactor operating rules
+
+Use these rules for every task.
+
+Global rules
+Preserve existing behavior unless the task explicitly says otherwise.
+Do not combine refactoring with feature additions.
+Keep diffs narrow and reviewable.
+After each task:
+run backend tests
+run a manual frontend smoke check
+Prefer compatibility shims over mass import rewrites.
+Do not rename public API routes, websocket event names, or persisted DB fields during these passes.
+Definition of done for every task
+Project still starts normally.
+Existing tests still pass locally.
+No known user-facing regression in the smoke checklist.
+The old file is smaller and clearer.
+The new module has a clear responsibility.
+Manual smoke checklist
+
+Run this after every frontend-impacting task.
+
+Core board
+Login works.
+Lobby/dashboard loads.
+Create room works.
+Join room works.
+Board loads without console explosion.
+Grid renders.
+Existing room content loads.
+Board interaction
+Draw works.
+Erase works.
+Shapes work.
+Token placement works.
+Token move works.
+Token delete works.
+Selection works.
+Grouping still works if applicable.
+Undo/redo works.
+Assets
+Asset upload works.
+Asset library opens.
+Asset search/filter works.
+Asset placement works.
+Asset delete still respects permissions.
+Private/shared pack browsing still works if available.
+Terrain/fog
+Terrain background renders.
+Terrain regenerate works.
+Terrain paint works.
+Fog paint works.
+Fog erase/clear works.
+Session/room flow
+Gameplay session screen opens.
+Room move prompt still appears.
+Accept/decline room move still works.
+GM/co-GM restrictions still behave.
+Networking
+Reconnect works after refresh.
+Multiple clients still sync.
+No obvious websocket spam/errors.
+Task 1 — Extract low-risk utility helpers from static/canvas.js
+Goal
+
+Move pure helpers and low-coupling utility functions out of static/canvas.js.
+
+Scope
+
+Extract things like:
+
+clamp/math helpers
+debounce/throttle helpers
+formatting helpers
+generic DOM/query helpers
+logging wrappers
+toast/tooltip helpers if low-coupling
+Target files
+static/canvas/utils.js
+optionally static/canvas/ui.js
+Implementation notes
+Start with pure functions first.
+Avoid moving functions that depend heavily on giant shared state in this pass.
+Update script/module loading with minimal wiring changes.
+Acceptance criteria
+canvas.js is smaller.
+Extracted helpers are imported or referenced from the new module(s).
+No functional changes to board behavior.
+No new console errors on load.
+Manual smoke checklist passes.
+Task 2 — Extract HTTP/API helpers from static/canvas.js
+Goal
+
+Separate server communication logic from board/UI behavior.
+
+Scope
+
+Move:
+
+fetch wrappers
+room create/join calls
+asset upload calls
+snapshot calls
+auth/session-related API calls
+pack/session API helpers
+Target file
+static/canvas/api.js
+Implementation notes
+Preserve existing request/response behavior.
+Do not change endpoints.
+Do not redesign return shapes yet.
+Keep error handling behavior the same unless bug-fixed intentionally and documented.
+Acceptance criteria
+All HTTP calls come from api.js instead of ad hoc fetch logic in canvas.js.
+Room create/join still works.
+Asset upload still works.
+Snapshot and pack-related calls still work.
+No route or payload changes.
+Manual smoke checklist passes.
+Task 3 — Extract websocket lifecycle logic from static/canvas.js
+Goal
+
+Move websocket connection management and message plumbing into a dedicated module.
+
+Scope
+
+Move:
+
+socket creation
+reconnect logic
+heartbeat handling
+send wrappers
+receive parsing/dispatch entry point
+hello/sync lifecycle support
+stale socket guards if present
+Target file
+static/canvas/network.js
+Implementation notes
+Preserve current protocol exactly.
+Preserve reconnect behavior.
+Preserve any sequencing logic.
+Do not redesign message formats in this pass.
+Acceptance criteria
+Connection/reconnect logic lives in network.js.
+Board still connects successfully.
+Refresh still reconnects cleanly.
+Two-client sync still works.
+No change to event names or payload structure.
+Manual smoke checklist passes.
+Task 4 — Extract terrain subsystem from static/canvas.js
+Goal
+
+Move terrain-specific logic into its own module.
+
+Scope
+
+Move:
+
+terrain state helpers
+terrain generation helpers
+terrain rendering helpers
+terrain paint logic
+terrain-related UI handlers if tightly coupled
+Target file
+static/canvas/terrain.js
+Implementation notes
+Keep terrain behavior visually identical.
+Preserve biome selection and regenerate behavior.
+Preserve any tile/pattern caching behavior.
+Acceptance criteria
+Terrain-related code is no longer mixed through the main client file.
+Terrain background still renders.
+Regenerate still works.
+Terrain paint still works.
+No visual order regression relative to other layers.
+Manual smoke checklist passes.
+Task 5 — Extract fog subsystem from static/canvas.js
+Goal
+
+Move fog-of-war logic into its own module.
+
+Scope
+
+Move:
+
+fog state helpers
+fog paint/erase logic
+fog rendering/mask helpers
+fog-related UI/tool handling if needed
+Target file
+static/canvas/fog.js
+Implementation notes
+Preserve GM restrictions if applicable.
+Preserve masking/render order behavior.
+Do not change payload structures.
+Acceptance criteria
+Fog logic lives in fog.js.
+Fog paint still works.
+Fog erase/clear still works.
+Fog display order remains correct.
+Multiplayer fog sync still works.
+Manual smoke checklist passes.
+Task 6 — Extract asset library and pack UI logic from static/canvas.js
+Goal
+
+Move asset-system client logic into a dedicated module.
+
+Scope
+
+Move:
+
+asset library UI behavior
+pack browsing
+asset search/filter
+saved filter/preset logic
+asset placement defaults
+placement helpers
+asset usage overrides if present
+Target file
+static/canvas/assets.js
+Implementation notes
+Keep DOM IDs and event bindings stable unless necessary.
+Preserve current placement workflow.
+Preserve entitlement-driven UI behavior.
+Acceptance criteria
+Asset-related client behavior is primarily in assets.js.
+Asset library still opens and loads.
+Asset upload still shows up correctly.
+Asset search/filter works.
+Pack browsing still works.
+Asset placement still works.
+Manual smoke checklist passes.
+Task 7 — Extract session/lobby/room-move client logic from static/canvas.js
+Goal
+
+Move gameplay-session-specific client workflows into their own module.
+
+Scope
+
+Move:
+
+session modal logic
+room move prompt logic
+current session UI state
+accept/decline workflow handlers
+shared-pack session UI if present
+Target file
+static/canvas/sessions.js
+Implementation notes
+Preserve current room-transfer behavior exactly.
+Keep player/GM flow unchanged.
+Do not change API routes or websocket event names.
+Acceptance criteria
+Session and room-move logic lives in sessions.js.
+Session UI still opens.
+Room move prompt still appears.
+Accept/decline still works.
+Forced move still works if implemented.
+GM/co-GM UI flow still behaves.
+Manual smoke checklist passes.
+Task 8 — Extract render orchestration from static/canvas.js
+Goal
+
+Separate rendering from general state/network/UI code.
+
+Scope
+
+Move:
+
+render loop / redraw orchestration
+grid rendering
+layer draw order orchestration
+asset/token/stroke/shape render coordination
+selection overlay rendering
+viewport-related draw helpers
+Target file
+static/canvas/render.js
+Implementation notes
+Preserve current draw order.
+Preserve scale/zoom/pan behavior.
+Avoid mixing behavior changes into this task.
+Acceptance criteria
+Main draw orchestration lives in render.js.
+Visual output is unchanged.
+Grid/layers still render in correct order.
+Tokens/assets/strokes/shapes still appear correctly.
+Selection overlays still work.
+Manual smoke checklist passes.
+Task 9 — Create static/canvas/state.js and centralize shared mutable state
+Goal
+
+Make state ownership more explicit without rewriting the app architecture.
+
+Scope
+
+Create a shared state module for:
+
+current room state
+auth/me
+websocket references
+UI state
+asset state
+terrain/fog state
+selection/drag state
+session state
+Target file
+static/canvas/state.js
+Implementation notes
+This can begin as a plain exported object.
+Do not attempt Redux/Vuex/whatever theatrics.
+Minimal behavior change only.
+Acceptance criteria
+Shared mutable client state is centralized in state.js.
+Modules import shared state instead of inventing parallel globals.
+No user-visible behavior changes.
+Manual smoke checklist passes.
+Task 10 — Reduce static/canvas.js to a composition/bootstrap file
+Goal
+
+Turn the original monolith into an initialization shell.
+
+Scope
+
+After extraction tasks, leave canvas.js or static/canvas/index.js responsible for:
+
+module imports
+DOM bootstrap
+initial event binding
+startup sequencing
+Target file
+static/canvas/index.js
+optionally keep a small compatibility canvas.js
+Implementation notes
+Keep script loading simple.
+Don’t over-engineer app startup.
+Acceptance criteria
+Main client entry file is dramatically smaller.
+It reads like bootstrap/wiring code, not the whole application.
+App still loads and behaves the same.
+Manual smoke checklist passes.
+Task 11 — Extract upload/image/ZIP helpers from server/app.py
+Goal
+
+Remove upload-processing complexity from the main FastAPI file.
+
+Scope
+
+Move:
+
+MIME/extension normalization helpers
+image validation helpers
+thumbnail generation
+ZIP member sanitization
+ZIP extraction/import helper logic
+upload-related helper functions
+Target file
+server/upload_helpers.py
+Implementation notes
+Preserve upload behavior exactly.
+Preserve file safety checks.
+Preserve thumbnail naming/location.
+Preserve error semantics unless bug-fixing intentionally.
+Acceptance criteria
+Upload/image/ZIP helper logic no longer lives primarily in app.py.
+Asset upload still works.
+ZIP import still works.
+Thumbnails still generate.
+Existing upload-related tests pass.
+Manual asset smoke checks pass.
+Task 12 — Extract auth/session utility helpers from server/app.py
+Goal
+
+Move shared auth/session logic out of route handlers.
+
+Scope
+
+Move:
+
+current user/session lookup helpers
+cookie/session helper functions
+reusable ownership/membership checks
+auth-related helper utilities
+Target file
+server/auth_helpers.py
+Implementation notes
+Preserve route behavior.
+Preserve cookie/session semantics.
+Do not change auth flow or DB schema.
+Acceptance criteria
+Auth/session helper logic is centralized outside app.py.
+Login/logout/session checks still work.
+Protected routes still behave correctly.
+Existing auth tests pass.
+Task 13 — Extract gameplay-session and room-move support helpers from server/app.py
+Goal
+
+Separate session workflow/business assembly from route declarations.
+
+Scope
+
+Move:
+
+room/session summary builders
+room move orchestration helpers
+player membership/session helper assembly
+shared-pack session composition helpers if applicable
+Target file
+server/session_helpers.py
+Implementation notes
+Keep routes unchanged.
+Preserve response shapes.
+Preserve GM/co-GM/player behavior.
+Acceptance criteria
+Session workflow helpers are no longer embedded in app.py.
+Session APIs still return expected data.
+Room move flows still work.
+Existing session-related tests pass.
+Task 14 — Split storage model definitions out of server/storage.py
+Goal
+
+Begin breaking up storage.py safely by extracting schema definitions first.
+
+Scope
+
+Move:
+
+SQLModel table classes
+persistence model definitions
+related enums/constants if tightly coupled
+Target files
+server/storage_models.py
+or
+server/storage/models.py
+Implementation notes
+Keep imports stable with a compatibility re-export if needed.
+Do not change DB table names or field names.
+Acceptance criteria
+Model classes no longer live primarily in storage.py.
+DB initialization still works.
+Tests still pass.
+No schema drift introduced.
+Task 15 — Extract DB engine/init/session scaffolding from server/storage.py
+Goal
+
+Separate low-level DB setup from domain persistence functions.
+
+Scope
+
+Move:
+
+engine creation
+session/connection helpers
+init_db()
+PRAGMA or DB bootstrap logic
+migration/compatibility bootstrap helpers if low-level
+Target files
+server/storage_db.py
+or
+server/storage/db.py
+Acceptance criteria
+DB setup code is separated from domain operations.
+App startup still initializes DB correctly.
+Tests still pass.
+No runtime import cycles introduced.
+Task 16 — Extract auth persistence from server/storage.py
+Goal
+
+Move user/session persistence into a dedicated module.
+
+Scope
+
+Move:
+
+user create/fetch/update helpers
+session create/get/delete helpers
+auth-persistence-related lookup functions
+Target file
+server/storage_auth.py
+or
+server/storage/auth.py
+Acceptance criteria
+Auth persistence lives outside the main storage module.
+Login/session persistence still works.
+Relevant tests pass.
+Task 17 — Extract room and membership persistence from server/storage.py
+Goal
+
+Separate room lifecycle persistence from the rest of the storage layer.
+
+Scope
+
+Move:
+
+room CRUD
+room metadata persistence
+join code resolution if room-bound
+room membership helpers
+Target file
+server/storage_rooms.py
+or
+server/storage/rooms.py
+Acceptance criteria
+Room persistence lives in its own module.
+Room creation/load/update still works.
+Membership behavior still works.
+Relevant tests pass.
+Task 18 — Extract asset and private pack persistence from server/storage.py
+Goal
+
+Move asset-domain persistence into a dedicated module.
+
+Scope
+
+Move:
+
+asset CRUD/listing
+private pack CRUD
+pack entitlements
+pack asset listing
+shared-pack persistence if best fit here
+Target file
+server/storage_assets.py
+or
+server/storage/assets.py
+Acceptance criteria
+Asset and pack persistence is isolated.
+Asset listing still merges expected sources.
+Private pack behavior still works.
+Relevant tests pass.
+Task 19 — Extract gameplay-session and snapshot persistence from server/storage.py
+Goal
+
+Finish the storage domain split.
+
+Scope
+
+Move:
+
+gameplay session persistence
+room-to-session associations
+snapshot persistence helpers
+related helpers for session data retrieval
+Target file
+server/storage_sessions.py
+or
+server/storage/sessions.py
+Acceptance criteria
+Session/snapshot persistence is no longer in the main storage file.
+Session APIs still work.
+Snapshots still save/load.
+Relevant tests pass.
+Task 20 — Add a storage compatibility surface
+Goal
+
+Preserve import stability while internals are split.
+
+Scope
+
+Create a compatibility layer that re-exports existing storage functions/classes from the new modules.
+
+Target
+server/storage.py as shim
+or
+server/storage/__init__.py
+Implementation notes
+This is strategically boring and therefore excellent.
+Keep the rest of the codebase from needing giant import churn all at once.
+Acceptance criteria
+Existing callers can still import storage functionality without major rewrites.
+Internal organization is cleaner.
+Tests still pass.
+Task 21 — Extract room event family handlers from server/rooms.py
+Goal
+
+Keep RoomManager as orchestrator while moving event-family mutation logic out of the giant class body.
+
+Scope
+
+Move:
+
+token event handlers
+stroke event handlers
+shape event handlers
+asset event handlers
+terrain event handlers
+fog event handlers
+Target files
+server/room_events/tokens.py
+server/room_events/strokes.py
+server/room_events/shapes.py
+server/room_events/assets.py
+server/room_events/terrain.py
+server/room_events/fog.py
+Implementation notes
+RoomManager should remain the conductor.
+Do not redesign event semantics.
+Use helper functions/modules, not a rewrite.
+Acceptance criteria
+_apply_* families are mostly outside rooms.py.
+RoomManager still owns lifecycle, broadcast, autosave, history, dispatch.
+Existing room/state tests still pass.
+Multiplayer behavior remains unchanged.
+Task 22 — Document the websocket/event protocol
+Goal
+
+Reduce client/server drift risk.
+
+Scope
+
+Create a protocol reference documenting:
+
+event names
+sender direction
+payload shape
+server authority behavior
+broadcast expectations
+Target file
+docs/protocol.md
+Implementation notes
+This is documentation, not a behavior change.
+Start with the event families already present.
+Keep it concise but truthful.
+Acceptance criteria
+There is one canonical protocol reference in the repo.
+Event families and payload expectations are documented.
+Future changes have a place to update.
+Task 23 — Add a short architecture doc
+Goal
+
+Make the current system easier to understand after the split.
+
+Scope
+
+Document:
+
+backend module responsibilities
+frontend module responsibilities
+single-worker room-manager constraint
+where server authority lives
+where persistence lives
+where client bootstrap lives
+Target file
+docs/architecture.md
+Acceptance criteria
+New module layout is documented.
+The app’s real structure is understandable without spelunking every file.
+Suggested task order for Codex
+
+Here’s the exact sequence I’d hand over.
+
+Frontend first
+Task 1 — utilities
+Task 2 — API helpers
+Task 3 — network helpers
+Task 4 — terrain
+Task 5 — fog
+Task 6 — assets
+Task 7 — sessions
+Task 8 — render
+Task 9 — shared state
+Task 10 — bootstrap shell cleanup
+Backend second
+Task 11 — upload helpers
+Task 12 — auth/session helpers
+Task 13 — session workflow helpers
+Storage third
+Task 14 — storage models
+Task 15 — DB scaffolding
+Task 16 — auth persistence
+Task 17 — rooms persistence
+Task 18 — assets persistence
+Task 19 — sessions/snapshots persistence
+Task 20 — compatibility surface
+Room-core fourth
+Task 21 — room event families
+Task 22 — protocol doc
+Task 23 — architecture doc
