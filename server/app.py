@@ -1,20 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
-import hmac
 import importlib.util
-import io
 import json
 import logging
 import os
-import posixpath
-import secrets
 import tempfile
 import time
 import uuid
-import zipfile
 from collections import deque
 from pathlib import Path
 from typing import Optional
@@ -22,19 +15,42 @@ from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-try:
-    from PIL import Image, ImageOps, UnidentifiedImageError  # type: ignore
-except Exception:  # pragma: no cover - fallback keeps app booting without Pillow
-    Image = None  # type: ignore
-    ImageOps = None  # type: ignore
-    UnidentifiedImageError = Exception  # type: ignore
-try:
-    from passlib.context import CryptContext  # type: ignore
-except Exception:  # pragma: no cover - fallback used in minimal/offline envs
-    CryptContext = None  # type: ignore
 
+from .auth_helpers import (
+    LEGACY_SESSION_COOKIE,
+    PASSWORD_CONTEXT,
+    SESSION_COOKIE,
+    auth_logout_response,
+    auth_success_response,
+    cookie_secure,
+    get_user_from_request,
+    hash_key,
+    require_user,
+    ws_user,
+)
 from .models import RoomState, WireEvent
 from .rooms import RoomManager
+from .session_helpers import (
+    broadcast_session_event,
+    broadcast_session_notice,
+    build_session_summary,
+    handle_session_control_event,
+    room_session_payload,
+    session_room_name,
+)
+from .upload_helpers import (
+    ALLOWED_BACKGROUND_EXTS,
+    CONTENT_TYPE_TO_EXT,
+    EXT_TO_IMAGE_MIME,
+    MIME_TO_IMAGE_EXT,
+    asset_image_meta_and_thumb,
+    background_upload_ext,
+    image_mime_from_ext,
+    import_asset_zip,
+    safe_zip_member_path,
+    save_asset_upload,
+    save_background_upload,
+)
 from .storage import (
     add_game_session_member,
     add_membership,
@@ -115,29 +131,6 @@ def _env_int(name: str, default: int) -> int:
 MAX_ZIP_UPLOAD_BYTES = _env_int("MAX_ZIP_UPLOAD_BYTES", 512 * 1024 * 1024)
 MAX_ZIP_ASSET_FILES = _env_int("MAX_ZIP_ASSET_FILES", 2000)
 MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = _env_int("MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES", 1024 * 1024 * 1024)
-ASSET_THUMB_MAX_DIM = 256
-MAX_ASSET_IMAGE_DIM = 12_000
-MAX_ASSET_IMAGE_PIXELS = 36_000_000
-ALLOWED_BACKGROUND_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-CONTENT_TYPE_TO_EXT = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-}
-EXT_TO_IMAGE_MIME = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-    ".gif": "image/gif",
-}
-MIME_TO_IMAGE_EXT = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-}
 
 # Static assets (still routed through FastAPI so middleware can protect them)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
@@ -146,49 +139,12 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR), check_dir=False), 
 
 rm = RoomManager()
 HEARTBEAT_TIMEOUT_SECONDS = 35.0
-SESSION_COOKIE = "warhamster_sid"
-LEGACY_SESSION_COOKIE = "warboard_sid"
-
-
-class _PBKDF2Context:
-    """Compatibility fallback when passlib isn't available."""
-
-    _ITERATIONS = 260_000
-
-    def hash(self, password: str) -> str:
-        salt = secrets.token_bytes(16)
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, self._ITERATIONS)
-        return "pbkdf2_sha256${}${}${}".format(
-            self._ITERATIONS,
-            base64.b64encode(salt).decode("ascii"),
-            base64.b64encode(dk).decode("ascii"),
-        )
-
-    def verify_and_update(self, password: str, stored_hash: str) -> tuple[bool, None]:
-        try:
-            algo, iter_s, salt_b64, digest_b64 = stored_hash.split("$", 3)
-            if algo != "pbkdf2_sha256":
-                return False, None
-            iterations = int(iter_s)
-            salt = base64.b64decode(salt_b64.encode("ascii"))
-            expected = base64.b64decode(digest_b64.encode("ascii"))
-        except (ValueError, IndexError):
-            return False, None
-        got = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-        return hmac.compare_digest(got, expected), None
-
-
-PASSWORD_CONTEXT = (
-    CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
-    if CryptContext is not None
-    else _PBKDF2Context()
-)
 LOG = logging.getLogger("warhamster.ws")
 HAS_MULTIPART = importlib.util.find_spec("multipart") is not None
 
 
 def _hash_key(raw: str) -> str:
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return hash_key(raw)
 
 
 def _safe_pack_id(pack_id: str) -> str:
@@ -199,84 +155,6 @@ def _safe_pack_id(pack_id: str) -> str:
 def _safe_room_id(room_id: str) -> str:
     cleaned = "".join(ch for ch in (room_id or "") if ch.isalnum() or ch in ("-", "_"))
     return cleaned.strip()
-
-
-def _safe_zip_member_path(raw_name: str) -> tuple[str, str]:
-    # Normalize zip paths and reject traversal/absolute paths.
-    name = str(raw_name or "").replace("\\", "/").strip()
-    norm = posixpath.normpath(name)
-    if not norm or norm in (".", "/") or norm.startswith("/") or norm.startswith("../") or "/../" in norm:
-        return "", ""
-    folder = posixpath.dirname(norm)
-    if folder in (".", "/"):
-        folder = ""
-    base = posixpath.basename(norm)
-    return folder.strip("/"), base
-
-
-def _background_upload_ext(upload: UploadFile) -> str:
-    ctype = str(upload.content_type or "").strip().lower()
-    if ctype in CONTENT_TYPE_TO_EXT:
-        return CONTENT_TYPE_TO_EXT[ctype]
-    ext = Path(str(upload.filename or "")).suffix.lower()
-    if ext in ALLOWED_BACKGROUND_EXTS:
-        return ext
-    raise HTTPException(status_code=400, detail="Unsupported image type")
-
-
-def _image_mime_from_ext(ext: str) -> str:
-    return EXT_TO_IMAGE_MIME.get(str(ext or "").lower(), "application/octet-stream")
-
-
-def _asset_image_meta_and_thumb(data: bytes) -> tuple[int, int, bytes, str]:
-    if Image is None:
-        raise HTTPException(status_code=503, detail="Asset upload unavailable: Pillow not installed")
-    try:
-        with Image.open(io.BytesIO(data)) as img:
-            if ImageOps is not None:
-                img = ImageOps.exif_transpose(img)
-            width, height = img.size
-            thumb = img.copy()
-    except UnidentifiedImageError:
-        raise HTTPException(status_code=400, detail="Unsupported or corrupt image file")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to read image: {e}") from e
-
-    if width < 1 or height < 1:
-        raise HTTPException(status_code=400, detail="Invalid image dimensions")
-    if width > MAX_ASSET_IMAGE_DIM or height > MAX_ASSET_IMAGE_DIM:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Image dimensions exceed limit ({MAX_ASSET_IMAGE_DIM}px max side)",
-        )
-    if int(width) * int(height) > MAX_ASSET_IMAGE_PIXELS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Image pixel count exceeds limit ({MAX_ASSET_IMAGE_PIXELS} max)",
-        )
-
-    if thumb.mode not in ("RGB", "RGBA"):
-        thumb = thumb.convert("RGBA")
-    if hasattr(Image, "Resampling"):
-        resample = Image.Resampling.LANCZOS
-    else:  # Pillow < 9.1
-        resample = Image.LANCZOS
-    thumb.thumbnail((ASSET_THUMB_MAX_DIM, ASSET_THUMB_MAX_DIM), resample)
-
-    has_alpha = "A" in thumb.getbands()
-    if has_alpha:
-        out = io.BytesIO()
-        thumb.save(out, format="PNG", optimize=True)
-        return int(width), int(height), out.getvalue(), ".png"
-
-    try:
-        out = io.BytesIO()
-        thumb.save(out, format="WEBP", quality=82, method=6)
-        return int(width), int(height), out.getvalue(), ".webp"
-    except Exception:
-        out = io.BytesIO()
-        thumb.save(out, format="PNG", optimize=True)
-        return int(width), int(height), out.getvalue(), ".png"
 
 
 def _load_pack_manifest(pack_id: str) -> dict:
@@ -318,30 +196,19 @@ def _manifest_etag(manifest_path: Path) -> str:
 
 
 def _get_user_from_request(req: Request):
-    sid = req.cookies.get(SESSION_COOKIE, "") or req.cookies.get(LEGACY_SESSION_COOKIE, "")
-    return get_user_by_sid(sid)
+    return get_user_from_request(req, get_user_by_sid)
 
 
 def _require_user(req: Request):
-    user = _get_user_from_request(req)
-    if not user:
-        raise HTTPException(status_code=401, detail="Login required")
-    return user
+    return require_user(req, get_user_by_sid)
 
 
 def _ws_user(ws: WebSocket):
-    sid = ws.cookies.get(SESSION_COOKIE, "") or ws.cookies.get(LEGACY_SESSION_COOKIE, "")
-    return get_user_by_sid(sid)
+    return ws_user(ws, get_user_by_sid)
 
 
 def _cookie_secure(req: Request) -> bool:
-    # Prefer reverse-proxy signal when present (e.g., nginx terminates TLS).
-    forwarded_proto = req.headers.get("x-forwarded-proto", "")
-    if forwarded_proto:
-        proto = forwarded_proto.split(",", 1)[0].strip().lower()
-        return proto == "https"
-    # Local dev runs on http://127.0.0.1; secure cookies there break ws:// auth.
-    return req.url.scheme == "https"
+    return cookie_secure(req)
 
 
 def _room_owner_user_id(room_id: str) -> Optional[int]:
@@ -371,143 +238,65 @@ def _room_online_count(room_id: str) -> int:
 
 
 def _build_session_summary(session_id: str, user_id: int, current_room_id: str | None = None) -> dict | None:
-    session = get_game_session(session_id)
-    if not session:
-        return None
-    role = get_game_session_role(session_id, user_id)
-    if not role:
-        return None
-    rooms = []
-    for room in list_game_session_rooms(session_id):
-        room_id = str(room.get("room_id") or "")
-        rooms.append(
-            {
-                "id": room_id,
-                "display_name": room.get("display_name") or room.get("name") or room_id,
-                "join_code": room.get("join_code") or "",
-                "room_order": room.get("room_order"),
-                "occupancy_count": _room_online_count(room_id),
-                "is_current": room_id == current_room_id,
-            }
-        )
-    members = []
-    for member in list_game_session_members(session_id):
-        members.append(
-            {
-                "user_id": member.get("user_id"),
-                "username": member.get("username"),
-                "role": member.get("role"),
-            }
-        )
-    current_room = None
-    if current_room_id:
-        meta = get_room_meta(current_room_id)
-        if meta:
-            current_room = {"id": current_room_id, "display_name": meta.display_name or meta.name}
-    return {
-        "id": session.session_id,
-        "name": session.name,
-        "user_role": role,
-        "rooms": rooms,
-        "members": members,
-        "current_room": current_room,
-    }
+    return build_session_summary(
+        session_id=session_id,
+        user_id=user_id,
+        current_room_id=current_room_id,
+        get_game_session_fn=get_game_session,
+        get_game_session_role_fn=get_game_session_role,
+        list_game_session_rooms_fn=list_game_session_rooms,
+        list_game_session_members_fn=list_game_session_members,
+        get_room_meta_fn=get_room_meta,
+        room_online_count_fn=_room_online_count,
+    )
 
 
 def _room_session_payload(room_id: str, user_id: int) -> dict | None:
-    meta = get_room_meta(room_id)
-    if not meta or not meta.session_id:
-        return None
-    return _build_session_summary(meta.session_id, user_id, room_id)
+    return room_session_payload(
+        room_id=room_id,
+        user_id=user_id,
+        get_room_meta_fn=get_room_meta,
+        build_session_summary_fn=_build_session_summary,
+    )
 
 
 def _session_room_name(session_id: str, target_room_id: str) -> str | None:
-    for room in list_game_session_rooms(session_id):
-        if str(room.get("room_id") or "") == target_room_id:
-            return str(room.get("display_name") or room.get("name") or target_room_id)
-    return None
+    return session_room_name(
+        session_id=session_id,
+        target_room_id=target_room_id,
+        list_game_session_rooms_fn=list_game_session_rooms,
+    )
 
 
 async def _broadcast_session_event(session_id: str, event: WireEvent, roles: set[str] | None = None) -> None:
-    session_rooms = {str(room.get("room_id") or "") for room in list_game_session_rooms(session_id)}
-    if not session_rooms:
-        return
-    members_by_username = {
-        str(member.get("username") or ""): str(member.get("role") or "player")
-        for member in list_game_session_members(session_id)
-    }
-    sockets = []
-    message = event.model_dump_json()
-    for room_id, live_room in list(rm._rooms.items()):
-        if room_id not in session_rooms:
-            continue
-        for ws in list(live_room.sockets):
-            username = str(live_room.socket_to_client.get(ws) or "")
-            role = members_by_username.get(username)
-            if not role:
-                continue
-            if roles is not None and role not in roles:
-                continue
-            sockets.append(ws)
-    if not sockets:
-        return
-    await asyncio.gather(*(ws.send_text(message) for ws in sockets), return_exceptions=True)
+    await broadcast_session_event(
+        session_id=session_id,
+        event=event,
+        rm=rm,
+        list_game_session_rooms_fn=list_game_session_rooms,
+        list_game_session_members_fn=list_game_session_members,
+        roles=roles,
+    )
 
 
 async def _broadcast_session_notice(session_id: str, message: str) -> None:
-    await _broadcast_session_event(
-        session_id,
-        WireEvent(type="SESSION_SYSTEM_NOTICE", payload={"scope": "session", "message": message}),
+    await broadcast_session_notice(
+        session_id=session_id,
+        message=message,
+        broadcast_session_event_fn=_broadcast_session_event,
     )
 
 
 async def _handle_session_control_event(event: WireEvent, user, client_id: str) -> WireEvent | None:
-    session_id = str(event.payload.get("session_id") or "").strip()
-    target_room_id = str(event.payload.get("target_room_id") or "").strip()
-    if not session_id or not target_room_id:
-        return WireEvent(type="ERROR", payload={"message": "session_id and target_room_id are required"})
-    if user.user_id is None:
-        return WireEvent(type="ERROR", payload={"message": "Invalid user"})
-    target_room_name = _session_room_name(session_id, target_room_id)
-    if not target_room_name:
-        return WireEvent(type="ERROR", payload={"message": "Target room is not in this session"})
-    role = get_game_session_role(session_id, user.user_id)
-    if not role:
-        return WireEvent(type="ERROR", payload={"message": "Not a member of this session"})
-    message = str(event.payload.get("message") or "").strip()
-    requested_by = user.username or client_id
-
-    if event.type in {"SESSION_ROOM_MOVE_REQUEST", "SESSION_ROOM_MOVE_FORCE"}:
-        if role not in {"gm", "co_gm"}:
-            return WireEvent(type="ERROR", payload={"message": "Only GM or co-GM can move players"})
-        outgoing_type = "SESSION_ROOM_MOVE_OFFER" if event.type == "SESSION_ROOM_MOVE_REQUEST" else "SESSION_ROOM_MOVE_EXECUTE"
-        await _broadcast_session_event(
-            session_id,
-            WireEvent(
-                type=outgoing_type,
-                payload={
-                    "session_id": session_id,
-                    "target_room_id": target_room_id,
-                    "target_room_name": target_room_name,
-                    "requested_by": requested_by,
-                    "message": message,
-                },
-            ),
-            roles={"player"},
-        )
-        if event.type == "SESSION_ROOM_MOVE_REQUEST":
-            await _broadcast_session_notice(session_id, f"{requested_by} requested that players join {target_room_name}.")
-        else:
-            await _broadcast_session_notice(session_id, f"{requested_by} moved players to {target_room_name}.")
-        return None
-
-    if event.type == "SESSION_ROOM_MOVE_ACCEPT":
-        if role != "player":
-            return WireEvent(type="ERROR", payload={"message": "Only players can accept room move offers"})
-        await _broadcast_session_notice(session_id, f"{requested_by} accepted room move to {target_room_name}.")
-        return None
-
-    return WireEvent(type="ERROR", payload={"message": "Unhandled session control event"})
+    return await handle_session_control_event(
+        event=event,
+        user=user,
+        client_id=client_id,
+        get_game_session_role_fn=get_game_session_role,
+        session_room_name_fn=_session_room_name,
+        broadcast_session_event_fn=_broadcast_session_event,
+        broadcast_session_notice_fn=_broadcast_session_notice,
+    )
 
 
 @app.on_event("startup")
@@ -619,17 +408,7 @@ async def register(req: Request):
         raise HTTPException(status_code=500, detail="Failed to create user")
 
     sid = create_session(user.user_id)
-    resp = JSONResponse({"ok": True, "username": user.username})
-    resp.set_cookie(
-        SESSION_COOKIE,
-        sid,
-        httponly=True,
-        secure=_cookie_secure(req),
-        samesite="lax",
-        max_age=60 * 60 * 24 * 30,
-        path="/",
-    )
-    return resp
+    return auth_success_response(req=req, sid=sid, username=user.username)
 
 
 @app.post("/api/auth/login")
@@ -651,28 +430,13 @@ async def login(req: Request):
     if replacement_hash:
         update_user_password_hash(u.user_id, replacement_hash)
     sid = create_session(u.user_id)
-    resp = JSONResponse({"ok": True, "username": u.username})
-    resp.set_cookie(
-        SESSION_COOKIE,
-        sid,
-        httponly=True,
-        secure=_cookie_secure(req),
-        samesite="lax",
-        max_age=60 * 60 * 24 * 30,
-        path="/",
-    )
-    return resp
+    return auth_success_response(req=req, sid=sid, username=u.username)
 
 
 @app.post("/api/auth/logout")
 def logout(req: Request):
     sid = req.cookies.get(SESSION_COOKIE, "") or req.cookies.get(LEGACY_SESSION_COOKIE, "")
-    if sid:
-        delete_session(sid)
-    resp = JSONResponse({"ok": True})
-    resp.delete_cookie(SESSION_COOKIE, path="/")
-    resp.delete_cookie(LEGACY_SESSION_COOKIE, path="/")
-    return resp
+    return auth_logout_response(sid=sid, delete_session_fn=delete_session)
 
 
 # ----------------------------- Packs API --------------------------------------
@@ -780,7 +544,7 @@ def get_asset_file_api(asset_id: str, req: Request):
             )
         return FileResponse(
             str(file_path),
-            media_type=upload.mime or _image_mime_from_ext(file_path.suffix),
+            media_type=upload.mime or image_mime_from_ext(file_path.suffix),
             headers={"Cache-Control": "private, max-age=86400"},
         )
 
@@ -814,7 +578,7 @@ def get_asset_file_api(asset_id: str, req: Request):
         )
     return FileResponse(
         str(file_path),
-        media_type=pack_asset.mime or _image_mime_from_ext(ext),
+        media_type=pack_asset.mime or image_mime_from_ext(ext),
         headers={"Cache-Control": "private, max-age=86400"},
     )
 
@@ -830,41 +594,24 @@ if HAS_MULTIPART:
         user = _require_user(req)
         if user.user_id is None:
             raise HTTPException(status_code=500, detail="Invalid user record")
-        ext = _background_upload_ext(file)
+        ext = background_upload_ext(file)
         data = await file.read(MAX_ASSET_UPLOAD_BYTES + 1)
         if not data:
             raise HTTPException(status_code=400, detail="Empty upload")
         if len(data) > MAX_ASSET_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="Asset too large (max 20MB)")
-        width, height, thumb_bytes, thumb_ext = _asset_image_meta_and_thumb(data)
+        width, height, thumb_bytes, thumb_ext = asset_image_meta_and_thumb(data)
         aid = uuid.uuid4().hex
-        user_dir = ASSET_UPLOADS_DIR / str(user.user_id)
-        thumb_dir = user_dir / "thumbs"
-        user_dir.mkdir(parents=True, exist_ok=True)
-        thumb_dir.mkdir(parents=True, exist_ok=True)
-        file_name = f"{aid}{ext}"
-        thumb_name = f"{aid}{thumb_ext}"
-        out_path = user_dir / file_name
-        thumb_path = thumb_dir / thumb_name
-        try:
-            out_path.write_bytes(data)
-            thumb_path.write_bytes(thumb_bytes)
-        except OSError as e:
-            try:
-                if out_path.exists():
-                    out_path.unlink()
-            except OSError:
-                pass
-            try:
-                if thumb_path.exists():
-                    thumb_path.unlink()
-            except OSError:
-                pass
-            raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}") from e
-        rel = out_path.relative_to(UPLOADS_DIR)
-        thumb_rel = thumb_path.relative_to(UPLOADS_DIR)
-        url_path = "/uploads/" + "/".join(rel.parts)
-        thumb_url_path = "/uploads/" + "/".join(thumb_rel.parts)
+        url_path, thumb_url_path = save_asset_upload(
+            data=data,
+            thumb_bytes=thumb_bytes,
+            user_id=user.user_id,
+            asset_id=aid,
+            ext=ext,
+            thumb_ext=thumb_ext,
+            uploads_dir=UPLOADS_DIR,
+            asset_uploads_dir=ASSET_UPLOADS_DIR,
+        )
         raw_name = name.strip() if name.strip() else Path(str(file.filename or "asset")).stem
         tags_list = [t.strip() for t in tags.split(",") if t.strip()]
         create_asset_record(
@@ -873,7 +620,7 @@ if HAS_MULTIPART:
             name=raw_name[:120] or "Asset",
             folder_path="",
             tags=tags_list[:20],
-            mime=_image_mime_from_ext(ext),
+            mime=image_mime_from_ext(ext),
             width=width,
             height=height,
             url_original=url_path,
@@ -888,7 +635,7 @@ if HAS_MULTIPART:
             "height": height,
             "url_original": url_path,
             "url_thumb": thumb_url_path,
-            "mime": _image_mime_from_ext(ext),
+            "mime": image_mime_from_ext(ext),
         }
 
     @app.post("/api/assets/upload-zip")
@@ -904,12 +651,6 @@ if HAS_MULTIPART:
         if not fname.endswith(".zip"):
             raise HTTPException(status_code=400, detail="Expected a .zip file")
         shared_tags = [t.strip() for t in tags.split(",") if t.strip()][:20]
-        user_dir = ASSET_UPLOADS_DIR / str(user.user_id)
-        user_dir.mkdir(parents=True, exist_ok=True)
-        created: list[dict[str, object]] = []
-        skipped: list[str] = []
-        total_uncompressed = 0
-        # Stream upload into a temp file to avoid buffering the full ZIP in RAM
         try:
             with tempfile.TemporaryFile() as tmp:
                 bytes_written = 0
@@ -924,88 +665,17 @@ if HAS_MULTIPART:
                 if bytes_written == 0:
                     raise HTTPException(status_code=400, detail="Empty upload")
                 tmp.seek(0)
-                with zipfile.ZipFile(tmp) as zf:
-                    infos = [i for i in zf.infolist() if not i.is_dir()]
-                    if len(infos) > MAX_ZIP_ASSET_FILES:
-                        raise HTTPException(status_code=400, detail=f"Too many files in zip (max {MAX_ZIP_ASSET_FILES})")
-                    for info in infos:
-                        folder_path, base = _safe_zip_member_path(info.filename)
-                        if not base:
-                            skipped.append(info.filename)
-                            continue
-                        ext = Path(base).suffix.lower()
-                        if ext not in ALLOWED_BACKGROUND_EXTS:
-                            skipped.append(info.filename)
-                            continue
-                        total_uncompressed += max(0, int(info.file_size or 0))
-                        if total_uncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
-                            raise HTTPException(status_code=400, detail="Zip expands beyond allowed size")
-                        if info.file_size > MAX_ASSET_UPLOAD_BYTES:
-                            skipped.append(info.filename)
-                            continue
-                        try:
-                            content = zf.read(info)
-                        except Exception:
-                            skipped.append(info.filename)
-                            continue
-                        # Guard against zip bombs that under-report file_size in headers
-                        if len(content) > MAX_ASSET_UPLOAD_BYTES:
-                            skipped.append(info.filename)
-                            continue
-                        try:
-                            width, height, thumb_bytes, thumb_ext = _asset_image_meta_and_thumb(content)
-                        except HTTPException:
-                            skipped.append(info.filename)
-                            continue
-                        aid = uuid.uuid4().hex
-                        thumb_dir = user_dir / "thumbs"
-                        thumb_dir.mkdir(parents=True, exist_ok=True)
-                        out_path = user_dir / f"{aid}{ext}"
-                        thumb_path = thumb_dir / f"{aid}{thumb_ext}"
-                        try:
-                            out_path.write_bytes(content)
-                            thumb_path.write_bytes(thumb_bytes)
-                        except OSError:
-                            try:
-                                if out_path.exists():
-                                    out_path.unlink()
-                            except OSError:
-                                pass
-                            try:
-                                if thumb_path.exists():
-                                    thumb_path.unlink()
-                            except OSError:
-                                pass
-                            skipped.append(info.filename)
-                            continue
-                        rel = out_path.relative_to(UPLOADS_DIR)
-                        thumb_rel = thumb_path.relative_to(UPLOADS_DIR)
-                        url_path = "/uploads/" + "/".join(rel.parts)
-                        thumb_url_path = "/uploads/" + "/".join(thumb_rel.parts)
-                        display_name = Path(base).stem.replace("_", " ").strip()[:120] or "Asset"
-                        create_asset_record(
-                            asset_id=aid,
-                            uploader_user_id=user.user_id,
-                            name=display_name,
-                            folder_path=folder_path,
-                            tags=shared_tags,
-                            mime=_image_mime_from_ext(ext),
-                            width=width,
-                            height=height,
-                            url_original=url_path,
-                            url_thumb=thumb_url_path,
-                        )
-                        created.append(
-                            {
-                                "asset_id": aid,
-                                "name": display_name,
-                                "folder_path": folder_path,
-                                "width": width,
-                                "height": height,
-                                "url_original": url_path,
-                                "url_thumb": thumb_url_path,
-                            }
-                        )
+                created, skipped = import_asset_zip(
+                    fileobj=tmp,
+                    user_id=user.user_id,
+                    shared_tags=shared_tags,
+                    uploads_dir=UPLOADS_DIR,
+                    asset_uploads_dir=ASSET_UPLOADS_DIR,
+                    max_asset_upload_bytes=MAX_ASSET_UPLOAD_BYTES,
+                    max_zip_asset_files=MAX_ZIP_ASSET_FILES,
+                    max_zip_total_uncompressed_bytes=MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
+                    create_asset_record_fn=create_asset_record,
+                )
         except HTTPException:
             raise
         except Exception as e:
@@ -1386,27 +1056,22 @@ if HAS_MULTIPART:
         state = RoomState.model_validate_json(raw)
         if not _gm_authorized(state, user.user_id, gm_key):
             raise HTTPException(status_code=403, detail="GM only")
-        ext = _background_upload_ext(file)
-        safe_room_id = _safe_room_id(room_id)
-        if not safe_room_id:
-            raise HTTPException(status_code=400, detail="Invalid room id")
-        room_dir = BG_UPLOADS_DIR / safe_room_id
-        room_dir.mkdir(parents=True, exist_ok=True)
+        ext = background_upload_ext(file)
         data = await file.read(MAX_BACKGROUND_UPLOAD_BYTES + 1)
         if not data:
             raise HTTPException(status_code=400, detail="Empty upload")
         if len(data) > MAX_BACKGROUND_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="Image too large (max 10MB)")
-        file_name = f"{int(time.time())}-{uuid.uuid4().hex[:10]}{ext}"
-        out_path = room_dir / file_name
-        try:
-            out_path.write_bytes(data)
-        except OSError as e:
-            raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}") from e
-        rel = out_path.relative_to(UPLOADS_DIR)
-        url_path = "/uploads/" + "/".join(rel.parts)
+        url_path, byte_count = save_background_upload(
+            data=data,
+            room_id=room_id,
+            ext=ext,
+            uploads_dir=UPLOADS_DIR,
+            bg_uploads_dir=BG_UPLOADS_DIR,
+            safe_room_id_fn=_safe_room_id,
+        )
         await file.close()
-        return {"url": url_path, "bytes": len(data)}
+        return {"url": url_path, "bytes": byte_count}
 else:
     @app.post("/api/rooms/{room_id}/background-upload")
     async def upload_room_background_unavailable(room_id: str, req: Request, gm_key: str | None = None):
