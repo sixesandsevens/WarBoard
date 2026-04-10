@@ -80,6 +80,7 @@ from .storage import (
     init_db,
     is_member,
     list_all_assets_for_user,
+    list_assets_for_user_page,
     list_game_session_members,
     list_game_session_rooms,
     list_game_session_shared_packs,
@@ -500,15 +501,32 @@ def list_assets_api(
     current_session_id = str(session_id or "").strip() or None
     if current_session_id and not get_game_session_role(current_session_id, user.user_id):
         raise HTTPException(status_code=403, detail="Not a member of this session")
-    assets = list_all_assets_for_user(user.user_id, q=q, tag=tag, folder=folder, session_id=current_session_id)
-    total_count = len(assets)
+
     safe_offset = max(0, int(offset or 0))
     safe_limit = max(0, min(int(limit or 0), 500))
+
     if safe_limit:
-        assets = assets[safe_offset:safe_offset + safe_limit]
+        # Real paginated path: SQL does the sorting, counting, and slicing
+        assets, total_count, has_more = list_assets_for_user_page(
+            user.user_id,
+            q=q,
+            tag=tag,
+            folder=folder,
+            limit=safe_limit,
+            offset=safe_offset,
+            session_id=current_session_id,
+        )
+    else:
+        # No limit requested — fall back to full load (preserves legacy callers)
+        assets = list_all_assets_for_user(
+            user.user_id, q=q, tag=tag, folder=folder, session_id=current_session_id
+        )
+        total_count = len(assets)
+        has_more = False
+
     if lite:
-        assets = [
-            {
+        def _lite(asset):
+            d = {
                 "asset_id": asset.get("asset_id"),
                 "name": asset.get("name"),
                 "folder_path": asset.get("folder_path", ""),
@@ -524,22 +542,29 @@ def list_assets_api(
                 "pack_name": asset.get("pack_name"),
                 "shared_in_session": bool(asset.get("shared_in_session", False)),
             }
-            for asset in assets
-        ]
+            # Return direct thumb path for uploaded assets (bypasses auth endpoint).
+            # /uploads/ is statically mounted, so the browser fetches the thumb directly.
+            url_thumb = str(asset.get("url_thumb") or "")
+            if asset.get("source") == "upload" and url_thumb.startswith("/uploads/"):
+                d["thumb_url"] = url_thumb
+            return d
+        assets = [_lite(a) for a in assets]
+
     if req.query_params.get("src") == "assetlib":
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         logger.info(
-            "assetlib.list user_id=%s session_id=%s count=%s q=%r folder=%r lite=%s elapsed_ms=%.1f",
+            "assetlib.list user_id=%s session_id=%s count=%s total=%s q=%r folder=%r lite=%s elapsed_ms=%.1f",
             user.user_id,
             current_session_id or "-",
             len(assets),
+            total_count,
             q,
             folder,
             int(bool(lite)),
             elapsed_ms,
         )
+
     next_offset = safe_offset + len(assets) if safe_limit else len(assets)
-    has_more = bool(safe_limit and next_offset < total_count)
     return {
         "assets": assets,
         "total_count": total_count,

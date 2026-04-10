@@ -1196,6 +1196,11 @@ function renderAssetGrid() {
     </button>
   `;
   }).join("");
+  // Skip the DOM write entirely if nothing changed (e.g. loadMoreAssetMetadata
+  // triggered a redundant call while the visible window didn't actually change).
+  if (assetState.lastRenderKey === filterKey && assetState.lastRenderedCount === visibleCount) {
+    return;
+  }
   const appendOnly = assetState.lastRenderKey === filterKey && visibleCount > assetState.lastRenderedCount && assetState.lastRenderedCount > 0;
   const footerHtml = assetState.hasMore ? `<div data-asset-more="1" style="opacity:.7; grid-column:1/-1; text-align:center; padding:4px 0;">Scroll to load more…</div>` : "";
   if (appendOnly) {
@@ -1477,20 +1482,27 @@ async function loadMoreAssetMetadata() {
     );
     const incoming = Array.isArray(data?.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];
     const seen = new Set(assetState.items.map((item) => String(item?.asset_id || item?.id || "")));
+    // Capture folder set before appending to detect structural changes
+    const foldersBefore = new Set(assetState.items.map((a) => String(a.folder_path || "")));
+    let newFolders = false;
     for (const item of incoming) {
       const key = String(item?.asset_id || item?.id || "");
       if (key && seen.has(key)) continue;
       assetState.items.push(item);
       if (key) seen.add(key);
       recordAssetDiagnostic(item, { metadataReceivedAt });
+      const fp = String(item.folder_path || "");
+      if (!foldersBefore.has(fp)) { foldersBefore.add(fp); newFolders = true; }
     }
     assetState.serverOffset = Number(data?.next_offset || assetState.serverOffset + incoming.length);
     assetState.serverHasMore = !!data?.has_more;
     assetState.totalCount = Number(data?.total_count || assetState.totalCount || assetState.items.length);
-    refreshAssetFilterOptions();
-    renderAssetSessionSharePanel();
-    renderAssetSavedSets();
-    renderAssetFolderTree();
+    // Only rebuild folder tree and filter options when folders/packs actually changed
+    if (newFolders) {
+      refreshAssetFilterOptions();
+      renderAssetFolderTree();
+    }
+    // Session share panel and saved sets rarely change during a background page load — skip
     renderAssetGrid();
   } catch (e) {
     log(`ASSETS ERROR: ${e.message || e}`);

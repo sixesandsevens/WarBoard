@@ -444,6 +444,30 @@ def list_all_assets_for_user(
     )
 
 
+def list_assets_for_user_page(
+    user_id: int,
+    q: str = "",
+    tag: str = "",
+    folder: str = "",
+    limit: int = 120,
+    offset: int = 0,
+    session_id: Optional[str] = None,
+):
+    """Paginated asset query; returns (items, total_count, has_more)."""
+    _sync_assets_engine()
+    return storage_assets.list_assets_for_user_page(
+        user_id,
+        q=q,
+        tag=tag,
+        folder=folder,
+        limit=limit,
+        offset=offset,
+        session_id=session_id,
+        is_game_session_member=is_game_session_member,
+        shared_pack_ids_for_game_session=_shared_pack_ids_for_game_session,
+    )
+
+
 def get_asset_by_id(asset_id: str) -> Optional[AssetRow]:
     _sync_assets_engine()
     return storage_assets.get_asset_by_id(asset_id)

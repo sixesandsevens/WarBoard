@@ -9,7 +9,50 @@ function resizeCanvas() {
   requestRender();
 }
 
-function requestRender() { render(); }
+// ─── Render scheduler ─────────────────────────────────────────────────────────
+// Coalesce multiple requestRender() calls within the same JS turn into one RAF
+// callback so burst events (pointer move, WS updates, image loads) don't trigger
+// back-to-back full draws.
+let _renderQueued = false;
+
+function requestRender() {
+  if (_renderQueued) return;
+  _renderQueued = true;
+  requestAnimationFrame(() => {
+    _renderQueued = false;
+    render();
+  });
+}
+
+// renderNow() forces an immediate synchronous render and cancels any pending RAF.
+// Use sparingly — only when stale pixels are truly unacceptable (e.g. canvas resize).
+function renderNow() {
+  _renderQueued = false;
+  render();
+}
+
+// ─── Cached asset draw order ──────────────────────────────────────────────────
+// Sorting the asset list every frame is wasteful when nothing changed.  We cache
+// the sorted array and only rebuild when something invalidates it.
+let _cachedOrderedAssetIds = [];
+let _assetOrderDirty = true;
+
+function markAssetOrderDirty() {
+  _assetOrderDirty = true;
+}
+
+function _getOrderedAssetIds() {
+  if (!_assetOrderDirty) return _cachedOrderedAssetIds;
+  _assetOrderDirty = false;
+  const ids = [...(state.draw_order.assets || [])];
+  ids.sort((a, b) => {
+    const aa = state.assets.get(a);
+    const bb = state.assets.get(b);
+    return Number(aa?.layer || 0) - Number(bb?.layer || 0);
+  });
+  _cachedOrderedAssetIds = ids;
+  return ids;
+}
 
 function screenToWorld(sx, sy) { return { x: (sx - cam.x) / cam.z, y: (sy - cam.y) / cam.z }; }
 function worldToScreen(wx, wy) { return { x: wx * cam.z + cam.x, y: wy * cam.z + cam.y }; }
@@ -360,12 +403,7 @@ function drawAssetStatusBadges(center, w, h, asset) {
 
 function drawAssets() {
   if (!state.layer_visibility.assets) return;
-  const ids = [...(state.draw_order.assets || [])];
-  ids.sort((a, b) => {
-    const aa = state.assets.get(a);
-    const bb = state.assets.get(b);
-    return Number(aa?.layer || 0) - Number(bb?.layer || 0);
-  });
+  const ids = _getOrderedAssetIds();
   for (const id of ids) {
     const a = state.assets.get(id);
     if (!a) continue;

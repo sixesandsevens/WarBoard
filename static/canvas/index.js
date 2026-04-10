@@ -1389,6 +1389,7 @@
     for (const id of state.strokes.keys()) if (!state.draw_order.strokes.includes(id)) state.draw_order.strokes.push(id);
     for (const id of state.shapes.keys()) if (!state.draw_order.shapes.includes(id)) state.draw_order.shapes.push(id);
     for (const id of state.assets.keys()) if (!state.draw_order.assets.includes(id)) state.draw_order.assets.push(id);
+    markAssetOrderDirty();
 
     if (s.terrain_paint) {
       state.terrain_paint.strokes = s.terrain_paint.strokes || {};
@@ -1696,6 +1697,7 @@
         state.assets.set(p.id, next);
         state.draw_order.assets = state.draw_order.assets.filter((id) => id !== p.id);
         state.draw_order.assets.push(p.id);
+        markAssetOrderDirty();
       }
       requestRender();
       scheduleOfflineSave();
@@ -1710,6 +1712,7 @@
         if (!next.creator_id) next.creator_id = myId();
         state.assets.set(p.id, next);
         if (!state.draw_order.assets.includes(p.id)) state.draw_order.assets.push(p.id);
+        markAssetOrderDirty();
       }
       requestRender();
       scheduleOfflineSave();
@@ -1725,6 +1728,7 @@
         draggingAssetId = null;
         assetDragOrigin = null;
       }
+      markAssetOrderDirty();
       pruneUnusedPackBlobUrls();
       requestRender();
       scheduleOfflineSave();

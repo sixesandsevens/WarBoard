@@ -162,8 +162,12 @@ function normalizePackBackedRecord(raw) {
 
 function assetPreviewUrl(asset) {
   const rec = normalizePackBackedRecord(asset);
-  if (rec && typeof rec === "object" && rec.asset_id) {
-    return apiAssetFileUrl(rec.asset_id);
+  if (rec && typeof rec === "object") {
+    // thumb_url is a direct /uploads/ static path for uploaded assets.
+    // Using it avoids an auth-endpoint roundtrip per thumbnail since /uploads/ is
+    // statically mounted and the browser caches the response without hitting Python.
+    if (rec.thumb_url) return String(rec.thumb_url);
+    if (rec.asset_id) return apiAssetFileUrl(rec.asset_id);
   }
   return String(rec?.url_thumb || rec?.url_original || rec?.image_url || "");
 }

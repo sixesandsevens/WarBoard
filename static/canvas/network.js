@@ -349,6 +349,7 @@ function connectWS(force = false) {
         state.assets.set(p.id, normalizePackBackedRecord(p));
         state.draw_order.assets = state.draw_order.assets.filter((id) => id !== p.id);
         state.draw_order.assets.push(p.id);
+        markAssetOrderDirty();
       }
       requestRender();
       return;
@@ -366,6 +367,7 @@ function connectWS(force = false) {
       if (p?.id) {
         state.assets.set(p.id, normalizePackBackedRecord({ ...(state.assets.get(p.id) || {}), ...p }));
         if (!state.draw_order.assets.includes(p.id)) state.draw_order.assets.push(p.id);
+        markAssetOrderDirty();
       }
       requestRender();
       return;
@@ -380,6 +382,7 @@ function connectWS(force = false) {
         draggingAssetId = null;
         assetDragOrigin = null;
       }
+      markAssetOrderDirty();
       pruneUnusedPackBlobUrls();
       requestRender();
       return;

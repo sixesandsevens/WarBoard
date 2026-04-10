@@ -80,6 +80,26 @@ def init_db() -> None:
         if _table_exists(conn, asset_table):
             if not _column_exists(conn, asset_table, "folder_path"):
                 conn.execute(f"ALTER TABLE {asset_table} ADD COLUMN folder_path TEXT DEFAULT '';")
+            # Indexes for paginated ORDER BY created_at DESC queries
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS ix_assetrow_uploader_created "
+                f"ON {asset_table}(uploader_user_id, created_at DESC);"
+            )
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS ix_assetrow_created "
+                f"ON {asset_table}(created_at DESC);"
+            )
+        pack_asset_table = "privatepackassetrow"
+        if _table_exists(conn, pack_asset_table):
+            # Index for paginated ORDER BY created_at DESC queries across pack assets
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS ix_privatepackassetrow_pack_created "
+                f"ON {pack_asset_table}(pack_id, created_at DESC);"
+            )
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS ix_privatepackassetrow_created "
+                f"ON {pack_asset_table}(created_at DESC);"
+            )
         conn.commit()
     except Exception:
         # If anything goes sideways here, we don't want startup to fail; the app
