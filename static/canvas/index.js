@@ -2441,6 +2441,7 @@
         selectedShapeId = null;
         const a = state.assets.get(assetHit);
         if (canEditAssetLocal(a)) {
+          activeDragMoveSeq = ++moveSeqCounter;
           draggingAssetId = assetHit;
           draggingTokenId = null;
           draggingTokenIds = [];
@@ -2687,7 +2688,14 @@
       const now = Date.now();
       if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
         lastMoveSentAt = now;
-        send("ASSET_INSTANCE_UPDATE", { id: draggingAssetId, x, y, commit: false });
+        send("ASSET_INSTANCE_UPDATE", {
+          id: draggingAssetId,
+          x,
+          y,
+          commit: false,
+          move_seq: activeDragMoveSeq,
+          move_client: localMoveClientId,
+        });
       }
       return;
     }
@@ -2918,7 +2926,14 @@
     if (t === "move" && movedAssetId) {
       const a = state.assets.get(movedAssetId);
       if (a) {
-        send("ASSET_INSTANCE_UPDATE", { id: movedAssetId, x: a.x, y: a.y, commit: true });
+        send("ASSET_INSTANCE_UPDATE", {
+          id: movedAssetId,
+          x: a.x,
+          y: a.y,
+          commit: true,
+          move_seq: activeDragMoveSeq,
+          move_client: localMoveClientId,
+        });
       }
     }
     activeDragMoveSeq = null;

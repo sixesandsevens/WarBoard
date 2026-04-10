@@ -356,6 +356,13 @@ function connectWS(force = false) {
 
     if (ev.type === "ASSET_INSTANCE_UPDATE") {
       const p = ev.payload;
+      const respSeq = parseMoveSeq(p);
+      const isLocalMoveResponse = p?.move_client === localMoveClientId;
+      if (isLocalMoveResponse && respSeq !== null && activeDragMoveSeq !== null && respSeq !== activeDragMoveSeq) return;
+      if (isLocalMoveResponse && !p?.commit && respSeq !== null) {
+        if (draggingAssetId === p?.id) return;
+        if (draggingAssetId === null) return;
+      }
       if (p?.id) {
         state.assets.set(p.id, normalizePackBackedRecord({ ...(state.assets.get(p.id) || {}), ...p }));
         if (!state.draw_order.assets.includes(p.id)) state.draw_order.assets.push(p.id);

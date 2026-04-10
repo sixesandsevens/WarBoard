@@ -112,7 +112,14 @@ def apply_asset_event(
         if changed:
             room.state.assets[asset.id] = asset
             manager._mark_dirty(room_id, room)
-        return WireEvent(type="ASSET_INSTANCE_UPDATE", payload=asset.model_dump())
+        response_payload = asset.model_dump()
+        if "commit" in payload:
+            response_payload["commit"] = bool(payload.get("commit", False))
+        if "move_seq" in payload:
+            response_payload["move_seq"] = payload.get("move_seq")
+        if "move_client" in payload:
+            response_payload["move_client"] = payload.get("move_client")
+        return WireEvent(type="ASSET_INSTANCE_UPDATE", payload=response_payload)
 
     if event_type == "ASSET_INSTANCE_DELETE":
         asset_id = payload.get("id")
