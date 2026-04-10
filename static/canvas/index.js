@@ -2959,6 +2959,17 @@
         const pts = activeStroke.points;
         const chunkSize = 12;
         if (pts.length <= chunkSize) {
+          state.strokes.set(activeStroke.id, normalizeStrokeRecord({
+            id: activeStroke.id,
+            points: pts,
+            color: activeStroke.color,
+            width: activeStroke.width,
+            locked: false,
+            layer: "draw",
+            layer_band: normalizeLayerBand(activeStroke.layer_band),
+          }));
+          state.draw_order.strokes = state.draw_order.strokes.filter((id) => id !== activeStroke.id);
+          state.draw_order.strokes.push(activeStroke.id);
           send("STROKE_ADD", {
             id: activeStroke.id,
             points: pts,
@@ -2973,8 +2984,20 @@
           for (let i = 0; i < pts.length - 1; i += (chunkSize - 1)) {
             const chunk = pts.slice(i, i + chunkSize);
             if (chunk.length < 2) continue;
+            const chunkId = `${activeStroke.id}-${idx++}`;
+            state.strokes.set(chunkId, normalizeStrokeRecord({
+              id: chunkId,
+              points: chunk,
+              color: activeStroke.color,
+              width: activeStroke.width,
+              locked: false,
+              layer: "draw",
+              layer_band: normalizeLayerBand(activeStroke.layer_band),
+            }));
+            state.draw_order.strokes = state.draw_order.strokes.filter((id) => id !== chunkId);
+            state.draw_order.strokes.push(chunkId);
             send("STROKE_ADD", {
-              id: `${activeStroke.id}-${idx++}`,
+              id: chunkId,
               points: chunk,
               color: activeStroke.color,
               width: activeStroke.width,
@@ -2996,6 +3019,18 @@
       const x2 = ui.snap ? snap(sh.x2) : sh.x2;
       const y2 = ui.snap ? snap(sh.y2) : sh.y2;
 
+      state.shapes.set(sh.id, {
+        ...sh,
+        x1,
+        y1,
+        x2,
+        y2,
+        creator_id: myId(),
+        layer: "draw",
+        layer_band: normalizeLayerBand(sh.layer_band),
+      });
+      state.draw_order.shapes = state.draw_order.shapes.filter((id) => id !== sh.id);
+      state.draw_order.shapes.push(sh.id);
       send("SHAPE_ADD", {
         id: sh.id,
         type: sh.type,
