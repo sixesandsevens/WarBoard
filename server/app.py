@@ -544,18 +544,28 @@ def get_asset_file_api(asset_id: str, req: Request):
     user = _require_user(req)
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
+    assetlib_src = req.query_params.get("src") == "assetlib"
 
     # Any logged-in user can fetch an asset by ID — players need to load assets
     # placed by the GM even if they don't own them. IDs are unguessable UUIDs.
     upload = get_asset_by_id(asset_id)
     if upload:
-        rel = str(upload.url_original or "")
+        rel = str((upload.url_thumb if assetlib_src and upload.url_thumb else upload.url_original) or "")
         if not rel.startswith("/uploads/"):
             raise HTTPException(status_code=404, detail="Asset file not found")
         file_path = UPLOADS_DIR / rel.replace("/uploads/", "", 1)
         if not file_path.exists() or not file_path.is_file():
-            raise HTTPException(status_code=404, detail="Asset file not found")
-        if req.query_params.get("src") == "assetlib":
+            resolved_fallback = None
+            if assetlib_src and upload.url_original:
+                fallback_rel = str(upload.url_original or "")
+                if fallback_rel.startswith("/uploads/"):
+                    fallback_path = UPLOADS_DIR / fallback_rel.replace("/uploads/", "", 1)
+                    if fallback_path.exists() and fallback_path.is_file():
+                        resolved_fallback = fallback_path
+            if not resolved_fallback:
+                raise HTTPException(status_code=404, detail="Asset file not found")
+            file_path = resolved_fallback
+        if assetlib_src:
             elapsed_ms = (time.perf_counter() - started_at) * 1000.0
             logger.info(
                 "assetlib.file type=upload user_id=%s asset_id=%s elapsed_ms=%.1f",
@@ -580,15 +590,22 @@ def get_asset_file_api(asset_id: str, req: Request):
     if not pack:
         raise HTTPException(status_code=404, detail="Pack not found")
 
-    ext = Path(str(pack_asset.url_original or "")).suffix.lower()
+    selected_rel = str((pack_asset.url_thumb if assetlib_src and pack_asset.url_thumb else pack_asset.url_original) or "")
+    ext = Path(selected_rel).suffix.lower()
     if not ext:
         ext = MIME_TO_IMAGE_EXT.get(str(pack_asset.mime or "").lower(), "")
     if not ext:
         ext = ".bin"
-    file_path = PRIVATE_PACKS_DIR / str(pack.slug) / "originals" / f"{asset_id}{ext}"
+    subdir = "thumbs" if assetlib_src and pack_asset.url_thumb else "originals"
+    file_name = Path(selected_rel).name if selected_rel else f"{asset_id}{ext}"
+    file_path = PRIVATE_PACKS_DIR / str(pack.slug) / subdir / file_name
     if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Asset file not found")
-    if req.query_params.get("src") == "assetlib":
+        original_ext = Path(str(pack_asset.url_original or "")).suffix.lower() or ext
+        fallback_path = PRIVATE_PACKS_DIR / str(pack.slug) / "originals" / f"{asset_id}{original_ext}"
+        if not fallback_path.exists() or not fallback_path.is_file():
+            raise HTTPException(status_code=404, detail="Asset file not found")
+        file_path = fallback_path
+    if assetlib_src:
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         logger.info(
             "assetlib.file type=pack user_id=%s asset_id=%s pack_slug=%s elapsed_ms=%.1f",
