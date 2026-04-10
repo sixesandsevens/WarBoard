@@ -258,7 +258,14 @@ def apply_shape_event(
         if changed:
             room.state.shapes[sid] = shape
             manager._mark_dirty(room_id, room)
-        return WireEvent(type="SHAPE_UPDATE", payload=shape.model_dump())
+        response_payload = shape.model_dump()
+        if "commit" in payload:
+            response_payload["commit"] = bool(payload.get("commit", False))
+        if "move_seq" in payload:
+            response_payload["move_seq"] = payload.get("move_seq")
+        if "move_client" in payload:
+            response_payload["move_client"] = payload.get("move_client")
+        return WireEvent(type="SHAPE_UPDATE", payload=response_payload)
 
     if event_type == "SHAPE_SET_LOCK":
         if not manager._is_gm(room, user_id, client_id):

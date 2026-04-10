@@ -119,6 +119,11 @@ const assetState = {
   loading: false,
   packsLoading: false,
   packMetaSessionId: "",
+  serverPageSize: 120,
+  serverOffset: 0,
+  serverHasMore: false,
+  totalCount: 0,
+  serverLoading: false,
   pageSize: 60,
   renderCount: 60,
   hasMore: false,
@@ -1430,10 +1435,13 @@ async function refreshAssetsPanel() {
   const metadataReceivedAt = Date.now();
   try {
     const [data] = await Promise.all([
-      apiGet(`/api/assets?src=assetlib&lite=1${assetSessionQuery()}`),
+      apiGet(`/api/assets?src=assetlib&lite=1&limit=${assetState.serverPageSize}&offset=0${assetSessionQuery()}`),
       refreshAssetSessionPackData(),
     ]);
     assetState.items = Array.isArray(data.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];
+    assetState.serverOffset = Number(data?.next_offset || assetState.items.length || 0);
+    assetState.serverHasMore = !!data?.has_more;
+    assetState.totalCount = Number(data?.total_count || assetState.items.length || 0);
     resetAssetDiagnostics();
     for (const item of assetState.items) {
       recordAssetDiagnostic(item, { metadataReceivedAt });
@@ -1459,6 +1467,38 @@ async function refreshAssetsPanel() {
   }
 }
 
+async function loadMoreAssetMetadata() {
+  if (assetState.serverLoading || !assetState.serverHasMore) return;
+  assetState.serverLoading = true;
+  const metadataReceivedAt = Date.now();
+  try {
+    const data = await apiGet(
+      `/api/assets?src=assetlib&lite=1&limit=${assetState.serverPageSize}&offset=${assetState.serverOffset}${assetSessionQuery()}`
+    );
+    const incoming = Array.isArray(data?.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];
+    const seen = new Set(assetState.items.map((item) => String(item?.asset_id || item?.id || "")));
+    for (const item of incoming) {
+      const key = String(item?.asset_id || item?.id || "");
+      if (key && seen.has(key)) continue;
+      assetState.items.push(item);
+      if (key) seen.add(key);
+      recordAssetDiagnostic(item, { metadataReceivedAt });
+    }
+    assetState.serverOffset = Number(data?.next_offset || assetState.serverOffset + incoming.length);
+    assetState.serverHasMore = !!data?.has_more;
+    assetState.totalCount = Number(data?.total_count || assetState.totalCount || assetState.items.length);
+    refreshAssetFilterOptions();
+    renderAssetSessionSharePanel();
+    renderAssetSavedSets();
+    renderAssetFolderTree();
+    renderAssetGrid();
+  } catch (e) {
+    log(`ASSETS ERROR: ${e.message || e}`);
+  } finally {
+    assetState.serverLoading = false;
+  }
+}
+
 async function ensureAssetPanelReady() {
   if (assetState.loaded || assetState.loading) {
     renderAssetFolderTree();
@@ -1475,13 +1515,19 @@ function isAssetsTabActive() {
 
 function maybeLoadMoreAssets() {
   if (!isAssetsTabActive()) return;
-  if (!assetState.loaded || !assetState.hasMore) return;
+  if (!assetState.loaded) return;
   const scroller = drawerContentEl || assetPanel;
   if (!scroller) return;
   const remaining = scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight);
   if (remaining > 280) return;
-  assetState.renderCount += assetState.pageSize;
-  renderAssetGrid();
+  if (assetState.hasMore) {
+    assetState.renderCount += assetState.pageSize;
+    renderAssetGrid();
+    return;
+  }
+  if (assetState.serverHasMore) {
+    void loadMoreAssetMetadata();
+  }
 }
 
 function observeAssetThumbs() {

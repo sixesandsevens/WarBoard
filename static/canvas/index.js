@@ -2464,6 +2464,7 @@
         selectedShapeId = shapeHit;
         const sh = state.shapes.get(shapeHit);
         if (canEditShapeLocal(sh)) {
+          activeDragMoveSeq = ++moveSeqCounter;
           draggingShapeId = shapeHit;
           draggingTokenId = null;
           draggingTokenIds = [];
@@ -2718,7 +2719,16 @@
       const now = Date.now();
       if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
         lastMoveSentAt = now;
-        send("SHAPE_UPDATE", { id: draggingShapeId, x1, y1, x2, y2, commit: false });
+        send("SHAPE_UPDATE", {
+          id: draggingShapeId,
+          x1,
+          y1,
+          x2,
+          y2,
+          commit: false,
+          move_seq: activeDragMoveSeq,
+          move_client: localMoveClientId,
+        });
       }
       return;
     }
@@ -2940,7 +2950,16 @@
     if (t === "move" && movedShapeId) {
       const sh = state.shapes.get(movedShapeId);
       if (sh) {
-        send("SHAPE_UPDATE", { id: movedShapeId, x1: sh.x1, y1: sh.y1, x2: sh.x2, y2: sh.y2, commit: true });
+        send("SHAPE_UPDATE", {
+          id: movedShapeId,
+          x1: sh.x1,
+          y1: sh.y1,
+          x2: sh.x2,
+          y2: sh.y2,
+          commit: true,
+          move_seq: activeDragMoveSeq,
+          move_client: localMoveClientId,
+        });
       }
       shapeDragOrigin = null;
     }

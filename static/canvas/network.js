@@ -461,6 +461,13 @@ function connectWS(force = false) {
 
     if (ev.type === "SHAPE_UPDATE") {
       const p = ev.payload;
+      const respSeq = parseMoveSeq(p);
+      const isLocalMoveResponse = p?.move_client === localMoveClientId;
+      if (isLocalMoveResponse && respSeq !== null && activeDragMoveSeq !== null && respSeq !== activeDragMoveSeq) return;
+      if (isLocalMoveResponse && !p?.commit && respSeq !== null) {
+        if (draggingShapeId === p?.id) return;
+        if (draggingShapeId === null) return;
+      }
       if (p?.id) {
         state.shapes.set(p.id, normalizeShapeRecord({ ...(state.shapes.get(p.id) || {}), ...p }));
         if (!state.draw_order.shapes.includes(p.id)) state.draw_order.shapes.push(p.id);

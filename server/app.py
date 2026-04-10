@@ -483,7 +483,16 @@ def get_pack_api(pack_id: str, req: Request):
 # ----------------------------- Asset Library API ------------------------------
 
 @app.get("/api/assets")
-def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = "", session_id: str = "", lite: int = 0):
+def list_assets_api(
+    req: Request,
+    q: str = "",
+    tag: str = "",
+    folder: str = "",
+    session_id: str = "",
+    lite: int = 0,
+    limit: int = 0,
+    offset: int = 0,
+):
     started_at = time.perf_counter()
     user = _require_user(req)
     if user.user_id is None:
@@ -492,6 +501,11 @@ def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = "", 
     if current_session_id and not get_game_session_role(current_session_id, user.user_id):
         raise HTTPException(status_code=403, detail="Not a member of this session")
     assets = list_all_assets_for_user(user.user_id, q=q, tag=tag, folder=folder, session_id=current_session_id)
+    total_count = len(assets)
+    safe_offset = max(0, int(offset or 0))
+    safe_limit = max(0, min(int(limit or 0), 500))
+    if safe_limit:
+        assets = assets[safe_offset:safe_offset + safe_limit]
     if lite:
         assets = [
             {
@@ -524,7 +538,15 @@ def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = "", 
             int(bool(lite)),
             elapsed_ms,
         )
-    return {"assets": assets}
+    next_offset = safe_offset + len(assets) if safe_limit else len(assets)
+    has_more = bool(safe_limit and next_offset < total_count)
+    return {
+        "assets": assets,
+        "total_count": total_count,
+        "offset": safe_offset,
+        "next_offset": next_offset,
+        "has_more": has_more,
+    }
 
 
 @app.get("/api/private-packs")
