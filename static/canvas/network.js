@@ -58,7 +58,10 @@ function connectWS(force = false) {
     const reason = (ev && ev.reason) ? ` (${ev.reason})` : "";
     log(`disconnected (code ${ev.code})${reason}`);
     if (ev.code === 1008) {
-      log("Connection rejected: login expired or you are not a member of this room.");
+      const authMessage = "Connection rejected: login expired or you are not a member of this room.";
+      log(authMessage);
+      toast(authMessage);
+      maybeOpenSessionModalForSharedRoom(authMessage);
     }
     clearPlaySessionState();
     closeRoomMovePrompt();

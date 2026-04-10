@@ -483,7 +483,7 @@ def get_pack_api(pack_id: str, req: Request):
 # ----------------------------- Asset Library API ------------------------------
 
 @app.get("/api/assets")
-def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = "", session_id: str = ""):
+def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = "", session_id: str = "", lite: int = 0):
     started_at = time.perf_counter()
     user = _require_user(req)
     if user.user_id is None:
@@ -492,15 +492,36 @@ def list_assets_api(req: Request, q: str = "", tag: str = "", folder: str = "", 
     if current_session_id and not get_game_session_role(current_session_id, user.user_id):
         raise HTTPException(status_code=403, detail="Not a member of this session")
     assets = list_all_assets_for_user(user.user_id, q=q, tag=tag, folder=folder, session_id=current_session_id)
+    if lite:
+        assets = [
+            {
+                "asset_id": asset.get("asset_id"),
+                "name": asset.get("name"),
+                "folder_path": asset.get("folder_path", ""),
+                "tags": asset.get("tags", []),
+                "mime": asset.get("mime"),
+                "width": asset.get("width", 0),
+                "height": asset.get("height", 0),
+                "created_at": asset.get("created_at"),
+                "readonly": bool(asset.get("readonly", False)),
+                "source": asset.get("source"),
+                "pack_id": asset.get("pack_id"),
+                "pack_slug": asset.get("pack_slug"),
+                "pack_name": asset.get("pack_name"),
+                "shared_in_session": bool(asset.get("shared_in_session", False)),
+            }
+            for asset in assets
+        ]
     if req.query_params.get("src") == "assetlib":
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         logger.info(
-            "assetlib.list user_id=%s session_id=%s count=%s q=%r folder=%r elapsed_ms=%.1f",
+            "assetlib.list user_id=%s session_id=%s count=%s q=%r folder=%r lite=%s elapsed_ms=%.1f",
             user.user_id,
             current_session_id or "-",
             len(assets),
             q,
             folder,
+            int(bool(lite)),
             elapsed_ms,
         )
     return {"assets": assets}
@@ -737,15 +758,20 @@ def delete_asset_api(asset_id: str, req: Request):
 @app.get("/api/my/rooms")
 def my_rooms(req: Request):
     user = _require_user(req)
-    rooms = list_rooms_for_user(user.user_id)
-    # Ensure join_code exists for rooms the user can see (owner might have created earlier)
-    for r in rooms:
-        if not r.get("join_code"):
-            try:
-                r["join_code"] = ensure_room_join_code(r["room_id"])
-            except Exception:
-                r["join_code"] = ""
-    return {"rooms": rooms}
+    return {"rooms": list_rooms_for_user(user.user_id)}
+
+
+@app.post("/api/rooms/{room_id}/join-code")
+def ensure_room_join_code_api(room_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    if not ensure_room_membership_for_user(user.user_id, room_id):
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+    try:
+        return {"join_code": ensure_room_join_code(room_id)}
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Room not found")
 
 
 @app.get("/api/my/sessions")

@@ -8,46 +8,95 @@ function apiUrl(path, includeGm = false) {
   return url.toString();
 }
 
+async function readErrorText(res) {
+  try {
+    const text = await res.text();
+    return text || `HTTP ${res.status}`;
+  } catch (_) {
+    return `HTTP ${res.status}`;
+  }
+}
+
+function isRetryableStatus(status) {
+  return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function isRetryableNetworkError(err) {
+  if (!err) return false;
+  if (err.name === "AbortError") return true;
+  if (err instanceof TypeError) return true;
+  const msg = String(err.message || err).toLowerCase();
+  return msg.includes("networkerror") || msg.includes("failed to fetch") || msg.includes("load failed");
+}
+
+async function apiRequest(path, options = {}, { retries = 0, timeoutMs = 15000 } = {}) {
+  const url = apiUrl(path);
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const res = await fetch(url, {
+        ...options,
+        signal: controller ? controller.signal : undefined,
+      });
+      if (!res.ok) {
+        const message = await readErrorText(res);
+        if (attempt < retries && isRetryableStatus(res.status)) {
+          lastError = new Error(message);
+          continue;
+        }
+        throw new Error(message);
+      }
+      return res;
+    } catch (err) {
+      if (attempt < retries && isRetryableNetworkError(err)) {
+        lastError = err;
+        continue;
+      }
+      throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  throw lastError || new Error("Request failed");
+}
+
 async function apiGet(path, includeGm = false) {
-  const res = await fetch(apiUrl(path, includeGm));
-  if (!res.ok) throw new Error(await res.text());
+  const res = await apiRequest(path, {}, { retries: 2, timeoutMs: 20000 });
   return res.json();
 }
 
 async function apiPost(path, body = {}, includeGm = false) {
-  const res = await fetch(apiUrl(path, includeGm), {
+  const res = await apiRequest(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await res.text());
+  }, { timeoutMs: 20000 });
   return res.json();
 }
 
 async function apiPatch(path, body = {}, includeGm = false) {
-  const res = await fetch(apiUrl(path, includeGm), {
+  const res = await apiRequest(path, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await res.text());
+  }, { timeoutMs: 20000 });
   return res.json();
 }
 
 async function apiDelete(path, includeGm = false) {
-  const res = await fetch(apiUrl(path, includeGm), { method: "DELETE" });
-  if (!res.ok) throw new Error(await res.text());
+  const res = await apiRequest(path, { method: "DELETE" }, { timeoutMs: 20000 });
   return res.json();
 }
 
 async function apiUploadBackground(roomId, file) {
   const data = new FormData();
   data.append("file", file);
-  const res = await fetch(apiUrl(`/api/rooms/${encodeURIComponent(roomId)}/background-upload`, true), {
+  const res = await apiRequest(`/api/rooms/${encodeURIComponent(roomId)}/background-upload`, {
     method: "POST",
     body: data,
-  });
-  if (!res.ok) throw new Error(await res.text());
+  }, { timeoutMs: 60000 });
   return res.json();
 }
 
@@ -56,11 +105,10 @@ async function apiUploadAsset(file, name = "", tags = "") {
   data.append("file", file);
   if (name) data.append("name", name);
   if (tags) data.append("tags", tags);
-  const res = await fetch("/api/assets/upload", {
+  const res = await apiRequest("/api/assets/upload", {
     method: "POST",
     body: data,
-  });
-  if (!res.ok) throw new Error(await res.text());
+  }, { timeoutMs: 60000 });
   return res.json();
 }
 
@@ -68,11 +116,10 @@ async function apiUploadAssetZip(file, tags = "") {
   const data = new FormData();
   data.append("file", file);
   if (tags) data.append("tags", tags);
-  const res = await fetch("/api/assets/upload-zip", {
+  const res = await apiRequest("/api/assets/upload-zip", {
     method: "POST",
     body: data,
-  });
-  if (!res.ok) throw new Error(await res.text());
+  }, { timeoutMs: 120000 });
   return res.json();
 }
 
@@ -97,6 +144,12 @@ function normalizePackBackedRecord(raw) {
   if (legacyAssetId && !out.asset_id) out.asset_id = legacyAssetId;
   const sourceRaw = String(out.source || "").trim().toLowerCase();
   if (sourceRaw === "pack" || (legacyAssetId && sourceRaw !== "upload")) out.source = "pack";
+  if (out.asset_id) {
+    const assetUrl = apiAssetFileUrl(out.asset_id);
+    if (!out.image_url) out.image_url = assetUrl;
+    if (!out.url_original) out.url_original = assetUrl;
+    if (!out.url_thumb) out.url_thumb = assetUrl;
+  }
   if (out.source === "pack" && out.asset_id) {
     out.image_url = apiAssetFileUrl(out.asset_id);
     if (out.url_original) out.url_original = apiAssetFileUrl(out.asset_id);
@@ -109,7 +162,7 @@ function normalizePackBackedRecord(raw) {
 
 function assetPreviewUrl(asset) {
   const rec = normalizePackBackedRecord(asset);
-  if (rec && typeof rec === "object" && String(rec.source || "").toLowerCase() === "pack" && rec.asset_id) {
+  if (rec && typeof rec === "object" && rec.asset_id) {
     return apiAssetFileUrl(rec.asset_id);
   }
   return String(rec?.url_thumb || rec?.url_original || rec?.image_url || "");

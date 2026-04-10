@@ -1430,7 +1430,7 @@ async function refreshAssetsPanel() {
   const metadataReceivedAt = Date.now();
   try {
     const [data] = await Promise.all([
-      apiGet(`/api/assets?src=assetlib${assetSessionQuery()}`),
+      apiGet(`/api/assets?src=assetlib&lite=1${assetSessionQuery()}`),
       refreshAssetSessionPackData(),
     ]);
     assetState.items = Array.isArray(data.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];

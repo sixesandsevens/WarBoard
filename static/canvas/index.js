@@ -2051,6 +2051,8 @@
     }
     if (me && me.username && roomEl.value.trim()) {
       connectWS(true);
+    } else if (!me && shouldPromptForSharedRoomAuth()) {
+      maybeOpenSessionModalForSharedRoom("Log in to join this shared room.");
     }
   })();
 

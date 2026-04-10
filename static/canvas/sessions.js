@@ -29,6 +29,30 @@ const playSessionState = {
 };
 let pendingRoomMoveOffer = null;
 let pendingArrivalNotice = "";
+let sharedRoomPromptShown = false;
+
+function isLocalCanvasHost() {
+  const host = String(location.hostname || "").trim().toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+function hasRequestedSharedRoom() {
+  return !!(roomEl && roomEl.value && roomEl.value.trim());
+}
+
+function shouldPromptForSharedRoomAuth() {
+  return hasRequestedSharedRoom() && !isLocalCanvasHost();
+}
+
+function maybeOpenSessionModalForSharedRoom(reason = "") {
+  if (!shouldPromptForSharedRoomAuth() || sharedRoomPromptShown) return;
+  sharedRoomPromptShown = true;
+  if (reason) {
+    log(reason);
+    toast(reason);
+  }
+  openSessionModal();
+}
 
 // ─── Session activity ─────────────────────────────────────────────────────────
 
@@ -72,7 +96,9 @@ function updateSessionPill() {
     sessionPill.classList.remove("bad");
     sessionDisconnectBtn.classList.remove("hidden");
   } else {
-    sessionPill.textContent = "○ Disconnected - Single Session Mode";
+    sessionPill.textContent = shouldPromptForSharedRoomAuth()
+      ? `○ Disconnected - Sign in to join ${roomText}`
+      : "○ Disconnected - Single Session Mode";
     sessionPill.classList.add("bad");
     sessionPill.classList.remove("ok");
     sessionDisconnectBtn.classList.add("hidden");
@@ -85,8 +111,12 @@ function refreshSessionModalAuth() {
     sessionModalTitleEl.textContent = `Connected - ${state.room_id || roomEl.value.trim() || "room"}`;
     sessionStatusTextEl.textContent = isGM() ? "You are GM in this room." : "You are connected as Player.";
   } else {
-    sessionModalTitleEl.textContent = "Disconnected - Single Session Mode";
-    sessionStatusTextEl.textContent = "Everything works locally. Log in to host or join a shared room.";
+    sessionModalTitleEl.textContent = shouldPromptForSharedRoomAuth()
+      ? `Disconnected - Shared Room ${roomEl.value.trim() || "room"}`
+      : "Disconnected - Single Session Mode";
+    sessionStatusTextEl.textContent = shouldPromptForSharedRoomAuth()
+      ? "This room requires login and room access. Sign in, then connect or open the lobby/join link."
+      : "Everything works locally. Log in to host or join a shared room.";
   }
   if (me && me.username) {
     sessionAuthBoxEl.classList.add("hidden");
@@ -319,12 +349,12 @@ async function switchRoom(newRoomId) {
   prepareForRoomTransition();
   roomEl.value = newRoomId;
   snapshotRoomLabelEl.textContent = newRoomId;
-  await refreshSnapshotsPanel();
   if (playSessionState.id && priorRoomId && priorRoomId !== newRoomId) {
     const nextRoom = playSessionState.rooms.find((room) => room.id === newRoomId);
     addSessionActivity(`Switching from ${priorRoomId} to ${nextRoom?.display_name || newRoomId}.`, { kind: "switch" });
   }
   connectWS(true);
+  void refreshSnapshotsPanel();
 }
 
 // ─── Session summary panel ────────────────────────────────────────────────────
@@ -585,9 +615,11 @@ function refreshGmUI() {
 
 async function refreshRoomsPanel() {
   try {
-    const data = await apiGet("/api/my/rooms");
+    const [data] = await Promise.all([
+      apiGet("/api/my/rooms"),
+      refreshCurrentSessionState(),
+    ]);
     const rooms = data.rooms || [];
-    await refreshCurrentSessionState();
     const rows = rooms.map((r) => `
       <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
         <button data-open-room="${r.room_id}" style="padding:2px 6px;">Open</button>
@@ -610,16 +642,23 @@ async function refreshRoomsPanel() {
       btn.onclick = async () => {
         const rid = btn.getAttribute("data-copy-join");
         const room = rooms.find((x) => x.room_id === rid);
-        if (!room || !room.join_code) {
-          log(`JOIN LINK ERROR: no join code for room ${rid}`);
+        if (!room) {
+          log(`JOIN LINK ERROR: room not found ${rid}`);
           return;
         }
-        const link = `${location.origin}/join/${room.join_code}`;
         try {
+          let joinCode = String(room.join_code || "").trim();
+          if (!joinCode) {
+            const data = await apiPost(`/api/rooms/${encodeURIComponent(rid)}/join-code`, {});
+            joinCode = String(data?.join_code || "").trim();
+            room.join_code = joinCode;
+          }
+          if (!joinCode) throw new Error(`no join code for room ${rid}`);
+          const link = `${location.origin}/join/${joinCode}`;
           await navigator.clipboard.writeText(link);
-          log(`JOIN LINK COPIED ${room.join_code}`);
+          log(`JOIN LINK COPIED ${joinCode}`);
         } catch (e) {
-          log(`JOIN LINK: ${link}`);
+          log(`JOIN LINK ERROR: ${e.message || e}`);
         }
       };
     });
@@ -718,6 +757,11 @@ function initSessionBindings() {
         log(`Logged in as ${user.username}`);
         refreshSessionModalAuth();
         updateSessionPill();
+        if (roomEl.value.trim()) {
+          cidEl.value = user.username;
+          connectWS(true);
+          closeSessionModal();
+        }
       }
     } catch (e) {
       log(`LOGIN ERROR: ${e.message || e}`);
@@ -734,6 +778,11 @@ function initSessionBindings() {
         log(`Registered and logged in as ${user.username}`);
         refreshSessionModalAuth();
         updateSessionPill();
+        if (roomEl.value.trim()) {
+          cidEl.value = user.username;
+          connectWS(true);
+          closeSessionModal();
+        }
       }
     } catch (e) {
       log(`REGISTER ERROR: ${e.message || e}`);
