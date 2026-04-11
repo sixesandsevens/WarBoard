@@ -1458,6 +1458,8 @@ function renderAssetGrid() {
     }
     card.oncontextmenu = async (e) => {
       e.preventDefault();
+      e.stopPropagation();
+      const menu = card.querySelector("[data-asset-kind-menu]");
       if (e.shiftKey) {
         const current = assetKind(a);
         const raw = prompt("Kind override: map / piece / unknown / auto", current) || "";
@@ -1474,14 +1476,11 @@ function renderAssetGrid() {
         log(`ASSET KIND ERROR: '${raw}' is not valid`);
         return;
       }
-      if (!isGM()) return;
-      if (a.readonly) return;
-      if (!confirm(`Delete asset '${a.name || "asset"}'?`)) return;
-      try {
-        await apiDeleteAsset(String(a.asset_id || a.id || ""));
-        await refreshAssetsPanel();
-      } catch (err) {
-        log(`ASSET DELETE ERROR: ${err.message || err}`);
+      if (menu) {
+        const opening = menu.style.display !== "block";
+        closeAssetKindMenus(opening ? menu : null);
+        menu.style.display = opening ? "block" : "none";
+        return;
       }
     };
   });
