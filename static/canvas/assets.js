@@ -125,7 +125,7 @@ const assetState = {
   folderSummary: [],
   folderLoading: false,
   folderError: "",
-  skipMissing: true,
+  skipMissing: false,
   serverPageSize: 100,
   serverOffset: 0,
   serverHasMore: false,
@@ -135,6 +135,7 @@ const assetState = {
   lastRenderKey: "",
   lastRenderedCount: 0,
   requestSeq: 0,
+  pendingQueryRefresh: false,
 };
 
 const ASSET_THUMB_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
@@ -635,7 +636,9 @@ function normalizeAssetPackFilter(value) {
 }
 
 function effectiveAssetBrowseQuery() {
-  const parsed = parseAssetSearch(assetState.search);
+  const visibleSearch = String(assetState.searchInput || assetState.search || "").trim();
+  if (assetState.search !== visibleSearch) assetState.search = visibleSearch;
+  const parsed = parseAssetSearch(visibleSearch);
   const rawAlpha = String(parsed.alpha || assetState.alphaFilter || "all").trim().toLowerCase();
   const normalizedAlpha = rawAlpha === "yes" || rawAlpha === "true" || rawAlpha === "1"
     ? "yes"
@@ -681,7 +684,12 @@ function buildAssetApiQuery(offset = 0) {
 function buildAssetFolderApiQuery() {
   const query = effectiveAssetBrowseQuery();
   const params = new URLSearchParams();
+  if (query.q) params.set("q", query.q);
+  if (query.tag) params.set("tag", query.tag);
   if (query.pack && query.pack !== "all") params.set("pack", query.pack);
+  if (query.kind && query.kind !== "all") params.set("kind", query.kind);
+  if (query.type && query.type !== "all") params.set("type", query.type);
+  if (query.alpha && query.alpha !== "all") params.set("alpha", query.alpha);
   if (assetState.skipMissing) params.set("skip_missing", "1");
   const sessionId = currentAssetSessionId();
   if (sessionId) params.set("session_id", sessionId);
@@ -715,8 +723,11 @@ async function fetchAssetFolders() {
   }
 }
 
-async function fetchAssetResults({ append = false, refreshPackMeta = false } = {}) {
-  if (assetState.serverLoading) return;
+async function fetchAssetResults({ append = false, refreshPackMeta = false, refreshFolders = true } = {}) {
+  if (assetState.serverLoading) {
+    if (!append) assetState.pendingQueryRefresh = true;
+    return;
+  }
   if (append && !assetState.serverHasMore) return;
   const offset = append ? assetState.serverOffset : 0;
   const requestSeq = ++assetState.requestSeq;
@@ -729,7 +740,7 @@ async function fetchAssetResults({ append = false, refreshPackMeta = false } = {
   renderAssetFolderTree();
   try {
     if (refreshPackMeta) await refreshAssetSessionPackData();
-    if (!append) await fetchAssetFolders();
+    if (!append && refreshFolders) void fetchAssetFolders();
     const data = await apiGet(`/api/assets?${buildAssetApiQuery(offset)}`);
     if (requestSeq !== assetState.requestSeq) return;
     const incoming = Array.isArray(data?.assets) ? data.assets.map((asset) => normalizePackBackedRecord(asset)) : [];
@@ -763,23 +774,37 @@ async function fetchAssetResults({ append = false, refreshPackMeta = false } = {
       assetState.serverLoading = false;
       assetState.loading = false;
       renderAssetGrid();
+      if (assetState.pendingQueryRefresh) {
+        assetState.pendingQueryRefresh = false;
+        void fetchAssetResults({ append: false });
+      }
     }
   }
 }
 
-async function applyAssetQueryChange(patch = {}) {
+function softResetAssetResults() {
+  assetState.serverOffset = 0;
+  assetState.serverHasMore = false;
+  assetState.hasMore = false;
+  assetState.lastRenderKey = "";
+  assetState.lastRenderedCount = 0;
+  assetState.error = "";
+}
+
+async function applyAssetQueryChange(patch = {}, { refreshFolders = true, preserveItems = false } = {}) {
   Object.keys(patch).forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(assetState, key)) assetState[key] = patch[key];
   });
   assetState.packFilter = normalizeAssetPackFilter(assetState.packFilter);
-  resetAssetResults();
+  if (preserveItems) softResetAssetResults();
+  else resetAssetResults();
   renderAssetAdvancedFilters();
   renderAssetMode();
   renderAssetSessionSharePanel();
   syncAssetFilterControls();
   renderAssetFolderTree();
   renderAssetGrid();
-  await fetchAssetResults();
+  await fetchAssetResults({ refreshPackMeta: false, append: false, refreshFolders });
 }
 
 function closeAssetKindMenus(exceptMenu = null) {
@@ -2026,7 +2051,10 @@ function initAssetLibBindings() {
       assetState.folder = String(selectBtn.getAttribute("data-folder-select") || "");
       saveAssetFilterPreset();
       renderAssetFolderTree();
-      void applyAssetQueryChange({ folder: assetState.folder });
+      void applyAssetQueryChange(
+        { folder: assetState.folder },
+        { refreshFolders: false, preserveItems: true },
+      );
     }
   });
   if (assetUploadBtnEl) assetUploadBtnEl.onclick = async () => {

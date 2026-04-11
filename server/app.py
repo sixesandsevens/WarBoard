@@ -305,15 +305,28 @@ def _room_display_name(room_id: str) -> str:
 
 
 def _resolve_pack_asset_paths(asset: dict | object) -> tuple[Path | None, Path | None]:
+    asset_id = str(getattr(asset, "asset_id", "") if not isinstance(asset, dict) else asset.get("asset_id") or "").strip()
     pack_id = getattr(asset, "pack_id", None) if not isinstance(asset, dict) else asset.get("pack_id")
+    pack_asset = None
+    if asset_id:
+        pack_asset = get_pack_asset_by_asset_id(asset_id)
+        if pack_asset and pack_id is None:
+            pack_id = pack_asset.pack_id
     if pack_id is None:
         return None, None
     pack = get_private_pack_by_id(int(pack_id))
     if not pack:
         return None, None
-    asset_id = str(getattr(asset, "asset_id", "") if not isinstance(asset, dict) else asset.get("asset_id") or "").strip()
-    original_rel = str(getattr(asset, "url_original", "") if not isinstance(asset, dict) else asset.get("url_original") or "")
-    thumb_rel = str(getattr(asset, "url_thumb", "") if not isinstance(asset, dict) else asset.get("url_thumb") or "")
+    original_rel = str(
+        (getattr(pack_asset, "url_original", "") if pack_asset is not None else getattr(asset, "url_original", ""))
+        if not isinstance(asset, dict)
+        else (getattr(pack_asset, "url_original", "") if pack_asset is not None else asset.get("url_original") or "")
+    )
+    thumb_rel = str(
+        (getattr(pack_asset, "url_thumb", "") if pack_asset is not None else getattr(asset, "url_thumb", ""))
+        if not isinstance(asset, dict)
+        else (getattr(pack_asset, "url_thumb", "") if pack_asset is not None else asset.get("url_thumb") or "")
+    )
     original_ext = Path(original_rel).suffix.lower()
     thumb_name = Path(thumb_rel).name
     original_name = Path(original_rel).name if original_rel else (f"{asset_id}{original_ext}" if asset_id else "")
@@ -660,17 +673,52 @@ def list_private_packs_api(req: Request, session_id: str = ""):
 
 
 @app.get("/api/assets/folders")
-def list_asset_folders_api(req: Request, pack: str = "", session_id: str = "", skip_missing: int = 0):
+def list_asset_folders_api(
+    req: Request,
+    q: str = "",
+    tag: str = "",
+    pack: str = "",
+    kind: str = "",
+    type: str = "",
+    alpha: str = "",
+    session_id: str = "",
+    skip_missing: int = 0,
+):
     user = _require_user(req)
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
     current_session_id = str(session_id or "").strip() or None
     if current_session_id and not get_game_session_role(current_session_id, user.user_id):
         raise HTTPException(status_code=403, detail="Not a member of this session")
+    if skip_missing:
+        assets = list_all_assets_for_user(
+            user.user_id,
+            q=str(q or "").strip(),
+            tag=str(tag or "").strip(),
+            pack=str(pack or "").strip(),
+            kind=str(kind or "").strip(),
+            type=str(type or "").strip(),
+            alpha=str(alpha or "").strip(),
+            session_id=current_session_id,
+        )
+        merged = {}
+        for asset in assets:
+            if not _asset_exists_on_disk(asset):
+                continue
+            path = str(asset.get("folder_path") or "").strip()
+            if not path:
+                continue
+            merged[path] = merged.get(path, 0) + 1
+        return {"folders": [{"path": path, "count": count} for path, count in sorted(merged.items())]}
     return {
         "folders": list_asset_folders_for_user(
             user.user_id,
+            q=str(q or "").strip(),
+            tag=str(tag or "").strip(),
             pack=str(pack or "").strip(),
+            kind=str(kind or "").strip(),
+            type=str(type or "").strip(),
+            alpha=str(alpha or "").strip(),
             session_id=current_session_id,
             skip_missing=bool(skip_missing),
         )

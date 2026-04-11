@@ -462,14 +462,24 @@ def list_private_packs_for_user(user_id: int, session_id: Optional[str] = None) 
 def list_asset_folders_for_user(
     user_id: int,
     *,
+    q: str = "",
+    tag: str = "",
     pack: str = "",
+    kind: str = "",
+    type: str = "",
+    alpha: str = "",
     session_id: Optional[str] = None,
     skip_missing: bool = False,
 ) -> List[Dict[str, object]]:
     _sync_assets_engine()
     return storage_assets.list_asset_folders_for_user(
         user_id,
+        q=q,
+        tag=tag,
         pack=pack,
+        kind=kind,
+        type=type,
+        alpha=alpha,
         session_id=session_id,
         skip_missing=skip_missing,
         is_game_session_member=is_game_session_member,
