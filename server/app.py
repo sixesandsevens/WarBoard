@@ -502,6 +502,11 @@ def list_assets_api(
     q: str = "",
     tag: str = "",
     folder: str = "",
+    pack: str = "",
+    kind: str = "",
+    type: str = "",
+    alpha: str = "",
+    sort: str = "recent",
     session_id: str = "",
     lite: int = 0,
     limit: int = 0,
@@ -525,6 +530,11 @@ def list_assets_api(
             q=q,
             tag=tag,
             folder=folder,
+            pack=pack,
+            kind=kind,
+            type=type,
+            alpha=alpha,
+            sort=sort,
             limit=safe_limit,
             offset=safe_offset,
             session_id=current_session_id,
@@ -532,7 +542,16 @@ def list_assets_api(
     else:
         # No limit requested — fall back to full load (preserves legacy callers)
         assets = list_all_assets_for_user(
-            user.user_id, q=q, tag=tag, folder=folder, session_id=current_session_id
+            user.user_id,
+            q=q,
+            tag=tag,
+            folder=folder,
+            pack=pack,
+            kind=kind,
+            type=type,
+            alpha=alpha,
+            sort=sort,
+            session_id=current_session_id,
         )
         total_count = len(assets)
         has_more = False

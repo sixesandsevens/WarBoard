@@ -95,6 +95,8 @@ const assetState = {
   items: [],
   privatePacks: [],
   sessionSharedPacks: [],
+  uiMode: "browse",
+  filtersOpen: false,
   search: "",
   searchInput: "",
   searchDebounceMs: 160,
@@ -117,19 +119,18 @@ const assetState = {
   placeMode: true,
   loaded: false,
   loading: false,
+  error: "",
   packsLoading: false,
   packMetaSessionId: "",
-  serverPageSize: 120,
+  serverPageSize: 100,
   serverOffset: 0,
   serverHasMore: false,
   totalCount: 0,
   serverLoading: false,
-  pageSize: 60,
-  renderCount: 60,
   hasMore: false,
-  filterKey: "",
   lastRenderKey: "",
   lastRenderedCount: 0,
+  requestSeq: 0,
 };
 
 const ASSET_THUMB_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
@@ -578,18 +579,175 @@ function renderAssetSearchMeta(parsed, conflictHints = []) {
       btn.onclick = () => {
         const idx = Number(btn.getAttribute("data-asset-chip-idx"));
         updateAssetSearchFromParsed(parsed, idx);
-        renderAssetGrid();
+        void applyAssetQueryChange({ search: assetState.searchInput, searchInput: assetState.searchInput });
       };
     });
   }
   if (assetSearchHintEl) {
-    const hints = [];
     if (Array.isArray(conflictHints) && conflictHints.length) {
-      hints.push(`Conflicts: ${conflictHints.join(" | ")} (query tokens override UI filters).`);
+      assetSearchHintEl.textContent = `Advanced query tokens active: ${conflictHints.join(" | ")}`;
+    } else if (Array.isArray(parsed?.tokens) && parsed.tokens.length) {
+      assetSearchHintEl.textContent = "Advanced query tokens are active.";
+    } else {
+      assetSearchHintEl.textContent = "";
     }
-    hints.push("Search tokens: tag:, pack:, type:, alpha:");
-    assetSearchHintEl.textContent = hints.join(" ");
   }
+}
+
+function renderAssetMode() {
+  const browse = assetState.uiMode !== "manage";
+  if (assetModeBrowseBtnEl) assetModeBrowseBtnEl.classList.toggle("active", browse);
+  if (assetModeManageBtnEl) assetModeManageBtnEl.classList.toggle("active", !browse);
+  if (assetBrowseViewEl) assetBrowseViewEl.classList.toggle("hidden", !browse);
+  if (assetManageViewEl) assetManageViewEl.classList.toggle("hidden", browse);
+}
+
+function renderAssetAdvancedFilters() {
+  if (!assetAdvancedFiltersEl) return;
+  assetAdvancedFiltersEl.hidden = !assetState.filtersOpen;
+  if (assetFiltersToggleBtnEl) {
+    assetFiltersToggleBtnEl.textContent = assetState.filtersOpen ? "Hide Filters" : "Filters";
+    assetFiltersToggleBtnEl.classList.toggle("primary", assetState.filtersOpen);
+  }
+}
+
+function availableAssetPackOptions() {
+  const packs = Array.isArray(assetState.privatePacks) ? assetState.privatePacks : [];
+  return packs
+    .map((pack) => ({
+      value: String(pack?.slug || "").trim(),
+      label: String(pack?.name || pack?.slug || "Pack").trim() || "Pack",
+      shared: !!pack?.shared_in_session,
+    }))
+    .filter((pack) => pack.value)
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function normalizeAssetPackFilter(value) {
+  const raw = String(value || "all").trim();
+  if (!raw || raw === "all" || raw === "upload") return raw || "all";
+  const available = new Set(availableAssetPackOptions().map((pack) => pack.value));
+  return available.has(raw) ? raw : "all";
+}
+
+function effectiveAssetBrowseQuery() {
+  const parsed = parseAssetSearch(assetState.search);
+  const rawAlpha = String(parsed.alpha || assetState.alphaFilter || "all").trim().toLowerCase();
+  const normalizedAlpha = rawAlpha === "yes" || rawAlpha === "true" || rawAlpha === "1"
+    ? "yes"
+    : rawAlpha === "no" || rawAlpha === "false" || rawAlpha === "0"
+      ? "no"
+      : "all";
+  const rawKind = String(assetState.viewMode || "pieces").trim().toLowerCase();
+  const rawSort = String(assetState.sortMode || "recent").trim().toLowerCase();
+  return {
+    parsed,
+    q: parsed.textTerms.join(" ").trim(),
+    tag: parsed.tags[0] || "",
+    folder: String(assetState.folder || "").trim(),
+    pack: normalizeAssetPackFilter(parsed.pack || assetState.packFilter),
+    kind: ["pieces", "maps", "unknown", "all"].includes(rawKind) ? rawKind : "pieces",
+    type: parsed.type || String(assetState.typeFilter || "all").trim().toLowerCase() || "all",
+    alpha: normalizedAlpha,
+    sort: ["recent", "newest", "largest", "name"].includes(rawSort) ? rawSort : "recent",
+  };
+}
+
+function buildAssetApiQuery(offset = 0) {
+  const query = effectiveAssetBrowseQuery();
+  const params = new URLSearchParams();
+  params.set("src", "assetlib");
+  params.set("lite", "1");
+  params.set("limit", String(assetState.serverPageSize));
+  params.set("offset", String(Math.max(0, Number(offset || 0))));
+  if (query.q) params.set("q", query.q);
+  if (query.tag) params.set("tag", query.tag);
+  if (query.folder) params.set("folder", query.folder);
+  if (query.pack && query.pack !== "all") params.set("pack", query.pack);
+  if (query.kind && query.kind !== "all") params.set("kind", query.kind);
+  if (query.type && query.type !== "all") params.set("type", query.type);
+  if (query.alpha && query.alpha !== "all") params.set("alpha", query.alpha);
+  if (query.sort) params.set("sort", query.sort);
+  const sessionId = currentAssetSessionId();
+  if (sessionId) params.set("session_id", sessionId);
+  return params.toString();
+}
+
+function resetAssetResults() {
+  assetState.items = [];
+  assetState.serverOffset = 0;
+  assetState.serverHasMore = false;
+  assetState.totalCount = 0;
+  assetState.hasMore = false;
+  assetState.lastRenderKey = "";
+  assetState.lastRenderedCount = 0;
+  assetState.error = "";
+}
+
+async function fetchAssetResults({ append = false, refreshPackMeta = false } = {}) {
+  if (assetState.serverLoading) return;
+  if (append && !assetState.serverHasMore) return;
+  const offset = append ? assetState.serverOffset : 0;
+  const requestSeq = ++assetState.requestSeq;
+  assetState.serverLoading = true;
+  if (!append) {
+    assetState.error = "";
+    if (!assetState.loaded) assetState.loading = true;
+  }
+  renderAssetGrid();
+  renderAssetFolderTree();
+  try {
+    if (refreshPackMeta) await refreshAssetSessionPackData();
+    const data = await apiGet(`/api/assets?${buildAssetApiQuery(offset)}`);
+    if (requestSeq !== assetState.requestSeq) return;
+    const incoming = Array.isArray(data?.assets) ? data.assets.map((asset) => normalizePackBackedRecord(asset)) : [];
+    assetState.items = append ? [...assetState.items, ...incoming] : incoming;
+    assetState.serverOffset = Number(data?.next_offset || (offset + incoming.length));
+    assetState.serverHasMore = !!data?.has_more;
+    assetState.totalCount = Number(data?.total_count || assetState.items.length || 0);
+    assetState.loaded = true;
+    assetState.loading = false;
+    assetState.error = "";
+    resetAssetDiagnostics();
+    const metadataReceivedAt = Date.now();
+    for (const item of assetState.items) {
+      recordAssetDiagnostic(item, { metadataReceivedAt });
+    }
+    refreshAssetFilterOptions();
+    renderAssetSavedSets();
+    renderAssetFolderTree();
+    renderAssetGrid();
+  } catch (e) {
+    if (requestSeq !== assetState.requestSeq) return;
+    if (!append) resetAssetResults();
+    assetState.loaded = false;
+    assetState.loading = false;
+    assetState.error = String(e?.message || e || "Asset load failed");
+    renderAssetFolderTree();
+    renderAssetGrid();
+    log(`ASSETS ERROR: ${assetState.error}`);
+  } finally {
+    if (requestSeq === assetState.requestSeq) {
+      assetState.serverLoading = false;
+      assetState.loading = false;
+      renderAssetGrid();
+    }
+  }
+}
+
+async function applyAssetQueryChange(patch = {}) {
+  Object.keys(patch).forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(assetState, key)) assetState[key] = patch[key];
+  });
+  assetState.packFilter = normalizeAssetPackFilter(assetState.packFilter);
+  resetAssetResults();
+  renderAssetAdvancedFilters();
+  renderAssetMode();
+  renderAssetSessionSharePanel();
+  syncAssetFilterControls();
+  renderAssetFolderTree();
+  renderAssetGrid();
+  await fetchAssetResults();
 }
 
 function closeAssetKindMenus(exceptMenu = null) {
@@ -739,17 +897,15 @@ function resetAssetSessionPackState() {
 
 async function refreshAssetSessionPackData() {
   const sessionId = currentAssetSessionId();
-  if (!sessionId) {
-    resetAssetSessionPackState();
-    return;
-  }
   if (assetState.packsLoading && assetState.packMetaSessionId === sessionId) return;
   assetState.packsLoading = true;
   assetState.packMetaSessionId = sessionId;
   try {
     const [privateData, sharedData] = await Promise.all([
-      apiGet(`/api/private-packs?session_id=${encodeURIComponent(sessionId)}`),
-      apiGet(`/api/sessions/${encodeURIComponent(sessionId)}/shared-packs`),
+      apiGet(sessionId ? `/api/private-packs?session_id=${encodeURIComponent(sessionId)}` : "/api/private-packs"),
+      sessionId
+        ? apiGet(`/api/sessions/${encodeURIComponent(sessionId)}/shared-packs`)
+        : Promise.resolve({ packs: [] }),
     ]);
     assetState.privatePacks = Array.isArray(privateData?.packs) ? privateData.packs : [];
     assetState.sessionSharedPacks = Array.isArray(sharedData?.packs) ? sharedData.packs : [];
@@ -759,6 +915,8 @@ async function refreshAssetSessionPackData() {
     assetState.sessionSharedPacks = [];
   } finally {
     assetState.packsLoading = false;
+    refreshAssetFilterOptions();
+    syncAssetFilterControls();
     renderAssetSessionSharePanel();
   }
 }
@@ -839,27 +997,16 @@ function renderAssetSessionSharePanel() {
 
 function refreshAssetFilterOptions() {
   if (!assetPackFilterEl) return;
-  const current = String(assetState.packFilter || "all");
-  const packs = new Set();
-  let uploadCount = 0;
-  for (const item of assetState.items) {
-    const slug = String(item.pack_slug || "").trim();
-    if (slug) packs.add(slug);
-    else uploadCount += 1;
-  }
-  const sortedPacks = Array.from(packs).sort((a, b) => a.localeCompare(b));
+  const current = normalizeAssetPackFilter(assetState.packFilter);
+  const packs = availableAssetPackOptions();
   const options = [
     `<option value="all">All Packs</option>`,
-    `<option value="upload">Uploads${uploadCount ? ` (${uploadCount})` : ""}</option>`,
-    ...sortedPacks.map((slug) => `<option value="${escapeHtml(slug)}">${escapeHtml(slug)}</option>`),
+    `<option value="upload">Uploads</option>`,
+    ...packs.map((pack) => `<option value="${escapeHtml(pack.value)}">${escapeHtml(pack.label)}${pack.shared ? " • shared" : ""}</option>`),
   ];
   assetPackFilterEl.innerHTML = options.join("");
-  if (current === "all" || current === "upload" || packs.has(current)) {
-    assetPackFilterEl.value = current;
-  } else {
-    assetPackFilterEl.value = "all";
-    assetState.packFilter = "all";
-  }
+  assetState.packFilter = current;
+  assetPackFilterEl.value = current;
 }
 
 function persistAssetFilterPresets() {
@@ -921,7 +1068,7 @@ function getCurrentAssetFilterSnapshot() {
   return {
     searchInput: String(assetState.searchInput || ""),
     viewMode: String(assetState.viewMode || "pieces"),
-    packFilter: String(assetState.packFilter || "all"),
+    packFilter: normalizeAssetPackFilter(assetState.packFilter),
     typeFilter: String(assetState.typeFilter || "all"),
     alphaFilter: String(assetState.alphaFilter || "all"),
     sizeFilter: String(assetState.sizeFilter || "all"),
@@ -957,24 +1104,12 @@ function applyAssetFilterSnapshot(snapshot, shouldRender = true) {
     const raw = String(value || fallback).trim().toLowerCase();
     return allowed.includes(raw) ? raw : fallback;
   };
-  const normalizePackFilter = (value) => {
-    const raw = String(value || "all").trim();
-    if (!raw || raw === "all" || raw === "upload") return raw || "all";
-    const present = new Set();
-    for (const item of assetState.items || []) {
-      const slug = String(item?.pack_slug || "").trim();
-      if (slug) present.add(slug);
-    }
-    if (present.has(raw)) return raw;
-    toast(`Pack '${raw}' is unavailable. Falling back to All Packs.`);
-    return "all";
-  };
   const searchInput = String(snapshot.searchInput || "").replace(/\s+/g, " ").trim();
   const folder = String(snapshot.folder || "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
   assetState.searchInput = searchInput;
   assetState.search = searchInput;
   assetState.viewMode = normalizeEnum(snapshot.viewMode, ["pieces", "maps", "unknown", "all"], "pieces");
-  assetState.packFilter = normalizePackFilter(snapshot.packFilter);
+  assetState.packFilter = normalizeAssetPackFilter(snapshot.packFilter);
   assetState.typeFilter = normalizeEnum(snapshot.typeFilter, ["all", "png", "webp", "jpg", "gif"], "all");
   assetState.alphaFilter = normalizeEnum(snapshot.alphaFilter, ["all", "yes", "no"], "all");
   assetState.sizeFilter = normalizeEnum(snapshot.sizeFilter, ["all", "tiny", "small", "medium", "large", "huge"], "all");
@@ -982,7 +1117,7 @@ function applyAssetFilterSnapshot(snapshot, shouldRender = true) {
   assetState.folder = folder;
   syncAssetFilterControls();
   renderAssetFolderTree();
-  if (shouldRender) renderAssetGrid();
+  if (shouldRender) void applyAssetQueryChange({});
 }
 
 function saveAssetSet(nameInput = "") {
@@ -1020,106 +1155,65 @@ function deleteSelectedAssetSet() {
 
 function renderAssetGrid() {
   if (!assetGridEl) return;
-  if (!assetState.loaded) {
-    assetGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">Open Asset Library to load items.</div>`;
+  const query = effectiveAssetBrowseQuery();
+  const parsedSearch = query.parsed;
+  const sizeFilter = String(assetState.sizeFilter || "all");
+  const conflictHints = [];
+  if (parsedSearch.pack) conflictHints.push(`pack:${parsedSearch.pack}`);
+  if (parsedSearch.type) conflictHints.push(`type:${parsedSearch.type}`);
+  if (parsedSearch.alpha) conflictHints.push(`alpha:${parsedSearch.alpha}`);
+  if (parsedSearch.tags.length) conflictHints.push(`tag:${parsedSearch.tags.join(",")}`);
+  renderAssetSearchMeta(parsedSearch, conflictHints);
+  const rows = (assetState.items || [])
+    .filter((asset) => sizeFilter === "all" || assetSizeBucket(asset) === sizeFilter)
+    .slice();
+  if (query.sort === "recent") {
+    rows.sort((a, b) => {
+      const recentA = Number(assetState.recentUsed[assetUsageKey(a)] || 0);
+      const recentB = Number(assetState.recentUsed[assetUsageKey(b)] || 0);
+      if (recentA !== recentB) return recentB - recentA;
+      return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+    });
+  }
+  assetState.hasMore = !!assetState.serverHasMore;
+  assetGridEl.classList.toggle("asset-grid--maps", query.kind === "maps");
+  assetGridEl.classList.toggle("asset-grid--all", query.kind === "all");
+
+  if (assetGridStatusEl) {
+    if (assetState.serverLoading && !rows.length) {
+      assetGridStatusEl.textContent = "Loading assets...";
+    } else if (assetState.error) {
+      assetGridStatusEl.textContent = assetState.error;
+    } else if (!assetState.loaded) {
+      assetGridStatusEl.textContent = "Open Asset Library to load items.";
+    } else {
+      const shown = rows.length;
+      const total = Math.max(shown, Number(assetState.totalCount || 0));
+      const moreText = assetState.serverLoading && shown ? " • Loading more assets..." : "";
+      assetGridStatusEl.textContent = shown
+        ? `Showing ${shown} of ${total}${moreText}`
+        : "No results for this filter.";
+    }
+  }
+
+  if (!assetState.loaded && !assetState.serverLoading) {
+    assetGridEl.innerHTML = `<div class="asset-grid-empty">Open Asset Library to load items.</div>`;
     return;
   }
-  const q = (assetState.search || "").trim().toLowerCase();
-  const parsedSearch = parseAssetSearch(assetState.search);
-  const folder = (assetState.folder || "").trim();
-  const viewMode = String(assetState.viewMode || "pieces");
-  const packFilterUi = String(assetState.packFilter || "all");
-  const typeFilterUi = String(assetState.typeFilter || "all");
-  const alphaFilterUi = String(assetState.alphaFilter || "all");
-  const sizeFilter = String(assetState.sizeFilter || "all");
-  const sortMode = String(assetState.sortMode || "recent");
-  const conflictHints = [];
-  const packFilter = parsedSearch.pack ? `query:${parsedSearch.pack}` : packFilterUi;
-  const typeFilter = parsedSearch.type || typeFilterUi;
-  let alphaFilter = alphaFilterUi;
-  if (parsedSearch.alpha) {
-    const a = parsedSearch.alpha;
-    alphaFilter = (a === "yes" || a === "true" || a === "1") ? "yes" : (a === "no" || a === "false" || a === "0") ? "no" : alphaFilterUi;
+  if (assetState.serverLoading && !rows.length) {
+    assetGridEl.innerHTML = Array.from({ length: query.kind === "maps" ? 4 : 8 }, () => `<div class="asset-grid-skeleton"></div>`).join("");
+    return;
   }
-  if (parsedSearch.type && typeFilterUi !== "all" && parsedSearch.type !== typeFilterUi) {
-    conflictHints.push(`type:${parsedSearch.type} vs UI type=${typeFilterUi}`);
-  }
-  if (parsedSearch.alpha && alphaFilterUi !== "all" && alphaFilter !== alphaFilterUi) {
-    conflictHints.push(`alpha:${parsedSearch.alpha} vs UI alpha=${alphaFilterUi}`);
-  }
-  if (parsedSearch.pack && packFilterUi !== "all") {
-    conflictHints.push(`pack:${parsedSearch.pack} vs UI pack=${packFilterUi}`);
-  }
-  renderAssetSearchMeta(parsedSearch, conflictHints);
-  const ranked = [];
-  for (const a of assetState.items) {
-    const fp = String(a.folder_path || "");
-    if (folder && fp !== folder) continue;
-    const slug = String(a.pack_slug || "").trim();
-    if (packFilter === "upload" && slug) continue;
-    if (packFilter.startsWith("query:")) {
-      const qPack = packFilter.slice("query:".length).trim().toLowerCase();
-      const hay = (slug || "uploads").toLowerCase();
-      if (!hay.includes(qPack)) continue;
-    } else if (packFilter !== "all" && packFilter !== "upload" && slug !== packFilter) continue;
-    const kind = assetKind(a);
-    if (viewMode === "maps" && kind !== "map") continue;
-    if (viewMode === "pieces" && kind !== "piece") continue;
-    if (viewMode === "unknown" && kind !== "unknown") continue;
-    const ext = assetFileExt(a);
-    if (typeFilter !== "all" && ext !== typeFilter) continue;
-    const hasAlpha = assetHasAlphaGuess(a);
-    if (alphaFilter === "yes" && !hasAlpha) continue;
-    if (alphaFilter === "no" && hasAlpha) continue;
-    if (sizeFilter !== "all" && assetSizeBucket(a) !== sizeFilter) continue;
-    const score = assetSearchScore(a, parsedSearch);
-    if (score < 0) continue;
-    ranked.push({ asset: a, score });
-  }
-  ranked.sort((ra, rb) => {
-    if (q) {
-      if (rb.score !== ra.score) return rb.score - ra.score;
-    }
-    const a = ra.asset;
-    const b = rb.asset;
-    if (sortMode === "name") {
-      return String(a.name || "").localeCompare(String(b.name || ""));
-    }
-    if (sortMode === "largest") {
-      const areaA = Math.max(0, Number(a.width || 0)) * Math.max(0, Number(a.height || 0));
-      const areaB = Math.max(0, Number(b.width || 0)) * Math.max(0, Number(b.height || 0));
-      if (areaA !== areaB) return areaB - areaA;
-    } else if (sortMode === "recent") {
-      const ra = Number(assetState.recentUsed[assetUsageKey(a)] || 0);
-      const rb = Number(assetState.recentUsed[assetUsageKey(b)] || 0);
-      if (ra !== rb) return rb - ra;
-    }
-    return String(b.created_at || "").localeCompare(String(a.created_at || ""));
-  });
-  const rows = ranked.map((r) => r.asset);
-  const filterKey = `${q}\n${folder}\n${viewMode}\n${packFilter}\n${typeFilter}\n${alphaFilter}\n${sizeFilter}\n${sortMode}\n${rows.length}\n${assetState.recentVersion}`;
-  if (assetState.filterKey !== filterKey) {
-    assetState.filterKey = filterKey;
-    assetState.renderCount = assetState.pageSize;
-  }
-  const visibleCount = Math.min(rows.length, Math.max(assetState.pageSize, assetState.renderCount));
-  const visibleRows = rows.slice(0, visibleCount);
-  assetState.hasMore = visibleCount < rows.length;
-  const isMapWorkflow = viewMode === "maps";
-  const isAllWorkflow = viewMode === "all";
-  if (isMapWorkflow) {
-    assetGridEl.style.gridTemplateColumns = "repeat(auto-fill, minmax(220px, 1fr))";
-  } else if (isAllWorkflow) {
-    assetGridEl.style.gridTemplateColumns = "repeat(auto-fill, minmax(140px, 1fr))";
-  } else {
-    assetGridEl.style.gridTemplateColumns = "repeat(auto-fill, minmax(110px, 1fr))";
+  if (assetState.error) {
+    assetGridEl.innerHTML = `<div class="asset-grid-empty">${escapeHtml(assetState.error)}</div>`;
+    return;
   }
   if (!rows.length) {
-    assetGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">(no assets)</div>`;
-    assetState.lastRenderKey = filterKey;
-    assetState.lastRenderedCount = 0;
+    assetGridEl.innerHTML = `<div class="asset-grid-empty">No assets match this view yet.</div>`;
     return;
   }
+
+  const filterKey = `${query.q}\n${query.tag}\n${query.folder}\n${query.kind}\n${query.pack}\n${query.type}\n${query.alpha}\n${sizeFilter}\n${query.sort}\n${rows.length}\n${assetState.recentVersion}\n${assetState.serverHasMore ? 1 : 0}\n${assetState.serverLoading ? 1 : 0}`;
   const renderCardsHtml = (chunkRows, offset) => chunkRows.map((a, localIdx) => {
     const idx = offset + localIdx;
     const previewUrl = withAssetLibSrc(assetPreviewUrl(a));
@@ -1136,87 +1230,65 @@ function renderAssetGrid() {
     const packLabel = String(a.pack_slug || "").trim() || "uploads";
     const packMetaLabel = a.shared_in_session ? `${packLabel} • session-shared` : packLabel;
     const kind = assetKind(a);
-    const kindBadge = kind === "map" ? "MAP" : kind === "piece" ? "PCS" : "?";
-    const kindBadgeBg = kind === "map" ? "rgba(10,132,255,0.9)" : kind === "piece" ? "rgba(52,199,89,0.9)" : "rgba(255,149,0,0.92)";
-    if (isMapWorkflow) {
-      const setBgDisabled = isGM() ? "" : "disabled";
-      return `
-    <div
-      data-asset-card="1"
-      data-asset-idx="${idx}"
-      title="${escapeHtml(String(a.name || "Asset"))} (Shift+Right-click: classify)"
-      style="padding:8px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.03); color:#eee; border-radius:8px;">
-      <div style="width:100%; aspect-ratio:${previewAspect}; border-radius:8px; overflow:hidden; background:#1a1a1a; display:flex; align-items:center; justify-content:center; position:relative;">
-        <img class="asset-thumb" ${thumbAttrs} alt="${escapeHtml(String(a.name || "Asset"))}" style="width:100%; height:100%; object-fit:cover;">
-        <button type="button" data-asset-action="kind-open" data-asset-idx="${idx}" title="Classification" style="position:absolute; top:6px; left:6px; font-size:12px; line-height:1; color:#fff; background:rgba(0,0,0,0.65); border:1px solid rgba(255,255,255,0.35); border-radius:6px; padding:2px 6px;">⋯</button>
-        <div data-asset-kind-menu style="display:none; position:absolute; top:30px; left:6px; z-index:6; background:rgba(0,0,0,0.92); border:1px solid rgba(255,255,255,0.22); border-radius:8px; padding:4px; min-width:130px;">
-          <button type="button" data-asset-action="kind-map" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Map</button>
-          <button type="button" data-asset-action="kind-piece" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Piece</button>
-          <button type="button" data-asset-action="kind-unknown" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Unknown</button>
-          <button type="button" data-asset-action="kind-auto" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Auto (clear)</button>
-        </div>
-        <span title="Kind: ${escapeHtml(kind)}" style="position:absolute; top:6px; right:6px; font-size:10px; font-weight:700; color:#fff; background:${kindBadgeBg}; padding:2px 6px; border-radius:999px;">${kindBadge}</span>
-      </div>
-      <div style="margin-top:8px; font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.name || "Asset"))}</div>
-      <div style="font-size:11px; opacity:.8; margin-top:2px;">${escapeHtml(dimsLabel)} • ${escapeHtml(ext)} • ${escapeHtml(alphaLabel)}</div>
-      <div style="font-size:11px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.folder_path || "/"))} • ${escapeHtml(packMetaLabel)}</div>
-      <div style="display:flex; gap:6px; margin-top:8px;">
-        <button type="button" data-asset-action="preview" data-asset-idx="${idx}" style="flex:1; padding:4px 6px;">Preview</button>
-        <button type="button" data-asset-action="set-bg" data-asset-idx="${idx}" ${setBgDisabled} style="flex:1; padding:4px 6px;">Set as Background</button>
-      </div>
-      <div style="display:flex; gap:6px; margin-top:6px;">
-        <button type="button" data-asset-action="clear-bg" data-asset-idx="${idx}" ${setBgDisabled} style="flex:1; padding:4px 6px;">Clear BG</button>
-        <button type="button" data-asset-action="fit-bg" data-asset-idx="${idx}" style="flex:1; padding:4px 6px;">Fit to View</button>
-        <button type="button" data-asset-action="overlay" data-asset-idx="${idx}" style="flex:1; padding:4px 6px;">Use as Overlay</button>
-        <button type="button" data-asset-action="spawn" data-asset-idx="${idx}" style="flex:1; padding:4px 6px;">Place Piece</button>
-      </div>
-    </div>
-  `;
-    }
+    const kindBadge = kind === "map" ? "Map" : kind === "piece" ? "Piece" : "Unknown";
+    const readonlyBadge = a.readonly ? `<span class="asset-card-pill">Read only</span>` : "";
+    const sharedBadge = a.shared_in_session ? `<span class="asset-card-pill">Shared</span>` : "";
     return `
     <button
       data-asset-card="1"
       data-asset-idx="${idx}"
-      style="padding:6px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.03); color:#eee; text-align:center;"
+      class="asset-card"
       title="${escapeHtml(String(a.name || "Asset"))} (Shift+Right-click: classify)">
-      <div style="width:100%; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#1a1a1a; display:flex; align-items:center; justify-content:center; position:relative;">
-        <img class="asset-thumb" ${thumbAttrs} alt="${escapeHtml(String(a.name || "Asset"))}" style="width:100%; height:100%; object-fit:cover;">
-        <button type="button" data-asset-action="kind-open" data-asset-idx="${idx}" title="Classification" style="position:absolute; top:6px; left:6px; font-size:12px; line-height:1; color:#fff; background:rgba(0,0,0,0.65); border:1px solid rgba(255,255,255,0.35); border-radius:6px; padding:2px 6px;">⋯</button>
-        <div data-asset-kind-menu style="display:none; position:absolute; top:30px; left:6px; z-index:6; background:rgba(0,0,0,0.92); border:1px solid rgba(255,255,255,0.22); border-radius:8px; padding:4px; min-width:130px;">
-          <button type="button" data-asset-action="kind-map" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Map</button>
-          <button type="button" data-asset-action="kind-piece" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Piece</button>
-          <button type="button" data-asset-action="kind-unknown" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Treat as Unknown</button>
-          <button type="button" data-asset-action="kind-auto" data-asset-idx="${idx}" style="display:block; width:100%; margin:2px 0; text-align:left; padding:4px 6px;">Auto (clear)</button>
+      <div class="asset-card-media" style="aspect-ratio:${previewAspect};">
+        <img class="asset-thumb" ${thumbAttrs} alt="${escapeHtml(String(a.name || "Asset"))}">
+        <div class="asset-card-badges">
+          <div class="asset-card-pill-row">
+            <span class="asset-card-pill kind-${escapeHtml(kind)}">${escapeHtml(kindBadge)}</span>
+            ${sharedBadge}
+            ${readonlyBadge}
+          </div>
+          <div class="asset-card-menu">
+            <button type="button" data-asset-action="kind-open" data-asset-idx="${idx}" class="asset-kind-trigger" title="Classification">⋯</button>
+            <div data-asset-kind-menu class="asset-kind-menu">
+              <button type="button" data-asset-action="kind-map" data-asset-idx="${idx}">Treat as Map</button>
+              <button type="button" data-asset-action="kind-piece" data-asset-idx="${idx}">Treat as Piece</button>
+              <button type="button" data-asset-action="kind-unknown" data-asset-idx="${idx}">Treat as Unknown</button>
+              <button type="button" data-asset-action="kind-auto" data-asset-idx="${idx}">Auto (clear)</button>
+            </div>
+          </div>
         </div>
-        <span title="Kind: ${escapeHtml(kind)}" style="position:absolute; top:6px; right:6px; font-size:10px; font-weight:700; color:#fff; background:${kindBadgeBg}; padding:2px 6px; border-radius:999px;">${kindBadge}</span>
       </div>
-      <div style="margin-top:6px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.name || "Asset"))}</div>
-      <div style="font-size:10px; opacity:.75; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(a.folder_path || "/"))}</div>
-      <div style="font-size:10px; opacity:.65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(packMetaLabel)}</div>
+      <div class="asset-card-body">
+        <div class="asset-card-name">${escapeHtml(String(a.name || "Asset"))}</div>
+        <div class="asset-card-meta">${escapeHtml(dimsLabel)} • ${escapeHtml(ext)} • ${escapeHtml(alphaLabel)}</div>
+        <div class="asset-card-submeta">${escapeHtml(String(a.folder_path || "/"))} • ${escapeHtml(packMetaLabel)}</div>
+      </div>
     </button>
   `;
   }).join("");
-  // Skip the DOM write entirely if nothing changed (e.g. loadMoreAssetMetadata
-  // triggered a redundant call while the visible window didn't actually change).
-  if (assetState.lastRenderKey === filterKey && assetState.lastRenderedCount === visibleCount) {
+  const footerHtml = assetState.serverLoading && rows.length
+    ? `<div class="asset-grid-loading-more">Loading more assets...</div>`
+    : assetState.serverHasMore
+      ? `<div class="asset-grid-loading-more">Scroll to load more…</div>`
+      : "";
+  if (assetState.lastRenderKey === filterKey && assetState.lastRenderedCount === rows.length) {
     return;
   }
-  const appendOnly = assetState.lastRenderKey === filterKey && visibleCount > assetState.lastRenderedCount && assetState.lastRenderedCount > 0;
-  const footerHtml = assetState.hasMore ? `<div data-asset-more="1" style="opacity:.7; grid-column:1/-1; text-align:center; padding:4px 0;">Scroll to load more…</div>` : "";
+  const appendOnly = assetState.lastRenderKey === filterKey && rows.length > assetState.lastRenderedCount && assetState.lastRenderedCount > 0;
   if (appendOnly) {
-    const oldHint = assetGridEl.querySelector("[data-asset-more='1']");
+    const oldHint = assetGridEl.querySelector(".asset-grid-loading-more");
     if (oldHint) oldHint.remove();
-    assetGridEl.insertAdjacentHTML("beforeend", renderCardsHtml(visibleRows.slice(assetState.lastRenderedCount), assetState.lastRenderedCount));
+    assetGridEl.insertAdjacentHTML("beforeend", renderCardsHtml(rows.slice(assetState.lastRenderedCount), assetState.lastRenderedCount));
     if (footerHtml) assetGridEl.insertAdjacentHTML("beforeend", footerHtml);
   } else {
-    assetGridEl.innerHTML = renderCardsHtml(visibleRows, 0) + footerHtml;
+    assetGridEl.innerHTML = renderCardsHtml(rows, 0) + footerHtml;
   }
   assetState.lastRenderKey = filterKey;
-  assetState.lastRenderedCount = visibleCount;
+  assetState.lastRenderedCount = rows.length;
   observeAssetThumbs();
   assetGridEl.querySelectorAll("[data-asset-card='1']").forEach((card) => {
     const idx = Number(card.getAttribute("data-asset-idx"));
-    const a = visibleRows[idx];
+    const a = rows[idx];
     if (!a) return;
     // Shared drag-to-canvas handler for all asset card types
     const startAssetDrag = (e, onNoDropClick) => {
@@ -1252,7 +1324,7 @@ function renderAssetGrid() {
       window.addEventListener("pointerup", onDragUp);
     };
 
-    if (!isMapWorkflow) {
+    if (query.kind !== "maps") {
       card.onclick = () => {
         if (assetSuppressCardClick) {
           assetSuppressCardClick = false;
@@ -1346,7 +1418,7 @@ function renderAssetGrid() {
   assetGridEl.querySelectorAll("button[data-asset-action]").forEach((btn) => {
     const idx = Number(btn.getAttribute("data-asset-idx"));
     const action = String(btn.getAttribute("data-asset-action") || "");
-    const a = visibleRows[idx];
+    const a = rows[idx];
     if (!a) return;
     btn.onclick = (e) => {
       e.preventDefault();
@@ -1364,15 +1436,9 @@ function renderAssetGrid() {
       if (action === "kind-piece") { setAssetKindOverride(a, "piece"); closeAssetKindMenus(); return; }
       if (action === "kind-unknown") { setAssetKindOverride(a, "unknown"); closeAssetKindMenus(); return; }
       if (action === "kind-auto") { setAssetKindOverride(a, ""); closeAssetKindMenus(); return; }
-      if (action === "preview") { openMapPreview(a); return; }
-      if (action === "set-bg") { setAssetAsBackground(a); return; }
-      if (action === "clear-bg") { clearRoomBackground(); return; }
-      if (action === "fit-bg") { fitBackgroundToView(a); return; }
-      if (action === "overlay") { spawnOverlayAsset(a); return; }
-      if (action === "spawn") { spawnPackAsset(a); }
     };
   });
-  requestAnimationFrame(maybeLoadMoreAssets);
+  if (!assetState.serverLoading) requestAnimationFrame(maybeLoadMoreAssets);
 }
 
 // ─── Folder tree ──────────────────────────────────────────────────────────────
@@ -1435,84 +1501,21 @@ function renderAssetFolderTree() {
 // ─── Asset loading & refresh ──────────────────────────────────────────────────
 
 async function refreshAssetsPanel() {
-  if (assetState.loading) return;
+  if (assetState.loading || assetState.serverLoading) return;
   assetState.loading = true;
-  const metadataReceivedAt = Date.now();
-  try {
-    const [data] = await Promise.all([
-      apiGet(`/api/assets?src=assetlib&lite=1&limit=${assetState.serverPageSize}&offset=0${assetSessionQuery()}`),
-      refreshAssetSessionPackData(),
-    ]);
-    assetState.items = Array.isArray(data.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];
-    assetState.serverOffset = Number(data?.next_offset || assetState.items.length || 0);
-    assetState.serverHasMore = !!data?.has_more;
-    assetState.totalCount = Number(data?.total_count || assetState.items.length || 0);
-    resetAssetDiagnostics();
-    for (const item of assetState.items) {
-      recordAssetDiagnostic(item, { metadataReceivedAt });
-    }
-    assetState.loaded = true;
-    assetState.filterKey = "";
-    assetState.renderCount = assetState.pageSize;
-    refreshAssetFilterOptions();
-    renderAssetSessionSharePanel();
-    applyAssetFilterPresetForSource(assetState.packFilter);
-    renderAssetSavedSets();
-    renderAssetFolderTree();
-    renderAssetGrid();
-  } catch (e) {
-    assetState.items = [];
-    assetState.loaded = false;
-    resetAssetDiagnostics();
-    resetAssetSessionPackState();
-    if (assetGridEl) assetGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Asset load failed</div>`;
-    log(`ASSETS ERROR: ${e.message || e}`);
-  } finally {
-    assetState.loading = false;
-  }
+  renderAssetMode();
+  renderAssetAdvancedFilters();
+  await fetchAssetResults({ append: false, refreshPackMeta: true });
 }
 
 async function loadMoreAssetMetadata() {
-  if (assetState.serverLoading || !assetState.serverHasMore) return;
-  assetState.serverLoading = true;
-  const metadataReceivedAt = Date.now();
-  try {
-    const data = await apiGet(
-      `/api/assets?src=assetlib&lite=1&limit=${assetState.serverPageSize}&offset=${assetState.serverOffset}${assetSessionQuery()}`
-    );
-    const incoming = Array.isArray(data?.assets) ? data.assets.map((a) => normalizePackBackedRecord(a)) : [];
-    const seen = new Set(assetState.items.map((item) => String(item?.asset_id || item?.id || "")));
-    // Capture folder set before appending to detect structural changes
-    const foldersBefore = new Set(assetState.items.map((a) => String(a.folder_path || "")));
-    let newFolders = false;
-    for (const item of incoming) {
-      const key = String(item?.asset_id || item?.id || "");
-      if (key && seen.has(key)) continue;
-      assetState.items.push(item);
-      if (key) seen.add(key);
-      recordAssetDiagnostic(item, { metadataReceivedAt });
-      const fp = String(item.folder_path || "");
-      if (!foldersBefore.has(fp)) { foldersBefore.add(fp); newFolders = true; }
-    }
-    assetState.serverOffset = Number(data?.next_offset || assetState.serverOffset + incoming.length);
-    assetState.serverHasMore = !!data?.has_more;
-    assetState.totalCount = Number(data?.total_count || assetState.totalCount || assetState.items.length);
-    // Only rebuild folder tree and filter options when folders/packs actually changed
-    if (newFolders) {
-      refreshAssetFilterOptions();
-      renderAssetFolderTree();
-    }
-    // Session share panel and saved sets rarely change during a background page load — skip
-    renderAssetGrid();
-  } catch (e) {
-    log(`ASSETS ERROR: ${e.message || e}`);
-  } finally {
-    assetState.serverLoading = false;
-  }
+  await fetchAssetResults({ append: true });
 }
 
 async function ensureAssetPanelReady() {
-  if (assetState.loaded || assetState.loading) {
+  renderAssetMode();
+  renderAssetAdvancedFilters();
+  if (assetState.loaded || assetState.loading || assetState.serverLoading) {
     renderAssetFolderTree();
     renderAssetGrid();
     return;
@@ -1532,11 +1535,6 @@ function maybeLoadMoreAssets() {
   if (!scroller) return;
   const remaining = scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight);
   if (remaining > 280) return;
-  if (assetState.hasMore) {
-    assetState.renderCount += assetState.pageSize;
-    renderAssetGrid();
-    return;
-  }
   if (assetState.serverHasMore) {
     void loadMoreAssetMetadata();
   }
@@ -1833,6 +1831,18 @@ function initAssetLibBindings() {
   if (assetPanelCloseBtnEl) assetPanelCloseBtnEl.onclick = () => { drawer.classList.add("hidden"); };
   if (drawerContentEl) drawerContentEl.addEventListener("scroll", maybeLoadMoreAssets, { passive: true });
   if (assetRefreshBtnEl) assetRefreshBtnEl.onclick = () => refreshAssetsPanel();
+  if (assetModeBrowseBtnEl) assetModeBrowseBtnEl.onclick = () => {
+    assetState.uiMode = "browse";
+    renderAssetMode();
+  };
+  if (assetModeManageBtnEl) assetModeManageBtnEl.onclick = () => {
+    assetState.uiMode = "manage";
+    renderAssetMode();
+  };
+  if (assetFiltersToggleBtnEl) assetFiltersToggleBtnEl.onclick = () => {
+    assetState.filtersOpen = !assetState.filtersOpen;
+    renderAssetAdvancedFilters();
+  };
   if (assetSessionShareRefreshBtnEl) assetSessionShareRefreshBtnEl.onclick = async () => {
     await refreshAssetSessionPackData();
     renderAssetSessionSharePanel();
@@ -1842,8 +1852,7 @@ function initAssetLibBindings() {
     assetState.searchInput = assetSearchInputEl.value || "";
     if (assetSearchDebounceTimer) clearTimeout(assetSearchDebounceTimer);
     assetSearchDebounceTimer = setTimeout(() => {
-      assetState.search = assetState.searchInput;
-      renderAssetGrid();
+      void applyAssetQueryChange({ search: assetState.searchInput, searchInput: assetState.searchInput });
     }, assetState.searchDebounceMs);
   });
   if (assetViewModeEl) {
@@ -1851,7 +1860,7 @@ function initAssetLibBindings() {
     assetViewModeEl.addEventListener("change", () => {
       assetState.viewMode = String(assetViewModeEl.value || "pieces");
       saveAssetFilterPreset();
-      renderAssetGrid();
+      void applyAssetQueryChange({ viewMode: assetState.viewMode });
     });
   }
   if (assetPackFilterEl) {
@@ -1861,7 +1870,7 @@ function initAssetLibBindings() {
       saveAssetFilterPreset();
       assetState.packFilter = String(assetPackFilterEl.value || "all");
       applyAssetFilterPresetForSource(assetState.packFilter, prev !== assetState.packFilter);
-      renderAssetGrid();
+      void applyAssetQueryChange({ packFilter: assetState.packFilter });
     });
   }
   if (assetTypeFilterEl) {
@@ -1869,7 +1878,7 @@ function initAssetLibBindings() {
     assetTypeFilterEl.addEventListener("change", () => {
       assetState.typeFilter = String(assetTypeFilterEl.value || "all");
       saveAssetFilterPreset();
-      renderAssetGrid();
+      void applyAssetQueryChange({ typeFilter: assetState.typeFilter });
     });
   }
   if (assetAlphaFilterEl) {
@@ -1877,7 +1886,7 @@ function initAssetLibBindings() {
     assetAlphaFilterEl.addEventListener("change", () => {
       assetState.alphaFilter = String(assetAlphaFilterEl.value || "all");
       saveAssetFilterPreset();
-      renderAssetGrid();
+      void applyAssetQueryChange({ alphaFilter: assetState.alphaFilter });
     });
   }
   if (assetSizeFilterEl) {
@@ -1893,7 +1902,7 @@ function initAssetLibBindings() {
     assetSortModeEl.addEventListener("change", () => {
       assetState.sortMode = String(assetSortModeEl.value || "recent");
       saveAssetFilterPreset();
-      renderAssetGrid();
+      void applyAssetQueryChange({ sortMode: assetState.sortMode });
     });
   }
   if (assetDebugNetEl) {
@@ -1965,7 +1974,7 @@ function initAssetLibBindings() {
       assetState.folder = String(selectBtn.getAttribute("data-folder-select") || "");
       saveAssetFilterPreset();
       renderAssetFolderTree();
-      renderAssetGrid();
+      void applyAssetQueryChange({ folder: assetState.folder });
     }
   });
   if (assetUploadBtnEl) assetUploadBtnEl.onclick = async () => {
@@ -1998,6 +2007,8 @@ function initAssetLibBindings() {
       log(`ASSET ZIP ERROR: ${e.message || e}`);
     }
   };
+  renderAssetMode();
+  renderAssetAdvancedFilters();
   if (packSelectEl) packSelectEl.addEventListener("change", async () => {
     packState.selectedPackId = packSelectEl.value;
     await loadPack(packState.selectedPackId);

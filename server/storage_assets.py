@@ -287,35 +287,118 @@ def list_pack_assets_for_user(
     return out
 
 
+def _normalize_asset_type(value: str) -> str:
+    raw = (value or "").strip().lower()
+    return "jpg" if raw == "jpeg" else raw
+
+
+def _normalize_asset_alpha(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if raw in {"yes", "true", "1"}:
+        return "yes"
+    if raw in {"no", "false", "0"}:
+        return "no"
+    return ""
+
+
+def _normalize_asset_kind(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if raw in {"pieces", "piece"}:
+        return "piece"
+    if raw in {"maps", "map"}:
+        return "map"
+    if raw == "unknown":
+        return "unknown"
+    return ""
+
+
+def _asset_type_sql(alias: str) -> str:
+    return (
+        f"CASE "
+        f"WHEN LOWER(COALESCE({alias}.mime, '')) = 'image/jpeg' THEN 'jpg' "
+        f"WHEN LOWER(COALESCE({alias}.mime, '')) = 'image/png' THEN 'png' "
+        f"WHEN LOWER(COALESCE({alias}.mime, '')) = 'image/webp' THEN 'webp' "
+        f"WHEN LOWER(COALESCE({alias}.mime, '')) = 'image/gif' THEN 'gif' "
+        f"ELSE '' END"
+    )
+
+
+def _asset_has_alpha_sql(alias: str) -> str:
+    return f"({_asset_type_sql(alias)} IN ('png', 'webp', 'gif'))"
+
+
+def _asset_name_folder_sql(alias: str) -> str:
+    return f"LOWER(COALESCE({alias}.name, '') || ' ' || COALESCE({alias}.folder_path, ''))"
+
+
+def _asset_kind_sql(alias: str) -> str:
+    name_folder = _asset_name_folder_sql(alias)
+    has_alpha = _asset_has_alpha_sql(alias)
+    largest_edge = f"MAX(COALESCE({alias}.width, 0), COALESCE({alias}.height, 0))"
+    area = f"(COALESCE({alias}.width, 0) * COALESCE({alias}.height, 0))"
+    return (
+        "CASE "
+        f"WHEN NOT {has_alpha} AND ({largest_edge} >= 1500 OR {area} >= 2000000) THEN 'map' "
+        f"WHEN {name_folder} LIKE '%map%' OR {name_folder} LIKE '%battlemap%' OR {name_folder} LIKE '%scene%' OR {name_folder} LIKE '%terrain%' THEN 'map' "
+        f"WHEN {has_alpha} AND {largest_edge} <= 1500 THEN 'piece' "
+        f"WHEN {name_folder} LIKE '%tile%' OR {name_folder} LIKE '%wall%' OR {name_folder} LIKE '%prop%' OR {name_folder} LIKE '%token%' "
+        f"OR {name_folder} LIKE '%tree%' OR {name_folder} LIKE '%rock%' OR {name_folder} LIKE '%door%' OR {name_folder} LIKE '%piece%' "
+        f"OR {name_folder} LIKE '%object%' OR {name_folder} LIKE '%debris%' THEN 'piece' "
+        "ELSE 'unknown' END"
+    )
+
+
+def _asset_order_sql(sort: str) -> str:
+    raw = (sort or "").strip().lower()
+    if raw == "largest":
+        return "(COALESCE(width, 0) * COALESCE(height, 0)) DESC, created_at DESC, LOWER(COALESCE(name, '')) ASC"
+    if raw == "name":
+        return "LOWER(COALESCE(name, '')) ASC, created_at DESC"
+    return "created_at DESC, LOWER(COALESCE(name, '')) ASC"
+
+
 def list_all_assets_for_user(
     user_id: int,
     q: str = "",
     tag: str = "",
     folder: str = "",
+    pack: str = "",
+    kind: str = "",
+    type: str = "",
+    alpha: str = "",
+    sort: str = "recent",
     session_id: Optional[str] = None,
     *,
     is_game_session_member: Callable[[str, int], bool],
     shared_pack_ids_for_game_session: Callable[[str], set[int]],
 ) -> List[Dict[str, object]]:
-    uploads = []
-    for asset in list_assets_for_user(user_id, q=q, tag=tag, folder=folder):
-        item = dict(asset)
-        item["readonly"] = False
-        item["source"] = "upload"
-        item["shared_in_session"] = False
-        uploads.append(item)
-    packs = list_pack_assets_for_user(
-        user_id,
-        q=q,
-        tag=tag,
-        folder=folder,
-        session_id=session_id,
-        is_game_session_member=is_game_session_member,
-        shared_pack_ids_for_game_session=shared_pack_ids_for_game_session,
-    )
-    merged = [*uploads, *packs]
-    merged.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
-    return merged
+    out: List[Dict[str, object]] = []
+    offset = 0
+    page_size = 500
+    while True:
+        page, _, has_more = list_assets_for_user_page(
+            user_id,
+            q=q,
+            tag=tag,
+            folder=folder,
+            pack=pack,
+            kind=kind,
+            type=type,
+            alpha=alpha,
+            sort=sort,
+            limit=page_size,
+            offset=offset,
+            session_id=session_id,
+            is_game_session_member=is_game_session_member,
+            shared_pack_ids_for_game_session=shared_pack_ids_for_game_session,
+        )
+        out.extend(page)
+        if not has_more:
+            break
+        offset += len(page)
+        if not page:
+            break
+    return out
 
 
 def get_asset_by_id(asset_id: str) -> Optional[AssetRow]:
@@ -346,6 +429,11 @@ def list_assets_for_user_page(
     q: str = "",
     tag: str = "",
     folder: str = "",
+    pack: str = "",
+    kind: str = "",
+    type: str = "",
+    alpha: str = "",
+    sort: str = "recent",
     limit: int = 120,
     offset: int = 0,
     session_id: Optional[str] = None,
@@ -364,6 +452,11 @@ def list_assets_for_user_page(
     qn = (q or "").strip().lower()
     tn = (tag or "").strip().lower()
     fn = (folder or "").strip().strip("/").lower()
+    pack_filter = (pack or "").strip()
+    kind_filter = _normalize_asset_kind(kind)
+    type_filter = _normalize_asset_type(type)
+    alpha_filter = _normalize_asset_alpha(alpha)
+    order_sql = _asset_order_sql(sort)
     safe_limit = min(max(1, int(limit or 1)), 500)
     safe_offset = max(0, int(offset or 0))
 
@@ -411,12 +504,30 @@ def list_assets_for_user_page(
         )
         pack_extra_params.append(tn)
 
+    if type_filter:
+        upload_wheres.append(f"{_asset_type_sql('a')} = ?")
+        upload_params.append(type_filter)
+        pack_extra_wheres.append(f"{_asset_type_sql('pa')} = ?")
+        pack_extra_params.append(type_filter)
+
+    if alpha_filter:
+        wants_alpha = alpha_filter == "yes"
+        upload_wheres.append(_asset_has_alpha_sql("a") if wants_alpha else f"NOT {_asset_has_alpha_sql('a')}")
+        pack_extra_wheres.append(_asset_has_alpha_sql("pa") if wants_alpha else f"NOT {_asset_has_alpha_sql('pa')}")
+
+    if kind_filter:
+        upload_wheres.append(f"{_asset_kind_sql('a')} = ?")
+        upload_params.append(kind_filter)
+        pack_extra_wheres.append(f"{_asset_kind_sql('pa')} = ?")
+        pack_extra_params.append(kind_filter)
+
     upload_where_sql = " AND ".join(upload_wheres)
 
     with _raw_conn_ctx() as conn:
         # Load pack metadata for display fields (fast — very few rows)
         slug_by_pack_id: Dict[int, str] = {}
         name_by_pack_id: Dict[int, str] = {}
+        pack_id_by_slug: Dict[str, int] = {}
         if pack_ids:
             ph = ",".join("?" * len(pack_ids))
             for row in conn.execute(
@@ -426,9 +537,17 @@ def list_assets_for_user_page(
                 pid = int(row["pack_id"])
                 slug_by_pack_id[pid] = row["slug"]
                 name_by_pack_id[pid] = row["name"]
+                pack_id_by_slug[str(row["slug"])] = pid
 
-        if pack_ids:
-            pack_id_list = list(pack_ids)
+        include_uploads = pack_filter in {"", "all", "upload"}
+        selected_pack_ids = [] if pack_filter == "upload" else list(pack_ids)
+        if pack_filter and pack_filter not in {"all", "upload"}:
+            target_pack_id = pack_id_by_slug.get(pack_filter)
+            selected_pack_ids = [target_pack_id] if target_pack_id else []
+            include_uploads = False
+
+        if selected_pack_ids:
+            pack_id_list = selected_pack_ids
             pack_ph = ",".join("?" * len(pack_id_list))
             # Combine pack_id constraint with any extra filters
             pack_wheres = [f"pa.pack_id IN ({pack_ph})"] + pack_extra_wheres
@@ -437,67 +556,89 @@ def list_assets_for_user_page(
 
             # Lightweight combined count (no row materialization)
             t_count = time.perf_counter()
-            count_sql = f"""
-                SELECT COUNT(*) FROM (
-                    SELECT a.asset_id FROM assetrow a WHERE {upload_where_sql}
-                    UNION ALL
-                    SELECT pa.asset_id FROM privatepackassetrow pa WHERE {pack_where_sql}
-                )
-            """
-            total_count: int = conn.execute(
-                count_sql, upload_params + all_pack_params
-            ).fetchone()[0]
+            if include_uploads:
+                count_sql = f"""
+                    SELECT COUNT(*) FROM (
+                        SELECT a.asset_id FROM assetrow a WHERE {upload_where_sql}
+                        UNION ALL
+                        SELECT pa.asset_id FROM privatepackassetrow pa WHERE {pack_where_sql}
+                    )
+                """
+                total_count = conn.execute(count_sql, upload_params + all_pack_params).fetchone()[0]
+            else:
+                total_count = conn.execute(
+                    f"SELECT COUNT(*) FROM privatepackassetrow pa WHERE {pack_where_sql}",
+                    all_pack_params,
+                ).fetchone()[0]
             count_ms = (time.perf_counter() - t_count) * 1000.0
 
             # Single UNION page query — ordering and pagination done in SQL
             t_page = time.perf_counter()
-            page_sql = f"""
-                SELECT
-                    a.asset_id, a.name, a.folder_path, a.tags_json, a.mime,
-                    a.width, a.height, a.url_original, a.url_thumb, a.created_at,
-                    NULL AS pack_id, 0 AS is_pack
-                FROM assetrow a
-                WHERE {upload_where_sql}
+            if include_uploads:
+                page_sql = f"""
+                    SELECT * FROM (
+                        SELECT
+                            a.asset_id, a.name, a.folder_path, a.tags_json, a.mime,
+                            a.width, a.height, a.url_original, a.url_thumb, a.created_at,
+                            NULL AS pack_id, 0 AS is_pack
+                        FROM assetrow a
+                        WHERE {upload_where_sql}
 
-                UNION ALL
+                        UNION ALL
 
-                SELECT
-                    pa.asset_id, pa.name, pa.folder_path, pa.tags_json, pa.mime,
-                    pa.width, pa.height, pa.url_original, pa.url_thumb, pa.created_at,
-                    pa.pack_id, 1 AS is_pack
-                FROM privatepackassetrow pa
-                WHERE {pack_where_sql}
-
-                ORDER BY created_at DESC
-                LIMIT ? OFFSET ?
-            """
-            rows = conn.execute(
-                page_sql, upload_params + all_pack_params + [safe_limit, safe_offset]
-            ).fetchall()
+                        SELECT
+                            pa.asset_id, pa.name, pa.folder_path, pa.tags_json, pa.mime,
+                            pa.width, pa.height, pa.url_original, pa.url_thumb, pa.created_at,
+                            pa.pack_id, 1 AS is_pack
+                        FROM privatepackassetrow pa
+                        WHERE {pack_where_sql}
+                    )
+                    ORDER BY {order_sql}
+                    LIMIT ? OFFSET ?
+                """
+                rows = conn.execute(page_sql, upload_params + all_pack_params + [safe_limit, safe_offset]).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        pa.asset_id, pa.name, pa.folder_path, pa.tags_json, pa.mime,
+                        pa.width, pa.height, pa.url_original, pa.url_thumb, pa.created_at,
+                        pa.pack_id, 1 AS is_pack
+                    FROM privatepackassetrow pa
+                    WHERE {pack_where_sql}
+                    ORDER BY {order_sql}
+                    LIMIT ? OFFSET ?
+                    """,
+                    all_pack_params + [safe_limit, safe_offset],
+                ).fetchall()
             page_ms = (time.perf_counter() - t_page) * 1000.0
 
         else:
             # No packs accessible — uploads only
             t_count = time.perf_counter()
             total_count = conn.execute(
-                f"SELECT COUNT(*) FROM assetrow a WHERE {upload_where_sql}", upload_params
+                f"SELECT COUNT(*) FROM assetrow a WHERE {'0=1' if not include_uploads else upload_where_sql}",
+                [] if not include_uploads else upload_params,
             ).fetchone()[0]
             count_ms = (time.perf_counter() - t_count) * 1000.0
 
             t_page = time.perf_counter()
-            rows = conn.execute(
-                f"""
-                SELECT
-                    a.asset_id, a.name, a.folder_path, a.tags_json, a.mime,
-                    a.width, a.height, a.url_original, a.url_thumb, a.created_at,
-                    NULL AS pack_id, 0 AS is_pack
-                FROM assetrow a
-                WHERE {upload_where_sql}
-                ORDER BY created_at DESC
-                LIMIT ? OFFSET ?
-                """,
-                upload_params + [safe_limit, safe_offset],
-            ).fetchall()
+            if include_uploads:
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        a.asset_id, a.name, a.folder_path, a.tags_json, a.mime,
+                        a.width, a.height, a.url_original, a.url_thumb, a.created_at,
+                        NULL AS pack_id, 0 AS is_pack
+                    FROM assetrow a
+                    WHERE {upload_where_sql}
+                    ORDER BY {order_sql}
+                    LIMIT ? OFFSET ?
+                    """,
+                    upload_params + [safe_limit, safe_offset],
+                ).fetchall()
+            else:
+                rows = []
             page_ms = (time.perf_counter() - t_page) * 1000.0
 
     elapsed_ms = (time.perf_counter() - t0) * 1000.0

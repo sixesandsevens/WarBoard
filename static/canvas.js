@@ -100,6 +100,12 @@
   const assetZipInputEl = document.getElementById("assetZipInput");
   const assetZipUploadBtnEl = document.getElementById("assetZipUploadBtn");
   const assetRefreshBtnEl = document.getElementById("assetRefreshBtn");
+  const assetModeBrowseBtnEl = document.getElementById("assetModeBrowseBtn");
+  const assetModeManageBtnEl = document.getElementById("assetModeManageBtn");
+  const assetBrowseViewEl = document.getElementById("assetBrowseView");
+  const assetManageViewEl = document.getElementById("assetManageView");
+  const assetFiltersToggleBtnEl = document.getElementById("assetFiltersToggleBtn");
+  const assetAdvancedFiltersEl = document.getElementById("assetAdvancedFilters");
   const assetSearchInputEl = document.getElementById("assetSearchInput");
   const assetSessionShareBoxEl = document.getElementById("assetSessionShareBox");
   const assetSessionShareSummaryEl = document.getElementById("assetSessionShareSummary");
@@ -123,6 +129,7 @@
   const assetSetDeleteBtnEl = document.getElementById("assetSetDeleteBtn");
   const assetPlaceModeBtnEl = document.getElementById("assetPlaceModeBtn");
   const assetFolderTreeEl = document.getElementById("assetFolderTree");
+  const assetGridStatusEl = document.getElementById("assetGridStatus");
   const assetGridEl = document.getElementById("assetGrid");
   const drawerContentEl = document.querySelector(".drawer-content");
 

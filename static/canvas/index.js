@@ -182,6 +182,7 @@
       p.classList.toggle("active", p.id === `tab-${tabId}`);
     });
     if (openDrawer) drawer.classList.remove("hidden");
+    if (drawer) drawer.classList.toggle("drawer-wide", tabId === "assets");
     if (tabId === "assets") {
       ensureAssetPanelReady();
     }

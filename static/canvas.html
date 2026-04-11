@@ -479,123 +479,163 @@
         gap:8px;
       "></div>
     </div>
-    <div id="assetPanel" style="
-      position:absolute; top:10px; left:10px;
-      width:min(560px, calc(100vw - 20px));
-      max-height: calc(100vh - 120px);
-      overflow:auto;
-      background: rgba(0,0,0,0.82);
-      border: 1px solid rgba(255,255,255,0.12);
-      padding: 10px;
-      display:none;
-      z-index: 3;
-    ">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <b>Asset Library</b>
-        <button id="assetPanelClose">Close</button>
-      </div>
-      <div style="margin-top:8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-        <input id="assetNameInput" placeholder="Asset name (optional)" style="flex:1; min-width:150px;">
-        <input id="assetTagsInput" placeholder="tags comma-separated" style="flex:1; min-width:170px;">
-      </div>
-      <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-        <input id="assetFileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
-        <button id="assetUploadBtn">Upload</button>
-        <input id="assetZipInput" type="file" accept=".zip,application/zip">
-        <button id="assetZipUploadBtn">Upload ZIP</button>
-        <button id="assetRefreshBtn">Refresh</button>
-      </div>
-      <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
-        <input id="assetSearchInput" placeholder="Search assets..." style="flex:1; min-width:180px;">
-        <button id="assetPlaceModeBtn" class="ghost" type="button" title="When enabled, clicking asset cards starts drag-place instead of spawning at center.">Place Mode: On</button>
-      </div>
-      <div id="assetSessionShareBox" style="margin-top:8px; border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:8px; display:none;">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
-          <div>
-            <div style="font-size:12px; font-weight:600;">Session Shared Packs</div>
-            <div id="assetSessionShareSummary" style="font-size:11px; opacity:.8; margin-top:2px;">No session attached.</div>
-          </div>
-          <button id="assetSessionShareRefreshBtn" type="button">Refresh Shared Packs</button>
+    <div id="assetPanel" class="asset-panel-shell">
+      <div class="asset-panel-header">
+        <div>
+          <div class="asset-panel-title">Asset Library</div>
+          <div class="asset-panel-subtitle">Browse first. Manage uploads and sharing separately.</div>
         </div>
-        <div id="assetSessionSharedList" style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;"></div>
-        <div id="assetSessionManageWrap" style="margin-top:8px; display:none;">
-          <div style="font-size:12px; opacity:.85; margin-bottom:6px;">Manage sharing</div>
-          <div id="assetSessionManageList" style="display:flex; flex-direction:column; gap:6px;"></div>
+        <div class="asset-panel-header-actions">
+          <button id="assetPlaceModeBtn" class="ghost" type="button" title="When enabled, clicking asset cards starts drag-place instead of spawning at center.">Place Mode: On</button>
+          <button id="assetPanelClose">Close</button>
         </div>
       </div>
-      <div id="assetSearchChips" style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;"></div>
-      <div id="assetSearchHint" style="margin-top:4px; font-size:11px; opacity:.8;"></div>
-      <div id="assetDebugSummary" style="margin-top:6px; font-size:11px; opacity:.8; display:none;"></div>
-      <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-        <label style="font-size:12px;">View
-          <select id="assetViewMode">
-            <option value="pieces">Pieces</option>
-            <option value="maps">Maps</option>
-            <option value="unknown">Unknown</option>
-            <option value="all">All</option>
-          </select>
-        </label>
-        <label style="font-size:12px;">Pack
-          <select id="assetPackFilter">
-            <option value="all">All Packs</option>
-          </select>
-        </label>
-        <label style="font-size:12px;">Type
-          <select id="assetTypeFilter">
-            <option value="all">All Files</option>
-            <option value="png">PNG</option>
-            <option value="webp">WebP</option>
-            <option value="jpg">JPG</option>
-            <option value="gif">GIF</option>
-          </select>
-        </label>
-        <label style="font-size:12px;">Alpha
-          <select id="assetAlphaFilter">
-            <option value="all">Any</option>
-            <option value="yes">Has Alpha</option>
-            <option value="no">No Alpha</option>
-          </select>
-        </label>
-        <label style="font-size:12px;">Size
-          <select id="assetSizeFilter">
-            <option value="all">Any</option>
-            <option value="tiny">Tiny (≤256)</option>
-            <option value="small">Small (≤512)</option>
-            <option value="medium">Medium (≤1024)</option>
-            <option value="large">Large (≤2048)</option>
-            <option value="huge">Huge (&gt;2048)</option>
-          </select>
-        </label>
-        <label style="font-size:12px;">Sort
-          <select id="assetSortMode">
-            <option value="recent">Recently Used</option>
-            <option value="newest">Newest</option>
-            <option value="largest">Largest</option>
-            <option value="name">Name (A-Z)</option>
-          </select>
-        </label>
-        <label style="font-size:12px; display:flex; align-items:center; gap:4px;">
-          <input id="assetDebugNet" type="checkbox">
-          Debug net
-        </label>
+
+      <div id="assetModeTabs" class="asset-mode-tabs" role="tablist" aria-label="Asset library mode">
+        <button id="assetModeBrowseBtn" class="active" data-asset-mode="browse" type="button">Browse</button>
+        <button id="assetModeManageBtn" data-asset-mode="manage" type="button">Manage</button>
       </div>
-      <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-        <label style="font-size:12px;">Saved Set
-          <select id="assetSetSelect" style="min-width:180px;">
-            <option value="">(no saved sets)</option>
-          </select>
-        </label>
-        <button id="assetSetApplyBtn" type="button">Apply</button>
-        <button id="assetSetSaveBtn" type="button">Save Set</button>
-        <button id="assetSetDeleteBtn" type="button">Delete</button>
+
+      <div id="assetBrowseView" class="asset-view">
+        <div class="asset-browse-toolbar">
+          <input id="assetSearchInput" class="asset-search-input" placeholder="Search assets..." />
+          <label class="asset-toolbar-field">
+            <span>Kind</span>
+            <select id="assetViewMode">
+              <option value="pieces">Pieces</option>
+              <option value="maps">Maps</option>
+              <option value="unknown">Unknown</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+          <label class="asset-toolbar-field">
+            <span>Pack</span>
+            <select id="assetPackFilter">
+              <option value="all">All Packs</option>
+            </select>
+          </label>
+          <button id="assetFiltersToggleBtn" class="ghost" type="button">Filters</button>
+        </div>
+
+        <div id="assetSearchChips" class="asset-search-chips"></div>
+        <div id="assetSearchHint" class="asset-search-hint"></div>
+
+        <div id="assetAdvancedFilters" class="asset-advanced-filters" hidden>
+          <label class="asset-toolbar-field">
+            <span>Type</span>
+            <select id="assetTypeFilter">
+              <option value="all">All Files</option>
+              <option value="png">PNG</option>
+              <option value="webp">WebP</option>
+              <option value="jpg">JPG</option>
+              <option value="gif">GIF</option>
+            </select>
+          </label>
+          <label class="asset-toolbar-field">
+            <span>Alpha</span>
+            <select id="assetAlphaFilter">
+              <option value="all">Any</option>
+              <option value="yes">Has Alpha</option>
+              <option value="no">No Alpha</option>
+            </select>
+          </label>
+          <label class="asset-toolbar-field">
+            <span>Size</span>
+            <select id="assetSizeFilter">
+              <option value="all">Any</option>
+              <option value="tiny">Tiny (≤256)</option>
+              <option value="small">Small (≤512)</option>
+              <option value="medium">Medium (≤1024)</option>
+              <option value="large">Large (≤2048)</option>
+              <option value="huge">Huge (&gt;2048)</option>
+            </select>
+          </label>
+          <label class="asset-toolbar-field">
+            <span>Sort</span>
+            <select id="assetSortMode">
+              <option value="recent">Recently Used</option>
+              <option value="newest">Newest</option>
+              <option value="largest">Largest</option>
+              <option value="name">Name (A-Z)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="asset-browse-layout">
+          <aside class="asset-folder-sidebar">
+            <div class="asset-sidebar-title">Folders</div>
+            <div id="assetFolderTree" class="asset-folder-tree"></div>
+          </aside>
+          <section class="asset-grid-wrap">
+            <div id="assetGridStatus" class="asset-grid-status"></div>
+            <div id="assetGrid" class="asset-grid"></div>
+          </section>
+        </div>
       </div>
-      <div id="assetFolderTree" style="margin-top:6px; max-height:180px; overflow:auto; border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:6px; font-size:12px;"></div>
-      <div id="assetGrid" style="
-        margin-top:8px;
-        display:grid;
-        grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-        gap:8px;
-      "></div>
+
+      <div id="assetManageView" class="asset-view hidden">
+        <div class="asset-manage-grid">
+          <section class="asset-manage-card">
+            <div class="asset-manage-card-title">Upload Single Asset</div>
+            <div class="asset-manage-fields">
+              <input id="assetNameInput" placeholder="Asset name (optional)">
+              <input id="assetTagsInput" placeholder="tags comma-separated">
+              <input id="assetFileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+              <button id="assetUploadBtn">Upload</button>
+            </div>
+          </section>
+
+          <section class="asset-manage-card">
+            <div class="asset-manage-card-title">Upload ZIP</div>
+            <div class="asset-manage-fields">
+              <input id="assetZipInput" type="file" accept=".zip,application/zip">
+              <button id="assetZipUploadBtn">Upload ZIP</button>
+              <button id="assetRefreshBtn">Refresh</button>
+            </div>
+          </section>
+
+          <section id="assetSessionShareBox" class="asset-manage-card asset-session-share-box" style="display:none;">
+            <div class="asset-manage-card-header">
+              <div>
+                <div class="asset-manage-card-title">Session Shared Packs</div>
+                <div id="assetSessionShareSummary" class="asset-manage-note">No session attached.</div>
+              </div>
+              <button id="assetSessionShareRefreshBtn" type="button">Refresh Shared Packs</button>
+            </div>
+            <div id="assetSessionSharedList" class="asset-session-shared-list"></div>
+            <div id="assetSessionManageWrap" class="asset-session-manage-wrap" style="display:none;">
+              <div class="asset-manage-card-title">Manage Sharing</div>
+              <div id="assetSessionManageList" class="asset-session-manage-list"></div>
+            </div>
+          </section>
+
+          <section class="asset-manage-card">
+            <div class="asset-manage-card-title">Saved Sets</div>
+            <div class="asset-manage-fields">
+              <label class="asset-toolbar-field">
+                <span>Saved Set</span>
+                <select id="assetSetSelect">
+                  <option value="">(no saved sets)</option>
+                </select>
+              </label>
+              <div class="asset-manage-inline-actions">
+                <button id="assetSetApplyBtn" type="button">Apply</button>
+                <button id="assetSetSaveBtn" type="button">Save Set</button>
+                <button id="assetSetDeleteBtn" type="button">Delete</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="asset-manage-card">
+            <div class="asset-manage-card-title">Diagnostics</div>
+            <label class="asset-manage-check">
+              <input id="assetDebugNet" type="checkbox">
+              <span>Debug network timing</span>
+            </label>
+            <div id="assetDebugSummary" class="asset-debug-summary"></div>
+          </section>
+        </div>
+      </div>
     </div>
     <div id="gmPanel" style="
       position:absolute; top:10px; right:10px;
