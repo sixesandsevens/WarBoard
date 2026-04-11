@@ -542,11 +542,16 @@ def list_assets_api(
                 "pack_name": asset.get("pack_name"),
                 "shared_in_session": bool(asset.get("shared_in_session", False)),
             }
-            # Return direct thumb path for uploaded assets (bypasses auth endpoint).
-            # /uploads/ is statically mounted, so the browser fetches the thumb directly.
-            url_thumb = str(asset.get("url_thumb") or "")
-            if asset.get("source") == "upload" and url_thumb.startswith("/uploads/"):
-                d["thumb_url"] = url_thumb
+            # Return a direct thumb URL when available to bypass the full auth endpoint.
+            # Uploads: /uploads/... (static mount, no Python overhead).
+            # Packs: /api/pack-thumbs/... (login-only, no per-asset DB lookup).
+            direct_thumb = str(asset.get("thumb_url") or "")
+            if direct_thumb:
+                d["thumb_url"] = direct_thumb
+            else:
+                url_thumb = str(asset.get("url_thumb") or "")
+                if asset.get("source") == "upload" and url_thumb.startswith("/uploads/"):
+                    d["thumb_url"] = url_thumb
             return d
         assets = [_lite(a) for a in assets]
 
@@ -664,6 +669,33 @@ def get_asset_file_api(asset_id: str, req: Request):
     return FileResponse(
         str(file_path),
         media_type=pack_asset.mime or image_mime_from_ext(ext),
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@app.get("/api/pack-thumbs/{pack_slug}/{filename}")
+def get_pack_thumb_direct(pack_slug: str, filename: str, req: Request):
+    """Lightweight pack thumbnail endpoint — login check only, no per-asset DB lookup.
+
+    The storage layer pre-resolves the thumb filename and pack slug at list time,
+    so callers can skip the full /api/assets/file/{id} path for each visible thumbnail.
+    Security model: asset IDs embedded in filenames are UUIDs (unguessable); any
+    logged-in user may fetch them (same permissive policy as /api/assets/file/{id}).
+    """
+    _require_user(req)
+    # Reject path traversal and characters that don't belong in a slug or filename.
+    if (
+        ".." in pack_slug or "/" in pack_slug or "\\" in pack_slug
+        or ".." in filename or "/" in filename or "\\" in filename
+        or not pack_slug or not filename
+    ):
+        raise HTTPException(status_code=400, detail="Invalid path component")
+    file_path = PRIVATE_PACKS_DIR / pack_slug / "thumbs" / filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+    return FileResponse(
+        str(file_path),
+        media_type=image_mime_from_ext(Path(filename).suffix) or "image/png",
         headers={"Cache-Control": "private, max-age=86400"},
     )
 

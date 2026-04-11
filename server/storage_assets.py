@@ -375,14 +375,13 @@ def list_assets_for_user_page(
         pack_ids.update(sess_pack_ids)
         shared_ids = sess_pack_ids
 
-    # Build SQL WHERE fragments — folder and name pushed to SQL; tags stay Python-side
+    # Build SQL WHERE fragments — name, folder, and tag all pushed into SQL
     upload_wheres: List[str] = ["a.uploader_user_id = ?"]
     upload_params: List[object] = [user_id]
     pack_extra_wheres: List[str] = []
     pack_extra_params: List[object] = []
 
     if qn:
-        # Name-based search in SQL; tag-based matches survive the Python post-filter
         upload_wheres.append("LOWER(a.name) LIKE ?")
         upload_params.append(f"%{qn}%")
         pack_extra_wheres.append("LOWER(pa.name) LIKE ?")
@@ -393,6 +392,17 @@ def list_assets_for_user_page(
         upload_params.append(fn)
         pack_extra_wheres.append("LOWER(TRIM(pa.folder_path, '/')) = ?")
         pack_extra_params.append(fn)
+
+    if tn:
+        # Use json_each to filter tags in SQL so count and page results are always consistent.
+        upload_wheres.append(
+            "EXISTS (SELECT 1 FROM json_each(COALESCE(a.tags_json, '[]')) WHERE LOWER(value) = ?)"
+        )
+        upload_params.append(tn)
+        pack_extra_wheres.append(
+            "EXISTS (SELECT 1 FROM json_each(COALESCE(pa.tags_json, '[]')) WHERE LOWER(value) = ?)"
+        )
+        pack_extra_params.append(tn)
 
     upload_where_sql = " AND ".join(upload_wheres)
 
@@ -497,13 +507,20 @@ def list_assets_for_user_page(
             tags = [str(t).strip() for t in (json.loads(row["tags_json"] or "[]") or []) if str(t).strip()]
         except Exception:
             tags = []
-        # Python-side tag filter — tags are stored as JSON text so SQL can't filter them easily
-        if tn and not any(tn == t.lower() for t in tags):
-            continue
-
         is_pack = bool(row["is_pack"])
         if is_pack:
             pack_id = int(row["pack_id"])
+            pack_slug = slug_by_pack_id.get(pack_id, "")
+            # Pre-resolve the thumb filename from the stored DB path so the lite
+            # response can return a fast /api/pack-thumbs/ URL that skips the full
+            # dynamic file endpoint (no per-asset DB lookup, login check only).
+            raw_db_thumb = str(row["url_thumb"] or "")
+            thumb_filename = raw_db_thumb.rsplit("/", 1)[-1] if raw_db_thumb else ""
+            pack_thumb_url = (
+                f"/api/pack-thumbs/{pack_slug}/{thumb_filename}"
+                if thumb_filename and pack_slug
+                else ""
+            )
             out.append({
                 "asset_id": row["asset_id"],
                 "name": row["name"],
@@ -514,11 +531,12 @@ def list_assets_for_user_page(
                 "height": row["height"],
                 "url_original": f"/api/assets/file/{row['asset_id']}",
                 "url_thumb": f"/api/assets/file/{row['asset_id']}",
+                "thumb_url": pack_thumb_url,
                 "created_at": row["created_at"],
                 "readonly": True,
                 "source": "pack",
                 "pack_id": pack_id,
-                "pack_slug": slug_by_pack_id.get(pack_id, ""),
+                "pack_slug": pack_slug,
                 "pack_name": name_by_pack_id.get(pack_id, ""),
                 "shared_in_session": pack_id in shared_ids,
             })

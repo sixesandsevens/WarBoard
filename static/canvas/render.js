@@ -14,19 +14,26 @@ function resizeCanvas() {
 // callback so burst events (pointer move, WS updates, image loads) don't trigger
 // back-to-back full draws.
 let _renderQueued = false;
+let _pendingRafId = null;
 
 function requestRender() {
   if (_renderQueued) return;
   _renderQueued = true;
-  requestAnimationFrame(() => {
+  _pendingRafId = requestAnimationFrame(() => {
+    _pendingRafId = null;
     _renderQueued = false;
     render();
   });
 }
 
-// renderNow() forces an immediate synchronous render and cancels any pending RAF.
+// renderNow() forces an immediate synchronous render and cancels any pending RAF
+// so the coalesced callback doesn't fire a redundant draw right afterward.
 // Use sparingly — only when stale pixels are truly unacceptable (e.g. canvas resize).
 function renderNow() {
+  if (_pendingRafId !== null) {
+    cancelAnimationFrame(_pendingRafId);
+    _pendingRafId = null;
+  }
   _renderQueued = false;
   render();
 }
