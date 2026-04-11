@@ -382,10 +382,17 @@ def list_assets_for_user_page(
     pack_extra_params: List[object] = []
 
     if qn:
-        upload_wheres.append("LOWER(a.name) LIKE ?")
-        upload_params.append(f"%{qn}%")
-        pack_extra_wheres.append("LOWER(pa.name) LIKE ?")
-        pack_extra_params.append(f"%{qn}%")
+        # Match name OR any tag — preserves legacy list_assets_for_user behaviour.
+        upload_wheres.append(
+            "(LOWER(a.name) LIKE ? OR EXISTS"
+            " (SELECT 1 FROM json_each(COALESCE(a.tags_json, '[]')) WHERE LOWER(value) LIKE ?))"
+        )
+        upload_params.extend([f"%{qn}%", f"%{qn}%"])
+        pack_extra_wheres.append(
+            "(LOWER(pa.name) LIKE ? OR EXISTS"
+            " (SELECT 1 FROM json_each(COALESCE(pa.tags_json, '[]')) WHERE LOWER(value) LIKE ?))"
+        )
+        pack_extra_params.extend([f"%{qn}%", f"%{qn}%"])
 
     if fn:
         upload_wheres.append("LOWER(TRIM(a.folder_path, '/')) = ?")

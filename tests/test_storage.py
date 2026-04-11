@@ -10,6 +10,8 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
+from sqlmodel import SQLModel, create_engine as _sa_create_engine
+
 from server import storage
 from server.storage import (
     add_game_session_member,
@@ -566,3 +568,92 @@ class TestAssets:
         )
         assert len(list_assets_for_user(u.user_id, tag="undead")) == 1
         assert len(list_assets_for_user(u.user_id, tag="ally")) == 0
+
+
+# ---------------------------------------------------------------------------
+# Paginated asset search — list_assets_for_user_page
+#
+# _raw_conn_ctx() opens a fresh sqlite3 connection by URL, so these tests
+# must use a file-based engine (not :memory:) and override the autouse
+# fresh_db fixture via a second monkeypatch within the same function scope.
+# ---------------------------------------------------------------------------
+
+class TestPagedAssets:
+    @pytest.fixture(autouse=True)
+    def file_db(self, tmp_path, monkeypatch):
+        """Replace the in-memory engine from fresh_db with a file-based engine
+        so that _raw_conn_ctx() in storage_assets can open a second connection
+        to the same database."""
+        db_path = str(tmp_path / "paged_assets.db")
+        file_engine = _sa_create_engine(f"sqlite:///{db_path}")
+        SQLModel.metadata.create_all(file_engine)
+        monkeypatch.setattr(storage, "engine", file_engine)
+
+    def _asset(self, uid, asset_id, name, tags):
+        create_asset_record(
+            asset_id=asset_id,
+            uploader_user_id=uid,
+            name=name,
+            tags=tags,
+            mime="image/png",
+            width=64,
+            height=64,
+            url_original=f"/uploads/{asset_id}.png",
+            url_thumb=f"/uploads/{asset_id}_t.png",
+        )
+
+    def test_search_by_name(self):
+        from server.storage import list_assets_for_user_page
+        u = _make_user("pg1")
+        self._asset(u.user_id, "pg-goblin", "Goblin Warrior", ["enemy"])
+        self._asset(u.user_id, "pg-dragon", "Ancient Dragon", ["boss"])
+        items, total, _ = list_assets_for_user_page(u.user_id, q="goblin")
+        assert total == 1
+        assert items[0]["asset_id"] == "pg-goblin"
+
+    def test_search_by_tag_via_q(self):
+        """Free-text q must match tags — regression parity with list_assets_for_user."""
+        from server.storage import list_assets_for_user_page
+        u = _make_user("pg2")
+        self._asset(u.user_id, "pg-undead", "Mystery Token", ["undead", "crypt"])
+        self._asset(u.user_id, "pg-tree",   "Forest Tree",   ["terrain"])
+        items, total, _ = list_assets_for_user_page(u.user_id, q="undead")
+        assert total == 1
+        assert items[0]["asset_id"] == "pg-undead"
+
+    def test_search_no_match(self):
+        from server.storage import list_assets_for_user_page
+        u = _make_user("pg3")
+        self._asset(u.user_id, "pg-x", "Some Asset", ["prop"])
+        items, total, _ = list_assets_for_user_page(u.user_id, q="zzz")
+        assert total == 0
+        assert items == []
+
+    def test_explicit_tag_filter(self):
+        from server.storage import list_assets_for_user_page
+        u = _make_user("pg4")
+        self._asset(u.user_id, "pg-sk", "Skeleton",  ["undead"])
+        self._asset(u.user_id, "pg-zb", "Zombie",    ["undead", "slow"])
+        items, total, _ = list_assets_for_user_page(u.user_id, tag="slow")
+        assert total == 1
+        assert items[0]["asset_id"] == "pg-zb"
+
+    def test_search_and_tag_combined(self):
+        from server.storage import list_assets_for_user_page
+        u = _make_user("pg5")
+        self._asset(u.user_id, "pg-sw", "Skeleton Warrior", ["undead", "melee"])
+        self._asset(u.user_id, "pg-sa", "Skeleton Archer",  ["undead", "ranged"])
+        # q matches both; tag="ranged" narrows to one
+        items, total, _ = list_assets_for_user_page(u.user_id, q="skeleton", tag="ranged")
+        assert total == 1
+        assert items[0]["asset_id"] == "pg-sa"
+
+    def test_total_count_and_page_items_agree(self):
+        from server.storage import list_assets_for_user_page
+        u = _make_user("pg6")
+        for i in range(5):
+            self._asset(u.user_id, f"pg-bulk-{i}", f"Asset {i}", ["bulk"])
+        items, total, has_more = list_assets_for_user_page(u.user_id, q="asset", limit=3)
+        assert total == 5
+        assert len(items) == 3
+        assert has_more is True
