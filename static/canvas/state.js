@@ -66,6 +66,7 @@ const WATCHDOG_MUTATION_EVENTS = new Set([
 
 const state = {
   room_id: null,
+  room_name: null,
   gm_id: null,
   co_gm_ids: [],
   allow_players_move: false,

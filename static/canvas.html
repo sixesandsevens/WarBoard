@@ -128,15 +128,11 @@
             <button id="sessionLogoutBtn" class="ghost">Log Out</button>
           </div>
         </div>
-        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:12px 0;">
-        <div class="field">
-          <label>Room (optional online room id)</label>
+        <div style="display:none;" aria-hidden="true">
           <input id="sessionRoom" type="text" autocomplete="off" />
-        </div>
-        <div class="field">
-          <label>Client ID</label>
           <input id="sessionClientId" type="text" autocomplete="off" />
         </div>
+        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.12); margin:12px 0;">
         <div class="modal-actions">
           <button id="sessionConnectBtn" class="primary">Connect Room</button>
           <button id="sessionDisconnectBtn" class="ghost hidden">Disconnect</button>

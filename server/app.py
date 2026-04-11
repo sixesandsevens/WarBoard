@@ -294,6 +294,13 @@ async def _broadcast_session_notice(session_id: str, message: str) -> None:
     )
 
 
+def _room_display_name(room_id: str) -> str:
+    meta = get_room_meta(room_id)
+    if not meta:
+        return room_id
+    return meta.display_name or meta.name or room_id
+
+
 async def _handle_session_control_event(event: WireEvent, user, client_id: str) -> WireEvent | None:
     return await handle_session_control_event(
         event=event,
@@ -1344,6 +1351,7 @@ async def ws_room(ws: WebSocket, room_id: str):
             payload={
                 "client_id": client_id,
                 "room_id": room_id,
+                "room_name": _room_display_name(room_id),
                 "is_gm": room.state.gm_user_id == user.user_id or room.state.gm_id == client_id,
                 "is_co_gm": client_id in room.state.co_gm_ids,
                 "gm_key_set": bool(room.state.gm_key_hash),
@@ -1357,7 +1365,7 @@ async def ws_room(ws: WebSocket, room_id: str):
     if gm_claimed:
         await rm.broadcast(room, WireEvent(type="STATE_SYNC", payload=room.state.model_dump(exclude={"gm_key_hash"})))
 
-    await rm.broadcast(room, WireEvent(type="HELLO", payload={"client_id": client_id, "room_id": room_id}))
+    await rm.broadcast(room, WireEvent(type="HELLO", payload={"client_id": client_id, "room_id": room_id, "room_name": _room_display_name(room_id)}))
     await rm.broadcast(room, rm.presence_event(room))
 
     move_times: deque[float] = deque()

@@ -109,6 +109,9 @@ function connectWS(force = false) {
     }
 
     if (ev.type === "HELLO") {
+      if (typeof ev.payload?.room_name === "string") {
+        state.room_name = ev.payload.room_name;
+      }
       if (typeof ev.payload?.is_gm === "boolean") {
         log(ev.payload.is_gm ? "You are GM" : `GM is ${state.gm_id || "(unclaimed)"}`);
       }

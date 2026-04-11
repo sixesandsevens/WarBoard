@@ -85,13 +85,24 @@ function closeSessionModal() {
   sessionModalBackdrop.classList.add("hidden");
 }
 
+function currentRoomLabel() {
+  const sessionRoomName = playSessionState.current_room?.display_name;
+  const matchedRoomName = (Array.isArray(playSessionState.rooms) ? playSessionState.rooms : []).find(
+    (room) => room.id === (state.room_id || roomEl.value.trim()),
+  )?.display_name;
+  return String(
+    sessionRoomName
+      || matchedRoomName
+      || state.room_name
+      || "Shared Room",
+  ).trim();
+}
+
 function updateSessionPill() {
   const connected = online && !!(ws && ws.readyState === 1);
-  const roomText = (state.room_id || roomEl.value.trim() || "demo");
-  const cidText = myId() || "player";
-  const role = isGM() ? "GM" : "Player";
+  const roomText = currentRoomLabel();
   if (connected) {
-    sessionPill.textContent = `● Connected - ${roomText} • ${cidText} (${role})`;
+    sessionPill.textContent = `● Connected - ${roomText}`;
     sessionPill.classList.add("ok");
     sessionPill.classList.remove("bad");
     sessionDisconnectBtn.classList.remove("hidden");
@@ -107,12 +118,13 @@ function updateSessionPill() {
 
 function refreshSessionModalAuth() {
   const connected = online && !!(ws && ws.readyState === 1);
+  const roomText = currentRoomLabel();
   if (connected) {
-    sessionModalTitleEl.textContent = `Connected - ${state.room_id || roomEl.value.trim() || "room"}`;
+    sessionModalTitleEl.textContent = `Connected - ${roomText}`;
     sessionStatusTextEl.textContent = isGM() ? "You are GM in this room." : "You are connected as Player.";
   } else {
     sessionModalTitleEl.textContent = shouldPromptForSharedRoomAuth()
-      ? `Disconnected - Shared Room ${roomEl.value.trim() || "room"}`
+      ? `Disconnected - Shared Room ${roomText}`
       : "Disconnected - Single Session Mode";
     sessionStatusTextEl.textContent = shouldPromptForSharedRoomAuth()
       ? "This room requires login and room access. Sign in, then connect or open the lobby/join link."
@@ -299,6 +311,7 @@ async function executeIncomingRoomMove(move, options = {}) {
 function clearLocalRoomView() {
   prepareForRoomTransition();
   state.room_id = null;
+  state.room_name = null;
   state.background_mode = "solid";
   state.background_url = null;
   state.terrain_seed = 1;
