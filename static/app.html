@@ -17,6 +17,7 @@
     @media (max-width:860px){.grid{grid-template-columns:1fr}}
     .card{background:#161a22;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:14px}
     h2{margin:0 0 10px;font-size:16px}
+    h3{margin:0 0 8px;font-size:14px;color:rgba(234,238,246,.8)}
     input,button{font:inherit}
     input{width:100%;padding:10px 11px;border-radius:10px;border:1px solid rgba(255,255,255,.10);background:#0f1218;color:#eaeef6;outline:none}
     input:focus{border-color:rgba(120,170,255,.55);box-shadow:0 0 0 3px rgba(120,170,255,.12)}
@@ -37,8 +38,25 @@
     .intro-mascot{width:120px;max-width:24vw;border-radius:16px;background:rgba(180,225,95,.12);border:1px solid rgba(180,225,95,.22);padding:8px;box-shadow:0 10px 24px rgba(0,0,0,.22)}
     .intro-mascot.missing{display:none}
     .intro-copy h1{margin:0 0 6px;font-size:22px}
-    .intro-copy p{margin:0;color:rgba(234,238,246,.7)}
+    .intro-copy p{margin:0;color:rgba(234,234,246,.7)}
     @media (max-width:700px){.intro{align-items:flex-start}.intro-mascot{width:88px;max-width:none}.intro-copy h1{font-size:18px}}
+    /* Session cards */
+    .session-card{border:1px solid rgba(255,255,255,.10);border-radius:12px;background:#0f1218;overflow:hidden;margin-bottom:10px}
+    .session-header{display:flex;gap:10px;align-items:center;padding:10px 12px;cursor:default}
+    .session-toggle{background:none;border:none;color:#eaeef6;font-size:14px;padding:0 4px;cursor:pointer;opacity:.7;flex:0 0 auto}
+    .session-toggle:hover{opacity:1}
+    .session-name{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .role-badge{font-size:11px;padding:2px 7px;border-radius:999px;background:rgba(120,170,255,.18);border:1px solid rgba(120,170,255,.3);white-space:nowrap}
+    .role-badge.gm{background:rgba(255,200,80,.14);border-color:rgba(255,200,80,.3);color:#ffd060}
+    .session-meta{font-size:12px;color:rgba(234,238,246,.55);white-space:nowrap}
+    .session-rooms{padding:0 0 6px 0;border-top:1px solid rgba(255,255,255,.06)}
+    .session-rooms.hidden{display:none}
+    .room-node{display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.04)}
+    .room-node:last-child{border-bottom:none}
+    .room-node-name{flex:1;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .room-node-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+    .room-node-actions button{padding:4px 8px;font-size:12px;font-weight:600}
+    .section-label{font-size:13px;font-weight:700;color:rgba(234,238,246,.5);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px}
   </style>
 </head>
 <body>
@@ -77,7 +95,7 @@
           <input id="newName" placeholder="Room name (e.g., The Tavern)"/>
           <button id="createBtn" style="flex:0;">Create</button>
         </div>
-        <p class="small">You’ll get a join code to share with your players.</p>
+        <p class="small">You'll get a join code to share with your players.</p>
       </div>
 
       <div class="card">
@@ -92,7 +110,7 @@
 
     <div class="card" style="margin-top:14px;">
       <h2>Your recent tables</h2>
-      <div class="list" id="rooms"></div>
+      <div id="lobbyContent"></div>
       <div class="small" style="margin-top:10px;">Tip: send your DM a join link like <span class="pill">https://warhamster.app/join/WHAM-ABC123</span></div>
     </div>
   </div>
@@ -100,7 +118,7 @@
 <script>
 (async function(){
   const meEl = document.getElementById('me');
-  const roomsEl = document.getElementById('rooms');
+  const lobbyEl = document.getElementById('lobbyContent');
   const joinMsg = document.getElementById('joinMsg');
 
   async function api(url, opts){
@@ -110,38 +128,241 @@
     return data;
   }
 
-  async function refresh(){
-    const me = await api('/api/me');
-    meEl.textContent = 'Logged in as: ' + me.username;
+  function fmtDate(iso){
+    if(!iso) return '';
+    try{ return new Date(iso).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
+    catch(e){ return iso.slice(0,10); }
+  }
 
-    const data = await api('/api/my/rooms');
-    roomsEl.innerHTML = '';
-    if(!data.rooms.length){
-      roomsEl.innerHTML = '<div class="small">No rooms yet. Create one or join one.</div>';
-      return;
+  // Build a depth-indexed flat list from a tree (rooms with parent_room_id)
+  function flattenTree(rooms, rootRoomId){
+    const byId = {};
+    for(const r of rooms) byId[r.room_id] = Object.assign({}, r, {children:[]});
+    const result = [];
+    for(const r of rooms){
+      const pid = r.parent_room_id;
+      if(pid && byId[pid]) byId[pid].children.push(byId[r.room_id]);
     }
-    for(const r of data.rooms){
+    function visit(node, depth){
+      result.push({room: node, depth});
+      // Sort children by room_order then display_name
+      node.children.sort((a,b) => (a.room_order||999999)-(b.room_order||999999) || (a.display_name||'').localeCompare(b.display_name||''));
+      for(const c of node.children) visit(c, depth+1);
+    }
+    // Start from root if available, else roots (nodes with no parent in this set)
+    const roots = rootRoomId && byId[rootRoomId]
+      ? [byId[rootRoomId]]
+      : rooms.filter(r => !r.parent_room_id || !byId[r.parent_room_id]).map(r => byId[r.room_id]);
+    for(const root of roots) visit(root, 0);
+    // Append any rooms not yet visited (orphans)
+    const visited = new Set(result.map(x => x.room.room_id));
+    for(const r of rooms) if(!visited.has(r.room_id)) result.push({room: byId[r.room_id], depth: 0});
+    return result;
+  }
+
+  function makeRoomNode(r, depth, opts={}){
+    const div = document.createElement('div');
+    div.className = 'room-node';
+    div.style.paddingLeft = (12 + depth * 18) + 'px';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'room-node-name';
+    nameSpan.textContent = r.display_name || r.name;
+    if(r.join_code){
+      const code = document.createElement('span');
+      code.className = 'meta';
+      code.style.marginLeft = '6px';
+      code.textContent = r.join_code;
+      nameSpan.appendChild(code);
+    }
+    div.appendChild(nameSpan);
+
+    const actions = document.createElement('div');
+    actions.className = 'room-node-actions';
+
+    const openBtn = document.createElement('button');
+    openBtn.textContent = 'Open';
+    openBtn.onclick = () => location.href = '/static/canvas.html?room=' + encodeURIComponent(r.room_id);
+    actions.appendChild(openBtn);
+
+    if(r.join_code){
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'ghost';
+      copyBtn.textContent = 'Copy Link';
+      copyBtn.onclick = async () => {
+        const link = location.origin + '/join/' + r.join_code;
+        try{ await navigator.clipboard.writeText(link); copyBtn.textContent='Copied'; setTimeout(()=>copyBtn.textContent='Copy Link',1000); }
+        catch(e){ alert(link); }
+      };
+      actions.appendChild(copyBtn);
+    }
+
+    if(opts.canDelete){
+      const delBtn = document.createElement('button');
+      delBtn.className = 'ghost';
+      delBtn.style.color = '#ffb3b3';
+      delBtn.textContent = 'Delete';
+      delBtn.onclick = async () => {
+        if(!confirm(`Delete "${r.display_name || r.name}"? This cannot be undone.`)) return;
+        delBtn.disabled = true; delBtn.textContent = 'Deleting…';
+        try{
+          await api(`/api/rooms/${encodeURIComponent(r.room_id)}`, {method:'DELETE'});
+          await refresh();
+        }catch(e){ alert('Delete failed: ' + e.message); delBtn.disabled=false; delBtn.textContent='Delete'; }
+      };
+      actions.appendChild(delBtn);
+    }
+
+    div.appendChild(actions);
+    return div;
+  }
+
+  function renderSessions(sessions){
+    const frag = document.createDocumentFragment();
+
+    if(sessions.length){
+      const label = document.createElement('div');
+      label.className = 'section-label';
+      label.textContent = 'Sessions';
+      frag.appendChild(label);
+
+      for(const sess of sessions){
+        const card = document.createElement('div');
+        card.className = 'session-card';
+
+        const header = document.createElement('div');
+        header.className = 'session-header';
+
+        const toggle = document.createElement('button');
+        toggle.className = 'session-toggle';
+        toggle.textContent = '▸';
+        toggle.setAttribute('aria-label', 'Expand session');
+        header.appendChild(toggle);
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'session-name';
+        nameEl.textContent = sess.name;
+        header.appendChild(nameEl);
+
+        const badge = document.createElement('span');
+        badge.className = 'role-badge' + (sess.role === 'gm' ? ' gm' : '');
+        badge.textContent = sess.role === 'gm' ? 'GM' : sess.role === 'co_gm' ? 'Co-GM' : 'Player';
+        header.appendChild(badge);
+
+        const roomCount = (sess.rooms || []).length;
+        const metaEl = document.createElement('span');
+        metaEl.className = 'session-meta';
+        metaEl.textContent = roomCount + (roomCount===1?' room':' rooms') + ' · ' + fmtDate(sess.updated_at);
+        header.appendChild(metaEl);
+
+        // Open main room button
+        const rootRoomId = sess.root_room_id || ((sess.rooms||[])[0] || {}).room_id;
+        if(rootRoomId){
+          const openMain = document.createElement('button');
+          openMain.style.cssText = 'flex:0; padding:6px 10px; font-size:12px;';
+          openMain.textContent = 'Open Main Room';
+          openMain.onclick = (e) => { e.stopPropagation(); location.href = '/static/canvas.html?room=' + encodeURIComponent(rootRoomId); };
+          header.appendChild(openMain);
+        }
+
+        // Delete session button (GM only)
+        if(sess.role === 'gm'){
+          const delBtn = document.createElement('button');
+          delBtn.className = 'ghost';
+          delBtn.style.cssText = 'flex:0; padding:6px 10px; font-size:12px; color:#ffb3b3;';
+          delBtn.textContent = 'Delete';
+          delBtn.onclick = async (e) => {
+            e.stopPropagation();
+            if(!confirm(`Delete session "${sess.name}"?\n\nThis removes the session but keeps all rooms. They will become standalone rooms.`)) return;
+            delBtn.disabled = true; delBtn.textContent = 'Deleting…';
+            try{
+              await api(`/api/sessions/${encodeURIComponent(sess.id)}`, {method:'DELETE'});
+              await refresh();
+            }catch(err){ alert('Delete failed: ' + err.message); delBtn.disabled=false; delBtn.textContent='Delete'; }
+          };
+          header.appendChild(delBtn);
+        }
+
+        card.appendChild(header);
+
+        // Rooms list (collapsible)
+        const roomsDiv = document.createElement('div');
+        roomsDiv.className = 'session-rooms hidden';
+
+        const rooms = sess.rooms || [];
+        if(rooms.length){
+          const flat = flattenTree(rooms, sess.root_room_id);
+          const canDelete = sess.role === 'gm';
+          for(const {room, depth} of flat){
+            roomsDiv.appendChild(makeRoomNode(room, depth, {canDelete}));
+          }
+        } else {
+          const empty = document.createElement('div');
+          empty.style.cssText = 'padding:8px 12px; opacity:.5; font-size:13px;';
+          empty.textContent = 'No rooms yet.';
+          roomsDiv.appendChild(empty);
+        }
+
+        card.appendChild(roomsDiv);
+
+        // Toggle expand/collapse
+        toggle.onclick = () => {
+          const hidden = roomsDiv.classList.toggle('hidden');
+          toggle.textContent = hidden ? '▸' : '▾';
+        };
+        header.style.cursor = 'pointer';
+        header.onclick = (e) => {
+          if(e.target === header || e.target === nameEl || e.target === metaEl || e.target === badge){
+            toggle.click();
+          }
+        };
+
+        frag.appendChild(card);
+      }
+    }
+
+    return frag;
+  }
+
+  function renderStandaloneRooms(rooms){
+    const frag = document.createDocumentFragment();
+
+    const label = document.createElement('div');
+    label.className = 'section-label';
+    label.textContent = 'Standalone Rooms';
+    frag.appendChild(label);
+
+    if(!rooms.length){
+      const empty = document.createElement('div');
+      empty.className = 'small';
+      empty.textContent = 'No standalone rooms.';
+      frag.appendChild(empty);
+      return frag;
+    }
+
+    for(const r of rooms){
       const div = document.createElement('div');
-      div.className='room';
+      div.className = 'room';
       const left = document.createElement('div');
       left.innerHTML = '<div class="rname"></div><div class="meta"></div>';
       left.querySelector('.rname').textContent = r.name + (r.role==='owner' ? ' (GM)' : '');
       left.querySelector('.meta').textContent = r.join_code ? ('Join code: ' + r.join_code) : ('Room ID: ' + r.room_id);
 
       const right = document.createElement('div');
-      right.className='actions';
+      right.className = 'actions';
+
       const openBtn = document.createElement('button');
-      openBtn.textContent='Open';
-      openBtn.onclick = ()=> location.href = '/static/canvas.html?room=' + encodeURIComponent(r.room_id);
+      openBtn.textContent = 'Open';
+      openBtn.onclick = () => location.href = '/static/canvas.html?room=' + encodeURIComponent(r.room_id);
       right.appendChild(openBtn);
 
       if(r.join_code){
         const copyBtn = document.createElement('button');
-        copyBtn.className='ghost';
-        copyBtn.textContent='Copy join link';
-        copyBtn.onclick = async ()=>{
+        copyBtn.className = 'ghost';
+        copyBtn.textContent = 'Copy join link';
+        copyBtn.onclick = async () => {
           const link = location.origin + '/join/' + r.join_code;
-          try{ await navigator.clipboard.writeText(link); copyBtn.textContent='Copied'; setTimeout(()=>copyBtn.textContent='Copy join link', 1000); }
+          try{ await navigator.clipboard.writeText(link); copyBtn.textContent='Copied'; setTimeout(()=>copyBtn.textContent='Copy join link',1000); }
           catch(e){ alert(link); }
         };
         right.appendChild(copyBtn);
@@ -149,38 +370,59 @@
 
       if(r.role === 'owner'){
         const delBtn = document.createElement('button');
-        delBtn.className='ghost';
-        delBtn.style.cssText='flex:0; color:#ffb3b3;';
-        delBtn.textContent='Delete';
-        delBtn.onclick = async ()=>{
+        delBtn.className = 'ghost';
+        delBtn.style.cssText = 'flex:0; color:#ffb3b3;';
+        delBtn.textContent = 'Delete';
+        delBtn.onclick = async () => {
           if(!confirm(`Delete "${r.name}"? This cannot be undone and will disconnect anyone currently in the room.`)) return;
-          delBtn.disabled = true;
-          delBtn.textContent = 'Deleting…';
+          delBtn.disabled = true; delBtn.textContent = 'Deleting…';
           try{
             await api(`/api/rooms/${encodeURIComponent(r.room_id)}`, {method:'DELETE'});
             await refresh();
-          }catch(e){
-            alert('Delete failed: ' + e.message);
-            delBtn.disabled = false;
-            delBtn.textContent = 'Delete';
-          }
+          }catch(e){ alert('Delete failed: ' + e.message); delBtn.disabled=false; delBtn.textContent='Delete'; }
         };
         right.appendChild(delBtn);
       }
 
       div.appendChild(left);
       div.appendChild(right);
-      roomsEl.appendChild(div);
+      frag.appendChild(div);
     }
+    return frag;
   }
 
-  document.getElementById('createBtn').onclick = async ()=>{
+  async function refresh(){
+    const [me, sessData, roomsData] = await Promise.all([
+      api('/api/me'),
+      api('/api/my/sessions'),
+      api('/api/my/rooms'),
+    ]);
+    meEl.textContent = 'Logged in as: ' + me.username;
+
+    const sessions = sessData.sessions || [];
+    // Rooms in sessions are already included; standalone = session_id is null
+    const sessionRoomIds = new Set();
+    for(const s of sessions) for(const r of (s.rooms||[])) sessionRoomIds.add(r.room_id);
+    const allRooms = roomsData.rooms || [];
+    const standaloneRooms = allRooms.filter(r => !r.session_id);
+
+    lobbyEl.innerHTML = '';
+    if(!sessions.length && !standaloneRooms.length){
+      lobbyEl.innerHTML = '<div class="small">No rooms yet. Create one or join one.</div>';
+      return;
+    }
+
+    if(sessions.length) lobbyEl.appendChild(renderSessions(sessions));
+    if(standaloneRooms.length || sessions.length) lobbyEl.appendChild(renderStandaloneRooms(standaloneRooms));
+  }
+
+  document.getElementById('createBtn').onclick = async () => {
     const name = document.getElementById('newName').value.trim() || 'Untitled Room';
     const data = await api('/api/rooms', {method:'POST', body: JSON.stringify({name})});
     location.href = '/static/canvas.html?room=' + encodeURIComponent(data.room_id);
   };
 
-  document.getElementById('joinBtn').onclick = async ()=>{
+  document.getElementById('joinBtn').onclick = async () => {
     joinMsg.textContent = '';
     const code = document.getElementById('joinCode').value.trim().toUpperCase();
     try{
@@ -191,7 +433,7 @@
     }
   };
 
-  document.getElementById('logoutBtn').onclick = async ()=>{
+  document.getElementById('logoutBtn').onclick = async () => {
     await fetch('/api/auth/logout', {method:'POST'});
     location.href = '/static/login.html';
   };

@@ -21,6 +21,7 @@ class RoomMetaRow(SQLModel, table=True):
     display_name: Optional[str] = None
     room_order: Optional[int] = None
     archived: bool = False
+    parent_room_id: Optional[str] = Field(default=None, index=True)
 
 
 class SnapshotRow(SQLModel, table=True):
@@ -53,6 +54,7 @@ class GameSessionRow(SQLModel, table=True):
     created_at: str
     updated_at: str
     archived: bool = False
+    root_room_id: Optional[str] = Field(default=None, index=True)
 
 
 class GameSessionMemberRow(SQLModel, table=True):

@@ -71,6 +71,14 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN room_order INTEGER;")
             if not _column_exists(conn, table, "archived"):
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN archived BOOLEAN DEFAULT 0;")
+            if not _column_exists(conn, table, "parent_room_id"):
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN parent_room_id TEXT;")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS ix_roommetarow_parent_room_id ON {table}(parent_room_id);")
+        session_table = "gamesessionrow"
+        if _table_exists(conn, session_table):
+            if not _column_exists(conn, session_table, "root_room_id"):
+                conn.execute(f"ALTER TABLE {session_table} ADD COLUMN root_room_id TEXT;")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS ix_gamesessionrow_root_room_id ON {session_table}(root_room_id);")
         user_table = "userrow"
         if _table_exists(conn, user_table):
             if not _column_exists(conn, user_table, "last_room_id"):

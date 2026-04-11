@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
 from sqlmodel import Session, select
@@ -50,6 +51,17 @@ def create_game_session(
 def get_game_session(session_id: str) -> Optional[GameSessionRow]:
     with Session(engine) as s:
         return s.get(GameSessionRow, session_id)
+
+
+def archive_game_session(session_id: str) -> bool:
+    with Session(engine) as s:
+        row = s.get(GameSessionRow, session_id)
+        if not row:
+            return False
+        row.archived = True
+        s.add(row)
+        s.commit()
+        return True
 
 
 def touch_game_session(session_id: str, now_iso: str) -> None:
@@ -128,6 +140,7 @@ def list_game_sessions_for_user(user_id: int) -> List[Dict[str, object]]:
                 "role": membership.role,
                 "created_at": session.created_at,
                 "updated_at": session.updated_at,
+                "root_room_id": session.root_room_id,
             }
         )
     out.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
@@ -184,6 +197,7 @@ def list_game_session_rooms(session_id: str) -> List[Dict[str, object]]:
                 "join_code": row.join_code or "",
                 "created_at": row.created_at,
                 "owner_user_id": row.owner_user_id,
+                "parent_room_id": row.parent_room_id,
             }
         )
     out.sort(
@@ -219,8 +233,60 @@ def assign_room_to_game_session(
         meta.display_name = (display_name or "").strip() or meta.display_name or meta.name
         meta.room_order = next_room_order_for_session(session_id) if order is None else order
         s.add(meta)
+        if not session.root_room_id:
+            session.root_room_id = room_id
         session.updated_at = now_iso
         s.add(session)
+        s.commit()
+        return True
+
+
+def get_game_session_root_room_id(session_id: str) -> Optional[str]:
+    with Session(engine) as s:
+        row = s.get(GameSessionRow, session_id)
+        return row.root_room_id if row else None
+
+
+def set_game_session_root_room(session_id: str, room_id: str, now_iso: str) -> bool:
+    with Session(engine) as s:
+        row = s.get(GameSessionRow, session_id)
+        if not row:
+            return False
+        row.root_room_id = room_id
+        row.updated_at = now_iso
+        s.add(row)
+        s.commit()
+        return True
+
+
+def set_room_parent(room_id: str, parent_room_id: Optional[str], now_iso: str) -> bool:
+    with Session(engine) as s:
+        meta = s.get(RoomMetaRow, room_id)
+        if not meta:
+            return False
+        if parent_room_id is None:
+            meta.parent_room_id = None
+            s.add(meta)
+            s.commit()
+            return True
+        if parent_room_id == room_id:
+            return False  # Cannot parent to itself
+        parent_meta = s.get(RoomMetaRow, parent_room_id)
+        if not parent_meta:
+            return False
+        if parent_meta.session_id != meta.session_id:
+            return False  # Parent must be in same session
+        # Cycle check: walk up from parent; if we reach room_id, it would be a cycle
+        visited: set[str] = {room_id}
+        current: Optional[str] = parent_room_id
+        while current:
+            if current in visited:
+                return False
+            visited.add(current)
+            cur = s.get(RoomMetaRow, current)
+            current = cur.parent_room_id if cur else None
+        meta.parent_room_id = parent_room_id
+        s.add(meta)
         s.commit()
         return True
 
@@ -236,6 +302,7 @@ def create_room_in_game_session(
     create_room_record: Callable[..., None],
     add_membership: Callable[[int, str, str], None],
     touch_game_session: Callable[[str], None],
+    parent_room_id: Optional[str] = None,
 ) -> None:
     display_name = (name or "").strip() or "Untitled Room"
     create_room_record(
@@ -247,6 +314,7 @@ def create_room_in_game_session(
         session_id=session_id,
         display_name=display_name,
         room_order=next_room_order_for_session(session_id),
+        parent_room_id=parent_room_id,
     )
     add_membership(created_by_user_id, room_id, "owner")
     for member in list_game_session_members(session_id):
@@ -254,6 +322,14 @@ def create_room_in_game_session(
         if not isinstance(member_user_id, int) or member_user_id == created_by_user_id:
             continue
         add_membership(member_user_id, room_id, "player")
+    # Promote to root if session has none yet
+    with Session(engine) as s:
+        sess_row = s.get(GameSessionRow, session_id)
+        if sess_row and not sess_row.root_room_id:
+            sess_row.root_room_id = room_id
+            sess_row.updated_at = datetime.now(timezone.utc).isoformat()
+            s.add(sess_row)
+            s.commit()
     touch_game_session(session_id)
 
 

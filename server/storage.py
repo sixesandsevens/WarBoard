@@ -66,6 +66,7 @@ def create_room_record(
     display_name: Optional[str] = None,
     room_order: Optional[int] = None,
     archived: bool = False,
+    parent_room_id: Optional[str] = None,
 ) -> None:
     _sync_rooms_engine()
     storage_rooms.create_room_record(
@@ -79,6 +80,7 @@ def create_room_record(
         display_name=display_name,
         room_order=room_order,
         archived=archived,
+        parent_room_id=parent_room_id,
     )
 
 
@@ -97,6 +99,16 @@ def update_room_name(room_id: str, name: str) -> bool:
     return storage_rooms.update_room_name(room_id, name)
 
 
+def update_room_display_name(room_id: str, display_name: str) -> bool:
+    _sync_rooms_engine()
+    return storage_rooms.update_room_display_name(room_id, display_name)
+
+
+def update_room_order(room_id: str, room_order: int) -> bool:
+    _sync_rooms_engine()
+    return storage_rooms.update_room_order(room_id, room_order)
+
+
 def delete_room_record(room_id: str) -> bool:
     _sync_rooms_engine()
     return storage_rooms.delete_room_record(room_id)
@@ -112,6 +124,11 @@ def create_game_session(name: str, created_by_user_id: Optional[int]) -> GameSes
 def get_game_session(session_id: str) -> Optional[GameSessionRow]:
     _sync_sessions_engine()
     return storage_sessions.get_game_session(session_id)
+
+
+def archive_game_session(session_id: str) -> bool:
+    _sync_sessions_engine()
+    return storage_sessions.archive_game_session(session_id)
 
 
 def touch_game_session(session_id: str) -> None:
@@ -164,7 +181,22 @@ def assign_room_to_game_session(room_id: str, session_id: str, display_name: Opt
     return storage_sessions.assign_room_to_game_session(room_id, session_id, display_name, order, utc_now_iso())
 
 
-def create_room_in_game_session(*, session_id: str, created_by_user_id: int, room_id: str, name: str, state_json: str, join_code: Optional[str] = None) -> None:
+def get_game_session_root_room_id(session_id: str) -> Optional[str]:
+    _sync_sessions_engine()
+    return storage_sessions.get_game_session_root_room_id(session_id)
+
+
+def set_game_session_root_room(session_id: str, room_id: str) -> bool:
+    _sync_sessions_engine()
+    return storage_sessions.set_game_session_root_room(session_id, room_id, utc_now_iso())
+
+
+def set_room_parent(room_id: str, parent_room_id: Optional[str]) -> bool:
+    _sync_sessions_engine()
+    return storage_sessions.set_room_parent(room_id, parent_room_id, utc_now_iso())
+
+
+def create_room_in_game_session(*, session_id: str, created_by_user_id: int, room_id: str, name: str, state_json: str, join_code: Optional[str] = None, parent_room_id: Optional[str] = None) -> None:
     _sync_sessions_engine()
     storage_sessions.create_room_in_game_session(
         session_id=session_id,
@@ -176,6 +208,7 @@ def create_room_in_game_session(*, session_id: str, created_by_user_id: int, roo
         create_room_record=create_room_record,
         add_membership=add_membership,
         touch_game_session=touch_game_session,
+        parent_room_id=parent_room_id,
     )
 
 

@@ -31,6 +31,7 @@ from server.storage import (
     get_asset_by_id,
     get_asset_for_user,
     get_game_session_role,
+    get_game_session_root_room_id,
     list_all_assets_for_user,
     get_room_meta,
     get_user_by_id,
@@ -48,6 +49,8 @@ from server.storage import (
     load_snapshot_state_json,
     room_id_from_join_code,
     set_game_session_shared_pack,
+    set_game_session_root_room,
+    set_room_parent,
     SessionRow,
     PrivatePackAssetRow,
     PrivatePackRow,
@@ -657,3 +660,189 @@ class TestPagedAssets:
         assert total == 5
         assert len(items) == 3
         assert has_more is True
+
+
+# ---------------------------------------------------------------------------
+# Session hierarchy — root_room_id and parent_room_id
+# ---------------------------------------------------------------------------
+
+def _make_session_with_room(session_name="Campaign", room_name="Hub"):
+    """Helper: user + session + one attached room. Returns (user, session, room_id)."""
+    u = _make_user(session_name + "_gm")
+    state = RoomState(room_id=session_name + "_room1")
+    create_room_record(
+        room_id=session_name + "_room1",
+        name=room_name,
+        state_json=state.model_dump_json(),
+        owner_user_id=u.user_id,
+        join_code="WHAM-" + "".join(c for c in session_name.upper() if c.isalnum())[:9],
+    )
+    add_membership(u.user_id, session_name + "_room1", "owner")
+    sess = create_game_session(session_name, u.user_id)
+    assign_room_to_game_session(session_name + "_room1", sess.session_id, display_name=room_name)
+    return u, sess, session_name + "_room1"
+
+
+class TestRootRoomId:
+    def test_attach_first_room_sets_root(self):
+        u = _make_user("root_gm1")
+        state = RoomState(room_id="root_r1")
+        create_room_record(room_id="root_r1", name="Hub", state_json=state.model_dump_json(), owner_user_id=u.user_id, join_code="WHAM-ROOT01")
+        add_membership(u.user_id, "root_r1", "owner")
+        sess = create_game_session("Root Test", u.user_id)
+        assert get_game_session_root_room_id(sess.session_id) is None
+        assign_room_to_game_session("root_r1", sess.session_id, display_name="Hub")
+        assert get_game_session_root_room_id(sess.session_id) == "root_r1"
+
+    def test_attach_second_room_does_not_overwrite_root(self):
+        u = _make_user("root_gm2")
+        codes = {"root2_r1": "WHAM-R2RA01", "root2_r2": "WHAM-R2RB01"}
+        for rid, code in codes.items():
+            state = RoomState(room_id=rid)
+            create_room_record(room_id=rid, name=rid, state_json=state.model_dump_json(), owner_user_id=u.user_id, join_code=code)
+            add_membership(u.user_id, rid, "owner")
+        sess = create_game_session("Root Test 2", u.user_id)
+        assign_room_to_game_session("root2_r1", sess.session_id)
+        assign_room_to_game_session("root2_r2", sess.session_id)
+        assert get_game_session_root_room_id(sess.session_id) == "root2_r1"
+
+    def test_set_game_session_root_room_updates(self):
+        u = _make_user("root_gm3")
+        state = RoomState(room_id="root3_r1")
+        create_room_record(room_id="root3_r1", name="R1", state_json=state.model_dump_json(), owner_user_id=u.user_id, join_code="WHAM-ROOT31")
+        add_membership(u.user_id, "root3_r1", "owner")
+        sess = create_game_session("Root Test 3", u.user_id)
+        assign_room_to_game_session("root3_r1", sess.session_id)
+        ok = set_game_session_root_room(sess.session_id, "root3_r1")
+        assert ok is True
+        assert get_game_session_root_room_id(sess.session_id) == "root3_r1"
+
+    def test_create_room_in_session_sets_root_if_none(self):
+        from server.storage import create_room_in_game_session
+        u = _make_user("root_gm4")
+        sess = create_game_session("Root Test 4", u.user_id)
+        assert get_game_session_root_room_id(sess.session_id) is None
+        rid = "root4_r1"
+        state = RoomState(room_id=rid, gm_user_id=u.user_id)
+        create_room_in_game_session(
+            session_id=sess.session_id,
+            created_by_user_id=u.user_id,
+            room_id=rid,
+            name="Main Hall",
+            state_json=state.model_dump_json(),
+            join_code="WHAM-ROOT41",
+        )
+        assert get_game_session_root_room_id(sess.session_id) == rid
+
+    def test_list_game_sessions_includes_root_room_id(self):
+        u, sess, room_id = _make_session_with_room("rootlist", "Main")
+        sessions = list_game_sessions_for_user(u.user_id)
+        match = next((s for s in sessions if s["id"] == sess.session_id), None)
+        assert match is not None
+        assert match.get("root_room_id") == room_id
+
+
+class TestParentRoomId:
+    def test_list_session_rooms_includes_parent_room_id(self):
+        u, sess, room_id = _make_session_with_room("parentlist", "Hub")
+        rooms = list_game_session_rooms(sess.session_id)
+        assert len(rooms) == 1
+        assert "parent_room_id" in rooms[0]
+        assert rooms[0]["parent_room_id"] is None
+
+    def test_set_room_parent_links_child_to_parent(self):
+        from server.storage import create_room_in_game_session
+        u = _make_user("parent_gm1")
+        sess = create_game_session("Parent Test 1", u.user_id)
+        for rid, code in [("par1_r1", "WHAM-PAR101"), ("par1_r2", "WHAM-PAR102")]:
+            state = RoomState(room_id=rid, gm_user_id=u.user_id)
+            create_room_in_game_session(
+                session_id=sess.session_id,
+                created_by_user_id=u.user_id,
+                room_id=rid,
+                name=rid,
+                state_json=state.model_dump_json(),
+                join_code=code,
+            )
+        ok = set_room_parent("par1_r2", "par1_r1")
+        assert ok is True
+        meta = get_room_meta("par1_r2")
+        assert meta.parent_room_id == "par1_r1"
+
+    def test_set_room_parent_rejects_self_reference(self):
+        u, sess, room_id = _make_session_with_room("selfpar", "Hub")
+        ok = set_room_parent(room_id, room_id)
+        assert ok is False
+
+    def test_set_room_parent_rejects_cross_session(self):
+        u, sess1, r1 = _make_session_with_room("crosspar1", "Hub A")
+        _, sess2, r2 = _make_session_with_room("crosspar2", "Hub B")
+        ok = set_room_parent(r1, r2)
+        assert ok is False
+
+    def test_set_room_parent_rejects_cycle(self):
+        from server.storage import create_room_in_game_session
+        u = _make_user("cycle_gm")
+        sess = create_game_session("Cycle Test", u.user_id)
+        for rid, code in [("cyc_r1", "WHAM-CYC101"), ("cyc_r2", "WHAM-CYC102"), ("cyc_r3", "WHAM-CYC103")]:
+            state = RoomState(room_id=rid, gm_user_id=u.user_id)
+            create_room_in_game_session(
+                session_id=sess.session_id,
+                created_by_user_id=u.user_id,
+                room_id=rid,
+                name=rid,
+                state_json=state.model_dump_json(),
+                join_code=code,
+            )
+        # r1 -> r2 -> r3, then try r3 -> r1 (cycle)
+        assert set_room_parent("cyc_r2", "cyc_r1")
+        assert set_room_parent("cyc_r3", "cyc_r2")
+        ok = set_room_parent("cyc_r1", "cyc_r3")
+        assert ok is False  # Would create a cycle
+
+    def test_set_room_parent_none_clears_parent(self):
+        from server.storage import create_room_in_game_session
+        u = _make_user("clearpar_gm")
+        sess = create_game_session("Clear Parent Test", u.user_id)
+        for rid, code in [("clp_r1", "WHAM-CLP101"), ("clp_r2", "WHAM-CLP102")]:
+            state = RoomState(room_id=rid, gm_user_id=u.user_id)
+            create_room_in_game_session(
+                session_id=sess.session_id,
+                created_by_user_id=u.user_id,
+                room_id=rid,
+                name=rid,
+                state_json=state.model_dump_json(),
+                join_code=code,
+            )
+        set_room_parent("clp_r2", "clp_r1")
+        assert get_room_meta("clp_r2").parent_room_id == "clp_r1"
+        set_room_parent("clp_r2", None)
+        assert get_room_meta("clp_r2").parent_room_id is None
+
+    def test_create_room_in_session_inherits_parent(self):
+        from server.storage import create_room_in_game_session
+        u = _make_user("inherit_gm")
+        sess = create_game_session("Inherit Parent Test", u.user_id)
+        root_rid = "inh_root"
+        child_rid = "inh_child"
+        state_root = RoomState(room_id=root_rid, gm_user_id=u.user_id)
+        create_room_in_game_session(
+            session_id=sess.session_id,
+            created_by_user_id=u.user_id,
+            room_id=root_rid,
+            name="Root",
+            state_json=state_root.model_dump_json(),
+            join_code="WHAM-INHR01",
+        )
+        state_child = RoomState(room_id=child_rid, gm_user_id=u.user_id)
+        create_room_in_game_session(
+            session_id=sess.session_id,
+            created_by_user_id=u.user_id,
+            room_id=child_rid,
+            name="Child",
+            state_json=state_child.model_dump_json(),
+            join_code="WHAM-INHR02",
+            parent_room_id=root_rid,
+        )
+        meta = get_room_meta(child_rid)
+        assert meta.parent_room_id == root_rid

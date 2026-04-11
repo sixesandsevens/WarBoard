@@ -54,6 +54,7 @@ from .upload_helpers import (
 from .storage import (
     add_game_session_member,
     add_membership,
+    archive_game_session,
     assign_room_to_game_session,
     can_manage_game_session,
     create_asset_record,
@@ -100,6 +101,11 @@ from .storage import (
     update_room_name,
     user_has_pack_access,
     set_game_session_shared_pack,
+    set_room_parent,
+    set_game_session_root_room,
+    get_game_session_root_room_id,
+    update_room_display_name,
+    update_room_order,
 )
 
 app = FastAPI(title="WarHamster")
@@ -873,7 +879,11 @@ def ensure_room_join_code_api(room_id: str, req: Request):
 @app.get("/api/my/sessions")
 def my_sessions(req: Request):
     user = _require_user(req)
-    return {"sessions": list_game_sessions_for_user(user.user_id)}
+    sessions = list_game_sessions_for_user(user.user_id)
+    for session in sessions:
+        sid = str(session.get("id") or "")
+        session["rooms"] = list_game_session_rooms(sid) if sid else []
+    return {"sessions": sessions}
 
 
 @app.post("/api/sessions")
@@ -931,6 +941,18 @@ def get_session_api(session_id: str, req: Request):
     return payload
 
 
+@app.delete("/api/sessions/{session_id}")
+def delete_session_api(session_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    if not can_manage_game_session(session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="GM or co-GM required")
+    if not archive_game_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"ok": True}
+
+
 @app.get("/api/sessions/{session_id}/rooms")
 def get_session_rooms_api(session_id: str, req: Request):
     user = _require_user(req)
@@ -950,6 +972,15 @@ async def create_session_room_api(session_id: str, req: Request):
         raise HTTPException(status_code=403, detail="GM or co-GM required")
     body = await req.json()
     name = str(body.get("name") or "").strip() or "Untitled Room"
+    parent_room_id = str(body.get("parent_room_id") or "").strip() or None
+    # Validate parent is in this session
+    if parent_room_id:
+        parent_meta = get_room_meta(parent_room_id)
+        if not parent_meta or parent_meta.session_id != session_id:
+            raise HTTPException(status_code=400, detail="parent_room_id must be a room in this session")
+    # Default parent to root room if not specified and session has a root
+    if not parent_room_id:
+        parent_room_id = get_game_session_root_room_id(session_id)
     room_id = uuid.uuid4().hex[:8]
     join_code = None
     for _ in range(20):
@@ -963,6 +994,7 @@ async def create_session_room_api(session_id: str, req: Request):
                 name=name,
                 state_json=initial.model_dump_json(),
                 join_code=candidate,
+                parent_room_id=parent_room_id,
             )
             join_code = candidate
             break
@@ -971,7 +1003,38 @@ async def create_session_room_api(session_id: str, req: Request):
     if not join_code:
         raise HTTPException(status_code=500, detail="Failed to create room")
     update_user_last_room(user.user_id, room_id)
-    return {"room_id": room_id, "name": name, "join_code": join_code, "session_id": session_id}
+    return {"room_id": room_id, "name": name, "join_code": join_code, "session_id": session_id, "parent_room_id": parent_room_id}
+
+
+@app.get("/api/sessions/{session_id}/tree")
+def get_session_tree_api(session_id: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    if not get_game_session_role(session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Not a member of this session")
+    session = get_game_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    rooms = list_game_session_rooms(session_id)
+    root_room_id = session.root_room_id
+    # Build nested tree from flat list
+    by_id = {r["room_id"]: dict(r, children=[]) for r in rooms}
+    tree_roots = []
+    for r in rooms:
+        pid = r.get("parent_room_id")
+        node = by_id[r["room_id"]]
+        if pid and pid in by_id:
+            by_id[pid]["children"].append(node)
+        else:
+            tree_roots.append(node)
+    return {
+        "id": session.session_id,
+        "name": session.name,
+        "root_room_id": root_room_id,
+        "rooms": rooms,
+        "tree": tree_roots,
+    }
 
 
 @app.get("/api/sessions/{session_id}/members")
@@ -1134,19 +1197,44 @@ async def rename_room(room_id: str, req: Request, gm_key: str | None = None):
     user = _require_user(req)
     if not is_member(user.user_id, room_id):
         raise HTTPException(status_code=403, detail="Not a member of this room")
-    raw = load_room_state_json(room_id)
-    if not raw:
+    meta = get_room_meta(room_id)
+    if not meta:
         raise HTTPException(status_code=404, detail="Room not found")
-    state = RoomState.model_validate_json(raw)
-    if not _gm_authorized(state, user.user_id, gm_key):
-        raise HTTPException(status_code=403, detail="GM only")
     body = await req.json()
-    name = str(body.get("name", "")).strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="name is required")
-    ok = update_room_name(room_id, name)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Room not found")
+    # name — existing behavior, requires room-level GM auth
+    if "name" in body:
+        raw = load_room_state_json(room_id)
+        if not raw:
+            raise HTTPException(status_code=404, detail="Room not found")
+        state = RoomState.model_validate_json(raw)
+        if not _gm_authorized(state, user.user_id, gm_key):
+            raise HTTPException(status_code=403, detail="GM only")
+        name = str(body.get("name", "")).strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        ok = update_room_name(room_id, name)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Room not found")
+    # display_name / parent_room_id / room_order — session GM/co-GM only
+    hierarchy_keys = {"display_name", "parent_room_id", "room_order"}
+    if hierarchy_keys & body.keys():
+        session_id = meta.session_id
+        if not session_id or not can_manage_game_session(session_id, user.user_id):
+            raise HTTPException(status_code=403, detail="Session GM or co-GM required")
+        if "display_name" in body:
+            display_name = str(body["display_name"] or "").strip()
+            if display_name:
+                update_room_display_name(room_id, display_name)
+        if "parent_room_id" in body:
+            new_parent = body["parent_room_id"]
+            if new_parent is not None:
+                new_parent = str(new_parent).strip() or None
+            if not set_room_parent(room_id, new_parent):
+                raise HTTPException(status_code=400, detail="Invalid parent_room_id (cycle, wrong session, or not found)")
+        if "room_order" in body:
+            order = body["room_order"]
+            if order is not None:
+                update_room_order(room_id, int(order))
     return {"ok": True}
 
 

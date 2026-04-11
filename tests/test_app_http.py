@@ -666,3 +666,221 @@ class TestWebSocket:
                 hello = next((m for m in messages if m["type"] == "HELLO"), None)
                 assert hello is not None
                 assert hello["payload"]["is_gm"] is True
+
+
+# ---------------------------------------------------------------------------
+# Session hierarchy — HTTP integration tests
+# ---------------------------------------------------------------------------
+
+class TestMySessionsInlineRooms:
+    """GET /api/my/sessions should return rooms inline for each session."""
+
+    async def test_my_sessions_includes_rooms(self, http_client):
+        r = await http_client.post("/api/auth/register",
+                                   json={"username": "sesrooms_gm", "password": "password123"})
+        assert r.status_code == 200
+
+        # Create a room then attach it to a session
+        r2 = await http_client.post("/api/rooms", json={"name": "Tavern"})
+        assert r2.status_code == 200
+        room_id = r2.json()["room_id"]
+
+        r3 = await http_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Sewer Crawl"})
+        assert r3.status_code == 200
+        session_id = r3.json()["id"]
+
+        r4 = await http_client.get("/api/my/sessions")
+        assert r4.status_code == 200
+        sessions = r4.json()["sessions"]
+        assert len(sessions) == 1
+        sess = sessions[0]
+        assert sess["id"] == session_id
+        assert "rooms" in sess
+        assert any(rm["room_id"] == room_id for rm in sess["rooms"])
+
+    async def test_my_sessions_root_room_id_set(self, http_client):
+        r = await http_client.post("/api/auth/register",
+                                   json={"username": "rootrm_gm", "password": "password123"})
+        assert r.status_code == 200
+        r2 = await http_client.post("/api/rooms", json={"name": "Main Room"})
+        room_id = r2.json()["room_id"]
+        r3 = await http_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Main Session"})
+        session_id = r3.json()["id"]
+
+        r4 = await http_client.get("/api/my/sessions")
+        sess = next(s for s in r4.json()["sessions"] if s["id"] == session_id)
+        assert sess.get("root_room_id") == room_id
+
+
+class TestSessionRoomCreate:
+    """POST /api/sessions/{id}/rooms with optional parent_room_id."""
+
+    async def test_create_room_in_session_returns_parent_room_id(self, http_client):
+        r = await http_client.post("/api/auth/register",
+                                   json={"username": "sescrm_gm", "password": "password123"})
+        assert r.status_code == 200
+        r2 = await http_client.post("/api/rooms", json={"name": "Hub"})
+        room_id = r2.json()["room_id"]
+        r3 = await http_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Child Test"})
+        session_id = r3.json()["id"]
+
+        r4 = await http_client.post(
+            f"/api/sessions/{session_id}/rooms",
+            json={"name": "Basement", "parent_room_id": room_id},
+        )
+        assert r4.status_code == 200
+        body = r4.json()
+        assert body["session_id"] == session_id
+        assert body["parent_room_id"] == room_id
+
+    async def test_create_room_invalid_parent_400(self, http_client):
+        r = await http_client.post("/api/auth/register",
+                                   json={"username": "sescrm_gm2", "password": "password123"})
+        assert r.status_code == 200
+        r2 = await http_client.post("/api/rooms", json={"name": "Hub"})
+        room_id = r2.json()["room_id"]
+        r3 = await http_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Invalid Parent Test"})
+        session_id = r3.json()["id"]
+
+        r4 = await http_client.post(
+            f"/api/sessions/{session_id}/rooms",
+            json={"name": "Orphan", "parent_room_id": "no_such_room"},
+        )
+        assert r4.status_code == 400
+
+    async def test_player_cannot_create_session_room(self, http_client):
+        gm_r = await http_client.post("/api/auth/register",
+                                      json={"username": "sescrm_gm3", "password": "password123"})
+        assert gm_r.status_code == 200
+        r2 = await http_client.post("/api/rooms", json={"name": "Hub"})
+        room_id = r2.json()["room_id"]
+        r3 = await http_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Player Block Test"})
+        session_id = r3.json()["id"]
+
+        # Log out, register player, try to create room
+        await http_client.post("/api/auth/logout")
+        await http_client.post("/api/auth/register",
+                               json={"username": "sescrm_player", "password": "password123"})
+        r4 = await http_client.post(
+            f"/api/sessions/{session_id}/rooms",
+            json={"name": "Sneaky Room"},
+        )
+        assert r4.status_code == 403
+
+
+class TestSessionTree:
+    """GET /api/sessions/{id}/tree returns flat + nested structure."""
+
+    async def test_tree_returns_rooms_and_tree(self, http_client):
+        r = await http_client.post("/api/auth/register",
+                                   json={"username": "tree_gm", "password": "password123"})
+        assert r.status_code == 200
+        r2 = await http_client.post("/api/rooms", json={"name": "Root"})
+        root_id = r2.json()["room_id"]
+        r3 = await http_client.post(f"/api/rooms/{root_id}/attach-session", json={"name": "Tree Test"})
+        session_id = r3.json()["id"]
+
+        r4 = await http_client.post(
+            f"/api/sessions/{session_id}/rooms",
+            json={"name": "Child", "parent_room_id": root_id},
+        )
+        child_id = r4.json()["room_id"]
+
+        r5 = await http_client.get(f"/api/sessions/{session_id}/tree")
+        assert r5.status_code == 200
+        body = r5.json()
+        assert body["id"] == session_id
+        assert body["root_room_id"] == root_id
+        assert "rooms" in body
+        assert "tree" in body
+        room_ids_flat = [rm["room_id"] for rm in body["rooms"]]
+        assert root_id in room_ids_flat
+        assert child_id in room_ids_flat
+        # Tree root should be root_id with child nested
+        tree = body["tree"]
+        assert len(tree) == 1
+        root_node = tree[0]
+        assert root_node["room_id"] == root_id
+        child_ids = [c["room_id"] for c in root_node.get("children", [])]
+        assert child_id in child_ids
+
+    async def test_tree_requires_membership(self, http_client):
+        r = await http_client.post("/api/auth/register",
+                                   json={"username": "tree_gm2", "password": "password123"})
+        assert r.status_code == 200
+        r2 = await http_client.post("/api/rooms", json={"name": "Hub"})
+        root_id = r2.json()["room_id"]
+        r3 = await http_client.post(f"/api/rooms/{root_id}/attach-session", json={"name": "Private Session"})
+        session_id = r3.json()["id"]
+
+        await http_client.post("/api/auth/logout")
+        await http_client.post("/api/auth/register",
+                               json={"username": "tree_stranger", "password": "password123"})
+        r4 = await http_client.get(f"/api/sessions/{session_id}/tree")
+        assert r4.status_code == 403
+
+
+class TestRoomPatchHierarchy:
+    """PATCH /api/rooms/{id} supports display_name, parent_room_id, room_order for session GMs."""
+
+    async def test_patch_display_name(self, http_client):
+        r = await http_client.post("/api/auth/register",
+                                   json={"username": "patch_dn_gm", "password": "password123"})
+        assert r.status_code == 200
+        r2 = await http_client.post("/api/rooms", json={"name": "Old Name"})
+        room_id = r2.json()["room_id"]
+        r3 = await http_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Display Name Test"})
+        session_id = r3.json()["id"]
+
+        r4 = await http_client.patch(f"/api/rooms/{room_id}", json={"display_name": "New Display"})
+        assert r4.status_code == 200
+
+        r5 = await http_client.get(f"/api/sessions/{session_id}/rooms")
+        rooms = r5.json()["rooms"]
+        match = next(rm for rm in rooms if rm["room_id"] == room_id)
+        assert match["display_name"] == "New Display"
+
+    async def test_patch_parent_room_id(self, http_client):
+        r = await http_client.post("/api/auth/register",
+                                   json={"username": "patch_par_gm", "password": "password123"})
+        assert r.status_code == 200
+        r2 = await http_client.post("/api/rooms", json={"name": "Root"})
+        root_id = r2.json()["room_id"]
+        r3 = await http_client.post(f"/api/rooms/{root_id}/attach-session", json={"name": "Parent Patch Test"})
+        session_id = r3.json()["id"]
+
+        r4 = await http_client.post(f"/api/sessions/{session_id}/rooms", json={"name": "Child"})
+        child_id = r4.json()["room_id"]
+
+        # Clear parent, then set it
+        rp = await http_client.patch(f"/api/rooms/{child_id}", json={"parent_room_id": root_id})
+        assert rp.status_code == 200
+        rooms = (await http_client.get(f"/api/sessions/{session_id}/rooms")).json()["rooms"]
+        child = next(rm for rm in rooms if rm["room_id"] == child_id)
+        assert child["parent_room_id"] == root_id
+
+    async def test_patch_cycle_returns_400(self, http_client):
+        r = await http_client.post("/api/auth/register",
+                                   json={"username": "patch_cyc_gm", "password": "password123"})
+        assert r.status_code == 200
+        r2 = await http_client.post("/api/rooms", json={"name": "Root"})
+        root_id = r2.json()["room_id"]
+        r3 = await http_client.post(f"/api/rooms/{root_id}/attach-session", json={"name": "Cycle Patch Test"})
+        session_id = r3.json()["id"]
+
+        r4 = await http_client.post(f"/api/sessions/{session_id}/rooms", json={"name": "Child"})
+        child_id = r4.json()["room_id"]
+
+        # Set child as parent of root — cycle
+        rp = await http_client.patch(f"/api/rooms/{root_id}", json={"parent_room_id": child_id})
+        assert rp.status_code == 400
+
+    async def test_patch_hierarchy_forbidden_for_non_session_room(self, http_client):
+        r = await http_client.post("/api/auth/register",
+                                   json={"username": "patch_noses_gm", "password": "password123"})
+        assert r.status_code == 200
+        r2 = await http_client.post("/api/rooms", json={"name": "Standalone"})
+        room_id = r2.json()["room_id"]
+
+        rp = await http_client.patch(f"/api/rooms/{room_id}", json={"display_name": "Renamed"})
+        assert rp.status_code == 403

@@ -47,6 +47,7 @@ def create_room_record(
     display_name: Optional[str] = None,
     room_order: Optional[int] = None,
     archived: bool = False,
+    parent_room_id: Optional[str] = None,
 ) -> None:
     with Session(engine) as s:
         existing = s.get(RoomMetaRow, room_id)
@@ -63,6 +64,7 @@ def create_room_record(
                 display_name=display_name,
                 room_order=room_order,
                 archived=archived,
+                parent_room_id=parent_room_id,
             )
         )
         s.add(RoomRow(room_id=room_id, state_json=state_json, updated_at=now_iso))
@@ -86,6 +88,28 @@ def update_room_name(room_id: str, name: str) -> bool:
         if not meta:
             return False
         meta.name = name
+        s.add(meta)
+        s.commit()
+        return True
+
+
+def update_room_display_name(room_id: str, display_name: str) -> bool:
+    with Session(engine) as s:
+        meta = s.get(RoomMetaRow, room_id)
+        if not meta:
+            return False
+        meta.display_name = display_name
+        s.add(meta)
+        s.commit()
+        return True
+
+
+def update_room_order(room_id: str, room_order: int) -> bool:
+    with Session(engine) as s:
+        meta = s.get(RoomMetaRow, room_id)
+        if not meta:
+            return False
+        meta.room_order = room_order
         s.add(meta)
         s.commit()
         return True
@@ -239,6 +263,7 @@ def list_rooms_for_user(user_id: int) -> List[Dict[str, object]]:
                     "created_at": meta.created_at,
                     "session_id": meta.session_id,
                     "room_order": meta.room_order,
+                    "parent_room_id": meta.parent_room_id,
                 }
             )
         return out

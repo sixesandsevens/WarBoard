@@ -613,39 +613,127 @@ function refreshGmUI() {
 
 // ─── Rooms & snapshots panels ─────────────────────────────────────────────────
 
+// Build depth-indexed flat list from rooms with parent_room_id
+function _flattenRoomTree(rooms, rootRoomId) {
+  const byId = {};
+  for (const r of rooms) byId[r.room_id] = Object.assign({}, r, { _children: [] });
+  for (const r of rooms) {
+    const pid = r.parent_room_id;
+    if (pid && byId[pid]) byId[pid]._children.push(byId[r.room_id]);
+  }
+  const result = [];
+  function visit(node, depth) {
+    result.push({ room: node, depth });
+    node._children.sort(
+      (a, b) => (a.room_order || 999999) - (b.room_order || 999999) ||
+                String(a.display_name || "").localeCompare(String(b.display_name || ""))
+    );
+    for (const c of node._children) visit(c, depth + 1);
+  }
+  const roots = rootRoomId && byId[rootRoomId]
+    ? [byId[rootRoomId]]
+    : rooms.filter((r) => !r.parent_room_id || !byId[r.parent_room_id]).map((r) => byId[r.room_id]);
+  for (const root of roots) visit(root, 0);
+  const visited = new Set(result.map((x) => x.room.room_id));
+  for (const r of rooms) if (!visited.has(r.room_id)) result.push({ room: byId[r.room_id], depth: 0 });
+  return result;
+}
+
 async function refreshRoomsPanel() {
   try {
-    const [data] = await Promise.all([
-      apiGet("/api/my/rooms"),
-      refreshCurrentSessionState(),
-    ]);
-    const rooms = data.rooms || [];
-    const rows = rooms.map((r) => `
-      <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
-        <button data-open-room="${r.room_id}" style="padding:2px 6px;">Open</button>
-        <button data-copy-join="${r.room_id}" style="padding:2px 6px;">Copy Join Link</button>
-        <button data-rename-room="${r.room_id}" style="padding:2px 6px;">Rename</button>
-        <button data-delete-room="${r.room_id}" style="padding:2px 6px; color:#ffb3b3;">Delete</button>
-        <code>${r.room_id}</code>
-        <span style="opacity:.9">${r.display_name || r.name}</span>
-        <span style="opacity:.7">${r.role === "owner" ? "GM" : "Player"}</span>
-        <span style="opacity:.6">${r.session_id ? "session" : "standalone"}</span>
-        <span style="opacity:.6">${(r.join_code || "").trim() ? "join " + r.join_code : ""}</span>
-        <span style="opacity:.6">${(r.created_at || "").replace("T", " ").slice(0, 19)}</span>
-      </div>
-    `);
-    roomsListEl.innerHTML = rows.join("") || `<div style="opacity:.7">(no rooms)</div>`;
+    await refreshCurrentSessionState();
+    const currentSessionId = playSessionState.id;
+
+    let rooms = [];
+    let rootRoomId = null;
+    let isSessionView = false;
+
+    if (currentSessionId) {
+      // Session view: fetch full tree for current session
+      try {
+        const treeData = await apiGet(`/api/sessions/${encodeURIComponent(currentSessionId)}/tree`);
+        rooms = treeData.rooms || [];
+        rootRoomId = treeData.root_room_id || null;
+        isSessionView = true;
+      } catch (e) {
+        // Fall back to flat room list on tree fetch failure
+        const data = await apiGet("/api/my/rooms");
+        rooms = data.rooms || [];
+      }
+    } else {
+      const data = await apiGet("/api/my/rooms");
+      rooms = data.rooms || [];
+    }
+
+    const currentRoomId = state.room_id || roomEl.value.trim();
+    const flat = isSessionView ? _flattenRoomTree(rooms, rootRoomId) : rooms.map((r) => ({ room: r, depth: 0 }));
+
+    roomsListEl.innerHTML = "";
+    if (!flat.length) {
+      roomsListEl.innerHTML = `<div style="opacity:.7">(no rooms)</div>`;
+      return;
+    }
+
+    for (const { room: r, depth } of flat) {
+      const isCurrent = r.room_id === currentRoomId;
+      const indent = isSessionView ? depth * 14 : 0;
+      const row = document.createElement("div");
+      row.style.cssText = `display:flex; gap:6px; align-items:center; margin:3px 0; padding-left:${indent}px;${isCurrent ? " font-weight:700;" : ""}`;
+
+      const openBtn = document.createElement("button");
+      openBtn.setAttribute("data-open-room", r.room_id);
+      openBtn.style.cssText = "padding:2px 6px;";
+      openBtn.textContent = "Open";
+      if (isCurrent) openBtn.style.background = "rgba(120,170,255,.35)";
+      row.appendChild(openBtn);
+
+      const copyBtn = document.createElement("button");
+      copyBtn.setAttribute("data-copy-join", r.room_id);
+      copyBtn.style.cssText = "padding:2px 6px;";
+      copyBtn.textContent = "Copy Join Link";
+      row.appendChild(copyBtn);
+
+      const renameBtn = document.createElement("button");
+      renameBtn.setAttribute("data-rename-room", r.room_id);
+      renameBtn.style.cssText = "padding:2px 6px;";
+      renameBtn.textContent = "Rename";
+      row.appendChild(renameBtn);
+
+      const delBtn = document.createElement("button");
+      delBtn.setAttribute("data-delete-room", r.room_id);
+      delBtn.style.cssText = "padding:2px 6px; color:#ffb3b3;";
+      delBtn.textContent = "Delete";
+      row.appendChild(delBtn);
+
+      const label = document.createElement("span");
+      label.style.cssText = `opacity:.9; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;${isCurrent ? " color:#b3cfff;" : ""}`;
+      label.textContent = (r.display_name || r.name) + (isCurrent ? " ●" : "");
+      row.appendChild(label);
+
+      const meta = document.createElement("span");
+      meta.style.cssText = "opacity:.55; font-size:11px; white-space:nowrap;";
+      meta.textContent = [
+        r.role === "owner" ? "GM" : r.role === "player" ? "Player" : "",
+        (r.join_code || "").trim() ? r.join_code : "",
+        !isSessionView && r.session_id ? "session" : "",
+      ].filter(Boolean).join(" · ");
+      row.appendChild(meta);
+
+      roomsListEl.appendChild(row);
+    }
+
+    // Wire up button handlers using the flat rooms list for lookups
+    const roomsById = {};
+    for (const { room: r } of flat) roomsById[r.room_id] = r;
+
     roomsListEl.querySelectorAll("button[data-open-room]").forEach((btn) => {
       btn.onclick = () => switchRoom(btn.getAttribute("data-open-room"));
     });
     roomsListEl.querySelectorAll("button[data-copy-join]").forEach((btn) => {
       btn.onclick = async () => {
         const rid = btn.getAttribute("data-copy-join");
-        const room = rooms.find((x) => x.room_id === rid);
-        if (!room) {
-          log(`JOIN LINK ERROR: room not found ${rid}`);
-          return;
-        }
+        const room = roomsById[rid];
+        if (!room) { log(`JOIN LINK ERROR: room not found ${rid}`); return; }
         try {
           let joinCode = String(room.join_code || "").trim();
           if (!joinCode) {
