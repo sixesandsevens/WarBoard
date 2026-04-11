@@ -22,6 +22,7 @@ const ASSET_KIND_OVERRIDE_KEY = "warhamster:v1:asset_kind_override";
 const ASSET_FILTER_PRESET_KEY = "warhamster:v1:asset_filter_preset";
 const ASSET_DEBUG_NET_KEY = "warhamster:v1:asset_debug_net";
 const ASSET_SAVED_SETS_KEY = "warhamster:v1:asset_saved_sets";
+const ASSET_SCOPE_KEY = "warhamster:v1:asset_scope";
 
 function loadAssetRecentUsage() {
   try {
@@ -90,6 +91,18 @@ function loadAssetMoveLock() {
     return false;
   }
 }
+function loadAssetScope() {
+  try {
+    return localStorage.getItem(ASSET_SCOPE_KEY) || "all";
+  } catch (_) {
+    return "all";
+  }
+}
+function saveAssetScope(value) {
+  try {
+    localStorage.setItem(ASSET_SCOPE_KEY, String(value || "all"));
+  } catch (_) {}
+}
 
 const assetState = {
   items: [],
@@ -102,7 +115,7 @@ const assetState = {
   searchDebounceMs: 160,
   folder: "",
   viewMode: "pieces",
-  packFilter: "all",
+  packFilter: loadAssetScope(),
   typeFilter: "all",
   alphaFilter: "all",
   sizeFilter: "all",
@@ -682,10 +695,10 @@ function buildAssetApiQuery(offset = 0) {
 }
 
 function buildAssetFolderApiQuery() {
+  // The folder tree is for scope navigation, not search results. Omit q/tag so
+  // that typing in the search box doesn't rebuild the tree with filtered counts.
   const query = effectiveAssetBrowseQuery();
   const params = new URLSearchParams();
-  if (query.q) params.set("q", query.q);
-  if (query.tag) params.set("tag", query.tag);
   if (query.pack && query.pack !== "all") params.set("pack", query.pack);
   if (query.kind && query.kind !== "all") params.set("kind", query.kind);
   if (query.type && query.type !== "all") params.set("type", query.type);
@@ -1929,7 +1942,10 @@ function initAssetLibBindings() {
     assetState.searchInput = assetSearchInputEl.value || "";
     if (assetSearchDebounceTimer) clearTimeout(assetSearchDebounceTimer);
     assetSearchDebounceTimer = setTimeout(() => {
-      void applyAssetQueryChange({ search: assetState.searchInput, searchInput: assetState.searchInput });
+      void applyAssetQueryChange(
+        { search: assetState.searchInput, searchInput: assetState.searchInput },
+        { refreshFolders: false },
+      );
     }, assetState.searchDebounceMs);
   });
   if (assetViewModeEl) {
@@ -1946,6 +1962,7 @@ function initAssetLibBindings() {
       const prev = String(assetState.packFilter || "all");
       saveAssetFilterPreset();
       assetState.packFilter = String(assetPackFilterEl.value || "all");
+      saveAssetScope(assetState.packFilter);
       applyAssetFilterPresetForSource(assetState.packFilter, prev !== assetState.packFilter);
       void applyAssetQueryChange({ packFilter: assetState.packFilter });
     });

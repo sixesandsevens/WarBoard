@@ -81,6 +81,7 @@ from .storage import (
     get_user_by_username,
     init_db,
     is_member,
+    get_asset_for_user,
     list_asset_folders_for_user,
     list_all_assets_for_user,
     list_assets_for_user_page,
@@ -999,14 +1000,13 @@ def delete_asset_api(asset_id: str, req: Request):
     user = _require_user(req)
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
-    assets = list_assets_for_user(user.user_id)
-    target = next((a for a in assets if a.get("asset_id") == asset_id), None)
+    target = get_asset_for_user(asset_id, user.user_id)
     if not target:
         raise HTTPException(status_code=404, detail="Asset not found")
     deleted = delete_asset_record(asset_id, user.user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Asset not found")
-    rel = str(target.get("url_original") or "")
+    rel = str(target.url_original or "")
     if rel.startswith("/uploads/"):
         local_path = UPLOADS_DIR / rel.replace("/uploads/", "", 1)
         try:
@@ -1014,7 +1014,7 @@ def delete_asset_api(asset_id: str, req: Request):
                 local_path.unlink()
         except OSError as e:
             LOG.warning("Failed to delete asset file %s: %s", local_path, e)
-    thumb_rel = str(target.get("url_thumb") or "")
+    thumb_rel = str(target.url_thumb or "")
     if thumb_rel.startswith("/uploads/"):
         thumb_local_path = UPLOADS_DIR / thumb_rel.replace("/uploads/", "", 1)
         try:

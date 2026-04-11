@@ -402,10 +402,16 @@ def list_asset_folders_for_user(
     type: str = "",
     alpha: str = "",
     session_id: Optional[str] = None,
-    skip_missing: bool = False,
+    skip_missing: bool = False,  # handled by callers; kept for API compat
     is_game_session_member: Callable[[str, int], bool],
     shared_pack_ids_for_game_session: Callable[[str], set[int]],
 ) -> List[Dict[str, object]]:
+    """
+    Return per-folder asset counts using SQL GROUP BY for all filter combinations.
+    All filtering (q, tag, kind, type, alpha, pack) is pushed into SQL — no full
+    asset-universe scan.  skip_missing requires disk I/O so it is handled upstream
+    (app.py) before this function is called.
+    """
     pack_filter = (pack or "").strip()
     qn = (q or "").strip().lower()
     tn = (tag or "").strip().lower()
@@ -413,81 +419,107 @@ def list_asset_folders_for_user(
     type_filter = _normalize_asset_type(type)
     alpha_filter = _normalize_asset_alpha(alpha)
 
-    # Fast path for the default folder tree: grouped counts directly in SQL.
-    # This avoids loading the full asset universe before the browser can render.
-    if not skip_missing and not qn and not tn and not kind_filter and not type_filter and not alpha_filter:
-        pack_ids = _pack_ids_for_user(user_id)
-        if session_id and is_game_session_member(session_id, user_id):
-            pack_ids.update(shared_pack_ids_for_game_session(session_id))
+    pack_ids = _pack_ids_for_user(user_id)
+    if session_id and is_game_session_member(session_id, user_id):
+        pack_ids.update(shared_pack_ids_for_game_session(session_id))
 
-        with _raw_conn_ctx() as conn:
-            slug_by_pack_id: Dict[int, str] = {}
-            if pack_ids:
-                ph = ",".join("?" * len(pack_ids))
-                for row in conn.execute(
-                    f"SELECT pack_id, slug FROM privatepackrow WHERE pack_id IN ({ph})",
-                    list(pack_ids),
-                ).fetchall():
-                    slug_by_pack_id[int(row["pack_id"])] = str(row["slug"] or "")
+    with _raw_conn_ctx() as conn:
+        slug_by_pack_id: Dict[int, str] = {}
+        if pack_ids:
+            ph = ",".join("?" * len(pack_ids))
+            for row in conn.execute(
+                f"SELECT pack_id, slug FROM privatepackrow WHERE pack_id IN ({ph})",
+                list(pack_ids),
+            ).fetchall():
+                slug_by_pack_id[int(row["pack_id"])] = str(row["slug"] or "")
 
-            include_uploads = pack_filter in {"", "all", "upload"}
-            selected_pack_ids = [] if pack_filter == "upload" else list(pack_ids)
-            if pack_filter and pack_filter not in {"all", "upload"}:
-                selected_pack_ids = [pid for pid, slug in slug_by_pack_id.items() if slug == pack_filter]
-                include_uploads = False
+        include_uploads = pack_filter in {"", "all", "upload"}
+        selected_pack_ids = [] if pack_filter == "upload" else list(pack_ids)
+        if pack_filter and pack_filter not in {"all", "upload"}:
+            selected_pack_ids = [pid for pid, slug in slug_by_pack_id.items() if slug == pack_filter]
+            include_uploads = False
 
-            rows: List[dict] = []
-            if include_uploads:
-                for row in conn.execute(
-                    """
-                    SELECT folder_path, COUNT(*) AS count
-                    FROM assetrow
-                    WHERE uploader_user_id = ? AND COALESCE(folder_path, '') != ''
-                    GROUP BY folder_path
-                    """,
-                    [user_id],
-                ).fetchall():
-                    rows.append(dict(row))
+        # Build WHERE fragments (mirroring list_assets_for_user_page logic)
+        upload_wheres: List[str] = ["a.uploader_user_id = ?", "COALESCE(a.folder_path, '') != ''"]
+        upload_params: List[object] = [user_id]
+        pack_extra_wheres: List[str] = ["COALESCE(pa.folder_path, '') != ''"]
+        pack_extra_params: List[object] = []
 
-            if selected_pack_ids:
-                ph = ",".join("?" * len(selected_pack_ids))
-                for row in conn.execute(
-                    f"""
-                    SELECT folder_path, COUNT(*) AS count
-                    FROM privatepackassetrow
-                    WHERE pack_id IN ({ph}) AND COALESCE(folder_path, '') != ''
-                    GROUP BY folder_path
-                    """,
-                    selected_pack_ids,
-                ).fetchall():
-                    rows.append(dict(row))
+        if qn:
+            upload_wheres.append(
+                "(LOWER(a.name) LIKE ? OR EXISTS"
+                " (SELECT 1 FROM json_each(COALESCE(a.tags_json, '[]')) WHERE LOWER(value) LIKE ?))"
+            )
+            upload_params.extend([f"%{qn}%", f"%{qn}%"])
+            pack_extra_wheres.append(
+                "(LOWER(pa.name) LIKE ? OR EXISTS"
+                " (SELECT 1 FROM json_each(COALESCE(pa.tags_json, '[]')) WHERE LOWER(value) LIKE ?))"
+            )
+            pack_extra_params.extend([f"%{qn}%", f"%{qn}%"])
 
-        merged: Dict[str, int] = {}
-        for row in rows:
-            path = str(row.get("folder_path") or "").strip()
-            if not path:
-                continue
-            merged[path] = merged.get(path, 0) + int(row.get("count") or 0)
-        return [{"path": path, "count": count} for path, count in sorted(merged.items())]
+        if tn:
+            upload_wheres.append(
+                "EXISTS (SELECT 1 FROM json_each(COALESCE(a.tags_json, '[]')) WHERE LOWER(value) = ?)"
+            )
+            upload_params.append(tn)
+            pack_extra_wheres.append(
+                "EXISTS (SELECT 1 FROM json_each(COALESCE(pa.tags_json, '[]')) WHERE LOWER(value) = ?)"
+            )
+            pack_extra_params.append(tn)
 
-    assets = list_all_assets_for_user(
-        user_id,
-        q=q,
-        tag=tag,
-        pack=pack_filter,
-        kind=kind,
-        type=type,
-        alpha=alpha,
-        session_id=session_id,
-        is_game_session_member=is_game_session_member,
-        shared_pack_ids_for_game_session=shared_pack_ids_for_game_session,
-    )
+        if type_filter:
+            upload_wheres.append(f"{_asset_type_sql('a')} = ?")
+            upload_params.append(type_filter)
+            pack_extra_wheres.append(f"{_asset_type_sql('pa')} = ?")
+            pack_extra_params.append(type_filter)
+
+        if alpha_filter:
+            wants_alpha = alpha_filter == "yes"
+            upload_wheres.append(_asset_has_alpha_sql("a") if wants_alpha else f"NOT {_asset_has_alpha_sql('a')}")
+            pack_extra_wheres.append(_asset_has_alpha_sql("pa") if wants_alpha else f"NOT {_asset_has_alpha_sql('pa')}")
+
+        if kind_filter:
+            upload_wheres.append(f"{_asset_kind_sql('a')} = ?")
+            upload_params.append(kind_filter)
+            pack_extra_wheres.append(f"{_asset_kind_sql('pa')} = ?")
+            pack_extra_params.append(kind_filter)
+
+        upload_where_sql = " AND ".join(upload_wheres)
+        raw_rows: List[dict] = []
+
+        if include_uploads:
+            for row in conn.execute(
+                f"""
+                SELECT a.folder_path, COUNT(*) AS count
+                FROM assetrow a
+                WHERE {upload_where_sql}
+                GROUP BY a.folder_path
+                """,
+                upload_params,
+            ).fetchall():
+                raw_rows.append(dict(row))
+
+        if selected_pack_ids:
+            ph = ",".join("?" * len(selected_pack_ids))
+            pack_wheres = [f"pa.pack_id IN ({ph})"] + pack_extra_wheres
+            pack_where_sql = " AND ".join(pack_wheres)
+            for row in conn.execute(
+                f"""
+                SELECT pa.folder_path, COUNT(*) AS count
+                FROM privatepackassetrow pa
+                WHERE {pack_where_sql}
+                GROUP BY pa.folder_path
+                """,
+                selected_pack_ids + pack_extra_params,
+            ).fetchall():
+                raw_rows.append(dict(row))
+
     merged: Dict[str, int] = {}
-    for asset in assets:
-        path = str(asset.get("folder_path") or "").strip()
+    for row in raw_rows:
+        path = str(row.get("folder_path") or "").strip()
         if not path:
             continue
-        merged[path] = merged.get(path, 0) + 1
+        merged[path] = merged.get(path, 0) + int(row.get("count") or 0)
     return [{"path": path, "count": count} for path, count in sorted(merged.items())]
 
 
