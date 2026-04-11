@@ -3,126 +3,290 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>WarHamster – Lobby</title>
+  <title>WarBoard – Lobby</title>
   <style>
-    body{margin:0;background:#0f1115;color:#eaeef6;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
-    .top{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);background:#121622;position:sticky;top:0}
-    .brand{font-weight:800;letter-spacing:.5px}
-    .brand-wrap{display:flex;align-items:center;gap:10px}
-    .top-mascot{width:38px;height:38px;object-fit:contain;border-radius:10px;background:rgba(180,225,95,.12);border:1px solid rgba(180,225,95,.22);padding:4px}
-    .top-mascot.missing{display:none}
-    .me{color:rgba(234,238,246,.75);font-size:13px}
-    .wrap{max-width:980px;margin:0 auto;padding:16px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-    @media (max-width:860px){.grid{grid-template-columns:1fr}}
-    .card{background:#161a22;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:14px}
-    h2{margin:0 0 10px;font-size:16px}
-    h3{margin:0 0 8px;font-size:14px;color:rgba(234,238,246,.8)}
-    input,button{font:inherit}
-    input{width:100%;padding:10px 11px;border-radius:10px;border:1px solid rgba(255,255,255,.10);background:#0f1218;color:#eaeef6;outline:none}
-    input:focus{border-color:rgba(120,170,255,.55);box-shadow:0 0 0 3px rgba(120,170,255,.12)}
-    button{padding:10px 12px;border-radius:10px;border:0;background:#4c7dff;color:white;font-weight:700;cursor:pointer}
-    button:hover{filter:brightness(1.05)}
-    .row{display:flex;gap:10px;align-items:center}
-    .row > *{flex:1}
-    .list{display:flex;flex-direction:column;gap:10px}
-    .room{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 10px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:#0f1218}
-    .rname{font-weight:700}
-    .meta{font-size:12px;color:rgba(234,238,246,.65)}
-    .pill{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:12px;padding:4px 8px;border-radius:999px;background:rgba(120,170,255,.14);border:1px solid rgba(120,170,255,.25)}
-    .actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-    .ghost{background:#2b354e}
-    a{color:#8fb1ff;text-decoration:none}
-    .small{font-size:12px;color:rgba(234,238,246,.65)}
-    .intro{display:flex;gap:16px;align-items:center;margin-bottom:14px}
-    .intro-mascot{width:120px;max-width:24vw;border-radius:16px;background:rgba(180,225,95,.12);border:1px solid rgba(180,225,95,.22);padding:8px;box-shadow:0 10px 24px rgba(0,0,0,.22)}
-    .intro-mascot.missing{display:none}
-    .intro-copy h1{margin:0 0 6px;font-size:22px}
-    .intro-copy p{margin:0;color:rgba(234,234,246,.7)}
-    @media (max-width:700px){.intro{align-items:flex-start}.intro-mascot{width:88px;max-width:none}.intro-copy h1{font-size:18px}}
-    /* Session cards */
-    .session-card{border:1px solid rgba(255,255,255,.10);border-radius:12px;background:#0f1218;overflow:hidden;margin-bottom:10px}
-    .session-header{display:flex;gap:10px;align-items:center;padding:10px 12px;cursor:default}
-    .session-toggle{background:none;border:none;color:#eaeef6;font-size:14px;padding:0 4px;cursor:pointer;opacity:.7;flex:0 0 auto}
-    .session-toggle:hover{opacity:1}
-    .session-name{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .role-badge{font-size:11px;padding:2px 7px;border-radius:999px;background:rgba(120,170,255,.18);border:1px solid rgba(120,170,255,.3);white-space:nowrap}
-    .role-badge.gm{background:rgba(255,200,80,.14);border-color:rgba(255,200,80,.3);color:#ffd060}
-    .session-meta{font-size:12px;color:rgba(234,238,246,.55);white-space:nowrap}
-    .session-rooms{padding:0 0 6px 0;border-top:1px solid rgba(255,255,255,.06)}
-    .session-rooms.hidden{display:none}
-    .room-node{display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.04)}
-    .room-node:last-child{border-bottom:none}
-    .room-node-name{flex:1;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .room-node-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
-    .room-node-actions button{padding:4px 8px;font-size:12px;font-weight:600}
-    .section-label{font-size:13px;font-weight:700;color:rgba(234,238,246,.5);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px}
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1e1e1e;
+      color: #eeeeec;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── Top bar ─────────────────────────────────────────────────────── */
+    .top {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 16px;
+      height: 44px;
+      background: #171717;
+      border-bottom: 1px solid #111;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.04);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .brand-wrap { display: flex; align-items: center; gap: 9px; }
+    .brand { font-weight: 700; font-size: 14px; color: #eeeeec; }
+    .top-mascot {
+      width: 28px; height: 28px; object-fit: contain; border-radius: 5px;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 3px;
+    }
+    .top-mascot.missing { display: none; }
+    .top-right { display: flex; align-items: center; gap: 10px; }
+    .me { font-size: 13px; color: rgba(238,238,236,0.5); }
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
+    .wrap { max-width: 880px; margin: 0 auto; padding: 20px 14px 40px; }
+
+    .intro { display: flex; gap: 14px; align-items: center; margin-bottom: 20px; }
+    .intro-mascot {
+      width: 72px; max-width: 16vw; border-radius: 8px; flex-shrink: 0;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      padding: 5px;
+    }
+    .intro-mascot.missing { display: none; }
+    .intro-copy h1 { font-size: 17px; font-weight: 700; color: #eeeeec; margin-bottom: 3px; }
+    .intro-copy p { font-size: 13px; color: rgba(238,238,236,0.5); }
+
+    /* ── Cards ───────────────────────────────────────────────────────── */
+    .card {
+      background: #2a2a2a;
+      border: 1px solid #383838;
+      border-radius: 6px;
+      padding: 14px;
+    }
+
+    .card-label {
+      font-size: 11px; font-weight: 700; color: rgba(238,238,236,0.4);
+      text-transform: uppercase; letter-spacing: 0.07em;
+      margin-bottom: 10px;
+    }
+
+    /* ── Action grid ─────────────────────────────────────────────────── */
+    .action-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    @media (max-width: 740px) { .action-grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 480px) { .action-grid { grid-template-columns: 1fr; } }
+
+    /* ── Form controls ───────────────────────────────────────────────── */
+    input {
+      display: block; width: 100%;
+      padding: 7px 10px;
+      background: #1a1a1a; color: #eeeeec;
+      border: 1px solid #3d3d3d; border-radius: 4px;
+      outline: none; font: inherit; font-size: 13px;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
+    }
+    input::placeholder { color: rgba(238,238,236,0.28); }
+    input:focus {
+      border-color: #3584e4;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.3), 0 0 0 2px rgba(53,132,228,0.22);
+    }
+
+    .input-row { display: flex; gap: 7px; align-items: center; }
+    .input-row input { flex: 1; min-width: 0; }
+    .form-stack { display: flex; flex-direction: column; gap: 7px; }
+
+    /* ── Buttons ─────────────────────────────────────────────────────── */
+    button {
+      font: inherit; cursor: pointer; border-radius: 4px; font-size: 13px;
+      font-weight: 600; line-height: 1.3; white-space: nowrap;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background 80ms, box-shadow 80ms;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary {
+      background: #3584e4;
+      border: 1px solid #1a6fc4;
+      color: #fff;
+      padding: 7px 14px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    }
+    .btn-primary:hover:not(:disabled) { background: #3d8ef0; }
+    .btn-primary:active:not(:disabled) { background: #2e74cc; box-shadow: inset 0 1px 2px rgba(0,0,0,0.3); }
+
+    .btn-ghost {
+      background: #383838;
+      border: 1px solid #484848;
+      color: rgba(238,238,236,0.80);
+      padding: 7px 14px;
+      box-shadow: 0 1px 1px rgba(0,0,0,0.25);
+    }
+    .btn-ghost:hover:not(:disabled) { background: #414141; color: #eeeeec; }
+    .btn-ghost:active:not(:disabled) { background: #303030; box-shadow: inset 0 1px 2px rgba(0,0,0,0.3); }
+
+    .btn-danger {
+      background: #383838;
+      border: 1px solid #484848;
+      color: #e06060;
+      padding: 7px 14px;
+      box-shadow: 0 1px 1px rgba(0,0,0,0.25);
+    }
+    .btn-danger:hover:not(:disabled) { background: #3d2020; border-color: #5a2e2e; color: #e87878; }
+    .btn-danger:active:not(:disabled) { box-shadow: inset 0 1px 2px rgba(0,0,0,0.3); }
+
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    /* ── Tables / lobby list ─────────────────────────────────────────── */
+    .section-label {
+      font-size: 11px; font-weight: 700; color: rgba(238,238,236,0.38);
+      text-transform: uppercase; letter-spacing: 0.07em;
+      margin: 16px 0 7px;
+    }
+    .section-label:first-child { margin-top: 2px; }
+
+    /* ── Session cards ───────────────────────────────────────────────── */
+    .session-card {
+      border: 1px solid #383838;
+      border-radius: 5px;
+      background: #252525;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+    .session-header {
+      display: flex; gap: 8px; align-items: center;
+      padding: 8px 11px; cursor: pointer; user-select: none;
+      min-height: 42px;
+    }
+    .session-header:hover { background: rgba(255,255,255,0.025); }
+    .session-toggle {
+      background: none; border: none; padding: 0 2px;
+      color: rgba(238,238,236,0.4); font-size: 10px; cursor: pointer;
+      flex: 0 0 auto; line-height: 1;
+    }
+    .session-toggle:hover { color: #eeeeec; }
+    .session-name {
+      font-weight: 600; font-size: 13px;
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .role-badge {
+      flex: 0 0 auto;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+      padding: 2px 6px; border-radius: 3px;
+      background: #353535; border: 1px solid #484848;
+      color: rgba(238,238,236,0.6);
+    }
+    .role-badge.gm {
+      background: #3a3020; border-color: #5a4a1a; color: #c8a030;
+    }
+    .session-meta { flex: 0 0 auto; font-size: 12px; color: rgba(238,238,236,0.35); }
+    .session-actions { display: flex; gap: 5px; flex: 0 0 auto; }
+
+    .session-rooms { border-top: 1px solid #333; }
+    .session-rooms.hidden { display: none; }
+
+    .room-node {
+      display: flex; gap: 8px; align-items: center;
+      padding: 6px 11px; border-bottom: 1px solid #2e2e2e;
+    }
+    .room-node:last-child { border-bottom: none; }
+    .room-node:hover { background: rgba(255,255,255,0.02); }
+    .room-node-name {
+      flex: 1; font-size: 13px;
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: rgba(238,238,236,0.82);
+    }
+    .room-node-meta { font-size: 11px; color: rgba(238,238,236,0.35); margin-left: 5px; }
+    .room-node-actions { display: flex; gap: 5px; flex: 0 0 auto; }
+
+    /* ── Standalone rooms ────────────────────────────────────────────── */
+    .room {
+      display: flex; gap: 10px; align-items: center; justify-content: space-between;
+      padding: 8px 11px;
+      border: 1px solid #383838; border-radius: 5px;
+      background: #252525; margin-bottom: 5px;
+    }
+    .room:hover { background: #272727; }
+    .room-left { min-width: 0; flex: 1; }
+    .rname { font-weight: 600; font-size: 13px; color: rgba(238,238,236,0.88); }
+    .meta { font-size: 12px; color: rgba(238,238,236,0.4); margin-top: 1px; }
+    .actions { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; flex: 0 0 auto; }
+
+    /* ── Misc ────────────────────────────────────────────────────────── */
+    .pill {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Courier New', monospace;
+      font-size: 11px; padding: 1px 5px; border-radius: 3px;
+      background: #303030; border: 1px solid #424242;
+      color: rgba(238,238,236,0.6);
+    }
+    a { color: #78aee8; text-decoration: none; }
+    a:hover { color: #96c1f0; text-decoration: underline; }
+    .small { font-size: 12px; color: rgba(238,238,236,0.45); }
+    .hint { font-size: 12px; color: rgba(238,238,236,0.38); margin-top: 8px; }
+    .err { font-size: 12px; color: #d47070; margin-top: 7px; min-height: 1em; }
+
+    @media (max-width: 640px) {
+      .intro { align-items: flex-start; }
+      .intro-mascot { width: 60px; max-width: none; }
+      .intro-copy h1 { font-size: 15px; }
+      .session-meta { display: none; }
+    }
   </style>
 </head>
 <body>
   <div class="top">
     <div class="brand-wrap">
-      <img
-        class="top-mascot"
-        src="/static/WarHamsterMascot.png"
-        alt="WarHamster mascot"
-        onerror="this.classList.add('missing');"
-      />
-      <div class="brand">WarHamster</div>
+      <img class="top-mascot" src="/static/WarHamsterMascot.png" alt=""
+           onerror="this.classList.add('missing');"/>
+      <div class="brand">WarBoard</div>
     </div>
-    <div class="row" style="flex:0;gap:8px;">
-      <div class="me" id="me">…</div>
-      <button class="ghost" id="logoutBtn" style="flex:0;">Logout</button>
+    <div class="top-right">
+      <div class="me" id="me"></div>
+      <button class="btn-ghost btn-sm" id="logoutBtn">Logout</button>
     </div>
   </div>
 
   <div class="wrap">
     <div class="intro">
-      <img
-        class="intro-mascot"
-        src="/static/WarHamsterMascot.png"
-        alt="WarHamster mascot"
-        onerror="this.classList.add('missing');"
-      />
+      <img class="intro-mascot" src="/static/WarHamsterMascot.png" alt=""
+           onerror="this.classList.add('missing');"/>
       <div class="intro-copy">
-        <h1>Welcome to WarHamster</h1>
+        <h1>Welcome to WarBoard</h1>
+        <p>Create a table, join a session, or pick up where you left off.</p>
       </div>
     </div>
-    <div class="grid">
-      <div class="card">
-        <h2>Create a new table</h2>
-        <div class="row">
-          <input id="newName" placeholder="Room name (e.g., The Tavern)"/>
-          <button id="createBtn" style="flex:0;">Create</button>
-        </div>
-        <p class="small">You'll get a join code to share with your players.</p>
-      </div>
 
+    <div class="action-grid">
       <div class="card">
-        <h2>Join with a code</h2>
-        <div class="row">
-          <input id="joinCode" placeholder="WHAM-XXXXXX"/>
-          <button id="joinBtn" style="flex:0;">Join</button>
-        </div>
-        <div class="small" id="joinMsg"></div>
-      </div>
-
-      <div class="card">
-        <h2>New campaign session</h2>
-        <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="card-label">New campaign session</div>
+        <div class="form-stack">
           <input id="sessName" placeholder="Session name (e.g., Sewer Crawl)"/>
-          <input id="sessRoomName" placeholder="First room name (e.g., The Tavern)"/>
-          <button id="createSessBtn">Create Session</button>
+          <input id="sessRoomName" placeholder="First room (e.g., The Tavern)"/>
+          <button class="btn-primary" id="createSessBtn">Create Session</button>
         </div>
-        <p class="small">Groups multiple rooms under one campaign.</p>
-        <div class="small" style="color:#ffb3b3;" id="sessMsg"></div>
+        <div class="err" id="sessMsg"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">New table</div>
+        <div class="input-row">
+          <input id="newName" placeholder="Room name (e.g., The Tavern)"/>
+          <button class="btn-primary" id="createBtn">Create</button>
+        </div>
+        <div class="hint">You'll get a join code to share with players.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Join with a code</div>
+        <div class="input-row">
+          <input id="joinCode" placeholder="WHAM-XXXXXX"/>
+          <button class="btn-primary" id="joinBtn">Join</button>
+        </div>
+        <div class="err" id="joinMsg"></div>
       </div>
     </div>
 
-    <div class="card" style="margin-top:14px;">
-      <h2>Your recent tables</h2>
+    <div class="card">
+      <div class="card-label">Your recent tables</div>
       <div id="lobbyContent"></div>
-      <div class="small" style="margin-top:10px;">Tip: send your DM a join link like <span class="pill">https://warhamster.app/join/WHAM-ABC123</span></div>
+      <div class="hint" style="margin-top:14px;">
+        Share a join link like <span class="pill">warboard.app/join/WHAM-ABC123</span>
+      </div>
     </div>
   </div>
 
@@ -145,7 +309,6 @@
     catch(e){ return iso.slice(0,10); }
   }
 
-  // Build a depth-indexed flat list from a tree (rooms with parent_room_id)
   function flattenTree(rooms, rootRoomId){
     const byId = {};
     for(const r of rooms) byId[r.room_id] = Object.assign({}, r, {children:[]});
@@ -156,16 +319,13 @@
     }
     function visit(node, depth){
       result.push({room: node, depth});
-      // Sort children by room_order then display_name
       node.children.sort((a,b) => (a.room_order||999999)-(b.room_order||999999) || (a.display_name||'').localeCompare(b.display_name||''));
       for(const c of node.children) visit(c, depth+1);
     }
-    // Start from root if available, else roots (nodes with no parent in this set)
     const roots = rootRoomId && byId[rootRoomId]
       ? [byId[rootRoomId]]
       : rooms.filter(r => !r.parent_room_id || !byId[r.parent_room_id]).map(r => byId[r.room_id]);
     for(const root of roots) visit(root, 0);
-    // Append any rooms not yet visited (orphans)
     const visited = new Set(result.map(x => x.room.room_id));
     for(const r of rooms) if(!visited.has(r.room_id)) result.push({room: byId[r.room_id], depth: 0});
     return result;
@@ -174,15 +334,14 @@
   function makeRoomNode(r, depth, opts={}){
     const div = document.createElement('div');
     div.className = 'room-node';
-    div.style.paddingLeft = (12 + depth * 18) + 'px';
+    div.style.paddingLeft = (12 + depth * 16) + 'px';
 
     const nameSpan = document.createElement('span');
     nameSpan.className = 'room-node-name';
     nameSpan.textContent = r.display_name || r.name;
     if(r.join_code){
       const code = document.createElement('span');
-      code.className = 'meta';
-      code.style.marginLeft = '6px';
+      code.className = 'room-node-meta';
       code.textContent = r.join_code;
       nameSpan.appendChild(code);
     }
@@ -192,17 +351,18 @@
     actions.className = 'room-node-actions';
 
     const openBtn = document.createElement('button');
+    openBtn.className = 'btn-primary btn-sm';
     openBtn.textContent = 'Open';
     openBtn.onclick = () => location.href = '/static/canvas.html?room=' + encodeURIComponent(r.room_id);
     actions.appendChild(openBtn);
 
     if(r.join_code){
       const copyBtn = document.createElement('button');
-      copyBtn.className = 'ghost';
-      copyBtn.textContent = 'Copy Link';
+      copyBtn.className = 'btn-ghost btn-sm';
+      copyBtn.textContent = 'Copy link';
       copyBtn.onclick = async () => {
         const link = location.origin + '/join/' + r.join_code;
-        try{ await navigator.clipboard.writeText(link); copyBtn.textContent='Copied'; setTimeout(()=>copyBtn.textContent='Copy Link',1000); }
+        try{ await navigator.clipboard.writeText(link); copyBtn.textContent='Copied!'; setTimeout(()=>copyBtn.textContent='Copy link',1400); }
         catch(e){ alert(link); }
       };
       actions.appendChild(copyBtn);
@@ -210,8 +370,7 @@
 
     if(opts.canDelete){
       const delBtn = document.createElement('button');
-      delBtn.className = 'ghost';
-      delBtn.style.color = '#ffb3b3';
+      delBtn.className = 'btn-danger btn-sm';
       delBtn.textContent = 'Delete';
       delBtn.onclick = async () => {
         if(!confirm(`Delete "${r.display_name || r.name}"? This cannot be undone.`)) return;
@@ -246,7 +405,7 @@
 
         const toggle = document.createElement('button');
         toggle.className = 'session-toggle';
-        toggle.textContent = '▸';
+        toggle.textContent = '▶';
         toggle.setAttribute('aria-label', 'Expand session');
         header.appendChild(toggle);
 
@@ -266,37 +425,57 @@
         metaEl.textContent = roomCount + (roomCount===1?' room':' rooms') + ' · ' + fmtDate(sess.updated_at);
         header.appendChild(metaEl);
 
-        // Open main room button
+        // Action buttons grouped together
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'session-actions';
+
         const rootRoomId = sess.root_room_id || ((sess.rooms||[])[0] || {}).room_id;
+        const rootRoom = (sess.rooms||[]).find(r => r.room_id === rootRoomId) || (sess.rooms||[])[0];
+        const rootJoinCode = rootRoom && rootRoom.join_code;
+
         if(rootRoomId){
           const openMain = document.createElement('button');
-          openMain.style.cssText = 'flex:0; padding:6px 10px; font-size:12px;';
-          openMain.textContent = 'Open Main Room';
+          openMain.className = 'btn-primary btn-sm';
+          openMain.textContent = 'Open';
           openMain.onclick = (e) => { e.stopPropagation(); location.href = '/static/canvas.html?room=' + encodeURIComponent(rootRoomId); };
-          header.appendChild(openMain);
+          actionsDiv.appendChild(openMain);
         }
 
-        // Delete session button (GM only)
+        if(rootJoinCode){
+          const copyBtn = document.createElement('button');
+          copyBtn.className = 'btn-ghost btn-sm';
+          copyBtn.textContent = 'Copy code';
+          copyBtn.onclick = async (e) => {
+            e.stopPropagation();
+            const link = location.origin + '/join/' + rootJoinCode;
+            try{
+              await navigator.clipboard.writeText(link);
+              copyBtn.textContent = 'Copied!';
+              setTimeout(() => copyBtn.textContent = 'Copy code', 1400);
+            } catch(_){ alert(link); }
+          };
+          actionsDiv.appendChild(copyBtn);
+        }
+
         if(sess.role === 'gm'){
           const delBtn = document.createElement('button');
-          delBtn.className = 'ghost';
-          delBtn.style.cssText = 'flex:0; padding:6px 10px; font-size:12px; color:#ffb3b3;';
+          delBtn.className = 'btn-danger btn-sm';
           delBtn.textContent = 'Delete';
           delBtn.onclick = async (e) => {
             e.stopPropagation();
-            if(!confirm(`Delete session "${sess.name}"?\n\nThis removes the session but keeps all rooms. They will become standalone rooms.`)) return;
+            if(!confirm(`Delete session "${sess.name}"?\n\nThis removes the session grouping but keeps all rooms as standalone tables.`)) return;
             delBtn.disabled = true; delBtn.textContent = 'Deleting…';
             try{
               await api(`/api/sessions/${encodeURIComponent(sess.id)}`, {method:'DELETE'});
               await refresh();
             }catch(err){ alert('Delete failed: ' + err.message); delBtn.disabled=false; delBtn.textContent='Delete'; }
           };
-          header.appendChild(delBtn);
+          actionsDiv.appendChild(delBtn);
         }
 
+        header.appendChild(actionsDiv);
         card.appendChild(header);
 
-        // Rooms list (collapsible)
         const roomsDiv = document.createElement('div');
         roomsDiv.className = 'session-rooms hidden';
 
@@ -309,19 +488,18 @@
           }
         } else {
           const empty = document.createElement('div');
-          empty.style.cssText = 'padding:8px 12px; opacity:.5; font-size:13px;';
-          empty.textContent = 'No rooms yet.';
+          empty.style.cssText = 'padding:10px 12px; opacity:.4; font-size:13px;';
+          empty.textContent = 'No rooms in this session yet.';
           roomsDiv.appendChild(empty);
         }
 
         card.appendChild(roomsDiv);
 
-        // Toggle expand/collapse
-        toggle.onclick = () => {
+        toggle.onclick = (e) => {
+          e.stopPropagation();
           const hidden = roomsDiv.classList.toggle('hidden');
-          toggle.textContent = hidden ? '▸' : '▾';
+          toggle.textContent = hidden ? '▶' : '▼';
         };
-        header.style.cursor = 'pointer';
         header.onclick = (e) => {
           if(e.target === header || e.target === nameEl || e.target === metaEl || e.target === badge){
             toggle.click();
@@ -354,26 +532,34 @@
     for(const r of rooms){
       const div = document.createElement('div');
       div.className = 'room';
+
       const left = document.createElement('div');
-      left.innerHTML = '<div class="rname"></div><div class="meta"></div>';
-      left.querySelector('.rname').textContent = r.name + (r.role==='owner' ? ' (GM)' : '');
-      left.querySelector('.meta').textContent = r.join_code ? ('Join code: ' + r.join_code) : ('Room ID: ' + r.room_id);
+      left.className = 'room-left';
+      const rname = document.createElement('div');
+      rname.className = 'rname';
+      rname.textContent = r.name + (r.role==='owner' ? ' (GM)' : '');
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = r.join_code ? 'Join code: ' + r.join_code : 'Room ID: ' + r.room_id;
+      left.appendChild(rname);
+      left.appendChild(meta);
 
       const right = document.createElement('div');
       right.className = 'actions';
 
       const openBtn = document.createElement('button');
+      openBtn.className = 'btn-primary btn-sm';
       openBtn.textContent = 'Open';
       openBtn.onclick = () => location.href = '/static/canvas.html?room=' + encodeURIComponent(r.room_id);
       right.appendChild(openBtn);
 
       if(r.join_code){
         const copyBtn = document.createElement('button');
-        copyBtn.className = 'ghost';
-        copyBtn.textContent = 'Copy join link';
+        copyBtn.className = 'btn-ghost btn-sm';
+        copyBtn.textContent = 'Copy link';
         copyBtn.onclick = async () => {
           const link = location.origin + '/join/' + r.join_code;
-          try{ await navigator.clipboard.writeText(link); copyBtn.textContent='Copied'; setTimeout(()=>copyBtn.textContent='Copy join link',1000); }
+          try{ await navigator.clipboard.writeText(link); copyBtn.textContent='Copied!'; setTimeout(()=>copyBtn.textContent='Copy link',1400); }
           catch(e){ alert(link); }
         };
         right.appendChild(copyBtn);
@@ -381,8 +567,7 @@
 
       if(r.role === 'owner'){
         const delBtn = document.createElement('button');
-        delBtn.className = 'ghost';
-        delBtn.style.cssText = 'flex:0; color:#ffb3b3;';
+        delBtn.className = 'btn-danger btn-sm';
         delBtn.textContent = 'Delete';
         delBtn.onclick = async () => {
           if(!confirm(`Delete "${r.name}"? This cannot be undone and will disconnect anyone currently in the room.`)) return;
@@ -408,10 +593,9 @@
       api('/api/my/sessions'),
       api('/api/my/rooms'),
     ]);
-    meEl.textContent = 'Logged in as: ' + me.username;
+    meEl.textContent = me.username;
 
     const sessions = sessData.sessions || [];
-    // Rooms in sessions are already included; standalone = session_id is null
     const sessionRoomIds = new Set();
     for(const s of sessions) for(const r of (s.rooms||[])) sessionRoomIds.add(r.room_id);
     const allRooms = roomsData.rooms || [];
@@ -419,7 +603,7 @@
 
     lobbyEl.innerHTML = '';
     if(!sessions.length && !standaloneRooms.length){
-      lobbyEl.innerHTML = '<div class="small">No rooms yet. Create one or join one.</div>';
+      lobbyEl.innerHTML = '<div class="small">No rooms yet — create one above or join with a code.</div>';
       return;
     }
 
