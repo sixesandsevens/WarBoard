@@ -52,6 +52,7 @@ from .upload_helpers import (
     save_background_upload,
 )
 from .storage import (
+    count_private_pack_asset_rows,
     add_game_session_member,
     add_membership,
     archive_game_session,
@@ -80,8 +81,10 @@ from .storage import (
     get_user_by_username,
     init_db,
     is_member,
+    list_asset_folders_for_user,
     list_all_assets_for_user,
     list_assets_for_user_page,
+    list_private_pack_assets,
     list_game_session_members,
     list_game_session_rooms,
     list_game_session_shared_packs,
@@ -301,6 +304,36 @@ def _room_display_name(room_id: str) -> str:
     return meta.display_name or meta.name or room_id
 
 
+def _resolve_pack_asset_paths(asset: dict | object) -> tuple[Path | None, Path | None]:
+    pack_id = getattr(asset, "pack_id", None) if not isinstance(asset, dict) else asset.get("pack_id")
+    if pack_id is None:
+        return None, None
+    pack = get_private_pack_by_id(int(pack_id))
+    if not pack:
+        return None, None
+    asset_id = str(getattr(asset, "asset_id", "") if not isinstance(asset, dict) else asset.get("asset_id") or "").strip()
+    original_rel = str(getattr(asset, "url_original", "") if not isinstance(asset, dict) else asset.get("url_original") or "")
+    thumb_rel = str(getattr(asset, "url_thumb", "") if not isinstance(asset, dict) else asset.get("url_thumb") or "")
+    original_ext = Path(original_rel).suffix.lower()
+    thumb_name = Path(thumb_rel).name
+    original_name = Path(original_rel).name if original_rel else (f"{asset_id}{original_ext}" if asset_id else "")
+    original_path = PRIVATE_PACKS_DIR / str(pack.slug) / "originals" / original_name if original_name else None
+    thumb_path = PRIVATE_PACKS_DIR / str(pack.slug) / "thumbs" / thumb_name if thumb_name else None
+    return original_path, thumb_path
+
+
+def _asset_exists_on_disk(asset: dict) -> bool:
+    if asset.get("source") == "upload":
+        raw = str(asset.get("url_original") or "")
+        if not raw.startswith("/uploads/"):
+            return False
+        return (UPLOADS_DIR / raw.replace("/uploads/", "", 1)).exists()
+    if asset.get("source") == "pack":
+        original_path, _ = _resolve_pack_asset_paths(asset)
+        return bool(original_path and original_path.exists() and original_path.is_file())
+    return True
+
+
 async def _handle_session_control_event(event: WireEvent, user, client_id: str) -> WireEvent | None:
     return await handle_session_control_event(
         event=event,
@@ -508,6 +541,7 @@ def list_assets_api(
     alpha: str = "",
     sort: str = "recent",
     session_id: str = "",
+    skip_missing: int = 0,
     lite: int = 0,
     limit: int = 0,
     offset: int = 0,
@@ -555,6 +589,9 @@ def list_assets_api(
         )
         total_count = len(assets)
         has_more = False
+
+    if skip_missing:
+        assets = [asset for asset in assets if _asset_exists_on_disk(asset)]
 
     if lite:
         def _lite(asset):
@@ -620,6 +657,65 @@ def list_private_packs_api(req: Request, session_id: str = ""):
     if current_session_id and not get_game_session_role(current_session_id, user.user_id):
         raise HTTPException(status_code=403, detail="Not a member of this session")
     return {"packs": list_private_packs_for_user(user.user_id, session_id=current_session_id)}
+
+
+@app.get("/api/assets/folders")
+def list_asset_folders_api(req: Request, pack: str = "", session_id: str = "", skip_missing: int = 0):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    current_session_id = str(session_id or "").strip() or None
+    if current_session_id and not get_game_session_role(current_session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Not a member of this session")
+    return {
+        "folders": list_asset_folders_for_user(
+            user.user_id,
+            pack=str(pack or "").strip(),
+            session_id=current_session_id,
+            skip_missing=bool(skip_missing),
+        )
+    }
+
+
+@app.get("/api/admin/private-packs/scan-missing")
+def scan_private_pack_missing_api(req: Request, slug: str):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    pack = get_private_pack_by_slug(str(slug or "").strip())
+    if not pack or pack.pack_id is None:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    if int(pack.owner_user_id) != int(user.user_id):
+        raise HTTPException(status_code=403, detail="Pack owner required")
+
+    rows = list_private_pack_assets(int(pack.pack_id))
+    sample_missing = []
+    missing_originals = 0
+    missing_thumbs = 0
+    for row in rows:
+        original_path, thumb_path = _resolve_pack_asset_paths(row)
+        original_missing = not bool(original_path and original_path.exists() and original_path.is_file())
+        thumb_missing = not bool(thumb_path and thumb_path.exists() and thumb_path.is_file())
+        if original_missing:
+            missing_originals += 1
+        if thumb_missing:
+            missing_thumbs += 1
+        if (original_missing or thumb_missing) and len(sample_missing) < 12:
+            sample_missing.append(
+                {
+                    "asset_id": row.asset_id,
+                    "original_relpath": str(row.url_original or ""),
+                    "thumb_relpath": str(row.url_thumb or ""),
+                }
+            )
+    return {
+        "slug": pack.slug,
+        "pack_id": pack.pack_id,
+        "total_rows": count_private_pack_asset_rows(int(pack.pack_id)),
+        "missing_originals": missing_originals,
+        "missing_thumbs": missing_thumbs,
+        "sample_missing": sample_missing,
+    }
 
 
 @app.get("/api/assets/file/{asset_id}")

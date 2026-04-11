@@ -142,6 +142,41 @@ def get_private_pack_by_id(pack_id: int) -> Optional[PrivatePackRow]:
         return s.get(PrivatePackRow, pack_id)
 
 
+def delete_private_pack_asset_rows(pack_id: int) -> int:
+    with Session(engine) as s:
+        rows = s.exec(select(PrivatePackAssetRow).where(PrivatePackAssetRow.pack_id == pack_id)).all()
+        count = len(rows)
+        for row in rows:
+            s.delete(row)
+        s.commit()
+        return count
+
+
+def delete_private_pack_row(pack_id: int) -> bool:
+    with Session(engine) as s:
+        pack = s.get(PrivatePackRow, pack_id)
+        if not pack:
+            return False
+        entitlements = s.exec(
+            select(PrivatePackEntitlementRow).where(PrivatePackEntitlementRow.pack_id == pack_id)
+        ).all()
+        for row in entitlements:
+            s.delete(row)
+        s.delete(pack)
+        s.commit()
+        return True
+
+
+def count_private_pack_asset_rows(pack_id: int) -> int:
+    with Session(engine) as s:
+        return len(s.exec(select(PrivatePackAssetRow.asset_id).where(PrivatePackAssetRow.pack_id == pack_id)).all())
+
+
+def list_private_pack_assets(pack_id: int) -> List[PrivatePackAssetRow]:
+    with Session(engine) as s:
+        return s.exec(select(PrivatePackAssetRow).where(PrivatePackAssetRow.pack_id == pack_id)).all()
+
+
 def get_pack_asset_by_asset_id(asset_id: str) -> Optional[PrivatePackAssetRow]:
     with Session(engine) as s:
         return s.get(PrivatePackAssetRow, asset_id)
@@ -355,6 +390,88 @@ def _asset_order_sql(sort: str) -> str:
     if raw == "name":
         return "LOWER(COALESCE(name, '')) ASC, created_at DESC"
     return "created_at DESC, LOWER(COALESCE(name, '')) ASC"
+
+
+def list_asset_folders_for_user(
+    user_id: int,
+    *,
+    pack: str = "",
+    session_id: Optional[str] = None,
+    skip_missing: bool = False,
+    is_game_session_member: Callable[[str, int], bool],
+    shared_pack_ids_for_game_session: Callable[[str], set[int]],
+) -> List[Dict[str, object]]:
+    pack_filter = (pack or "").strip()
+    pack_ids = _pack_ids_for_user(user_id)
+    if session_id and is_game_session_member(session_id, user_id):
+        pack_ids.update(shared_pack_ids_for_game_session(session_id))
+
+    with _raw_conn_ctx() as conn:
+        slug_by_pack_id: Dict[int, str] = {}
+        if pack_ids:
+            ph = ",".join("?" * len(pack_ids))
+            for row in conn.execute(
+                f"SELECT pack_id, slug FROM privatepackrow WHERE pack_id IN ({ph})",
+                list(pack_ids),
+            ).fetchall():
+                slug_by_pack_id[int(row["pack_id"])] = str(row["slug"] or "")
+
+        include_uploads = pack_filter in {"", "all", "upload"}
+        selected_pack_ids = [] if pack_filter == "upload" else list(pack_ids)
+        if pack_filter and pack_filter not in {"all", "upload"}:
+            selected_pack_ids = [pid for pid, slug in slug_by_pack_id.items() if slug == pack_filter]
+            include_uploads = False
+
+        rows: List[dict] = []
+        if include_uploads:
+            for row in conn.execute(
+                """
+                SELECT folder_path, COUNT(*) AS count, NULL AS pack_id, 0 AS is_pack
+                FROM assetrow
+                WHERE uploader_user_id = ? AND COALESCE(folder_path, '') != ''
+                GROUP BY folder_path
+                """,
+                [user_id],
+            ).fetchall():
+                rows.append(dict(row))
+
+        if selected_pack_ids:
+            ph = ",".join("?" * len(selected_pack_ids))
+            for row in conn.execute(
+                f"""
+                SELECT folder_path, COUNT(*) AS count, pack_id, 1 AS is_pack
+                FROM privatepackassetrow
+                WHERE pack_id IN ({ph}) AND COALESCE(folder_path, '') != ''
+                GROUP BY pack_id, folder_path
+                """,
+                selected_pack_ids,
+            ).fetchall():
+                rows.append(dict(row))
+
+    if not skip_missing:
+        merged: Dict[str, int] = {}
+        for row in rows:
+            path = str(row.get("folder_path") or "").strip()
+            if not path:
+                continue
+            merged[path] = merged.get(path, 0) + int(row.get("count") or 0)
+        return [{"path": path, "count": count} for path, count in sorted(merged.items())]
+
+    # Slow path: only used when debugging/repairing broken pack imports.
+    assets = list_all_assets_for_user(
+        user_id,
+        pack=pack_filter,
+        session_id=session_id,
+        is_game_session_member=is_game_session_member,
+        shared_pack_ids_for_game_session=shared_pack_ids_for_game_session,
+    )
+    merged: Dict[str, int] = {}
+    for asset in assets:
+        path = str(asset.get("folder_path") or "").strip()
+        if not path:
+            continue
+        merged[path] = merged.get(path, 0) + 1
+    return [{"path": path, "count": count} for path, count in sorted(merged.items())]
 
 
 def list_all_assets_for_user(

@@ -384,6 +384,26 @@ def get_private_pack_by_id(pack_id: int) -> Optional[PrivatePackRow]:
     return storage_assets.get_private_pack_by_id(pack_id)
 
 
+def delete_private_pack_asset_rows(pack_id: int) -> int:
+    _sync_assets_engine()
+    return storage_assets.delete_private_pack_asset_rows(pack_id)
+
+
+def delete_private_pack_row(pack_id: int) -> bool:
+    _sync_assets_engine()
+    return storage_assets.delete_private_pack_row(pack_id)
+
+
+def count_private_pack_asset_rows(pack_id: int) -> int:
+    _sync_assets_engine()
+    return storage_assets.count_private_pack_asset_rows(pack_id)
+
+
+def list_private_pack_assets(pack_id: int):
+    _sync_assets_engine()
+    return storage_assets.list_private_pack_assets(pack_id)
+
+
 def get_pack_asset_by_asset_id(asset_id: str) -> Optional[PrivatePackAssetRow]:
     _sync_assets_engine()
     return storage_assets.get_pack_asset_by_asset_id(asset_id)
@@ -434,6 +454,24 @@ def list_private_packs_for_user(user_id: int, session_id: Optional[str] = None) 
     return storage_assets.list_private_packs_for_user(
         user_id,
         session_id=session_id,
+        is_game_session_member=is_game_session_member,
+        shared_pack_ids_for_game_session=_shared_pack_ids_for_game_session,
+    )
+
+
+def list_asset_folders_for_user(
+    user_id: int,
+    *,
+    pack: str = "",
+    session_id: Optional[str] = None,
+    skip_missing: bool = False,
+) -> List[Dict[str, object]]:
+    _sync_assets_engine()
+    return storage_assets.list_asset_folders_for_user(
+        user_id,
+        pack=pack,
+        session_id=session_id,
+        skip_missing=skip_missing,
         is_game_session_member=is_game_session_member,
         shared_pack_ids_for_game_session=_shared_pack_ids_for_game_session,
     )

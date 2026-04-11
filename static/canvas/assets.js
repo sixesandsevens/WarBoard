@@ -122,6 +122,10 @@ const assetState = {
   error: "",
   packsLoading: false,
   packMetaSessionId: "",
+  folderSummary: [],
+  folderLoading: false,
+  folderError: "",
+  skipMissing: true,
   serverPageSize: 100,
   serverOffset: 0,
   serverHasMore: false,
@@ -668,6 +672,17 @@ function buildAssetApiQuery(offset = 0) {
   if (query.type && query.type !== "all") params.set("type", query.type);
   if (query.alpha && query.alpha !== "all") params.set("alpha", query.alpha);
   if (query.sort) params.set("sort", query.sort);
+  if (assetState.skipMissing) params.set("skip_missing", "1");
+  const sessionId = currentAssetSessionId();
+  if (sessionId) params.set("session_id", sessionId);
+  return params.toString();
+}
+
+function buildAssetFolderApiQuery() {
+  const query = effectiveAssetBrowseQuery();
+  const params = new URLSearchParams();
+  if (query.pack && query.pack !== "all") params.set("pack", query.pack);
+  if (assetState.skipMissing) params.set("skip_missing", "1");
   const sessionId = currentAssetSessionId();
   if (sessionId) params.set("session_id", sessionId);
   return params.toString();
@@ -684,6 +699,22 @@ function resetAssetResults() {
   assetState.error = "";
 }
 
+async function fetchAssetFolders() {
+  assetState.folderLoading = true;
+  assetState.folderError = "";
+  renderAssetFolderTree();
+  try {
+    const data = await apiGet(`/api/assets/folders?${buildAssetFolderApiQuery()}`);
+    assetState.folderSummary = Array.isArray(data?.folders) ? data.folders : [];
+  } catch (e) {
+    assetState.folderSummary = [];
+    assetState.folderError = String(e?.message || e || "Folder load failed");
+  } finally {
+    assetState.folderLoading = false;
+    renderAssetFolderTree();
+  }
+}
+
 async function fetchAssetResults({ append = false, refreshPackMeta = false } = {}) {
   if (assetState.serverLoading) return;
   if (append && !assetState.serverHasMore) return;
@@ -698,6 +729,7 @@ async function fetchAssetResults({ append = false, refreshPackMeta = false } = {
   renderAssetFolderTree();
   try {
     if (refreshPackMeta) await refreshAssetSessionPackData();
+    if (!append) await fetchAssetFolders();
     const data = await apiGet(`/api/assets?${buildAssetApiQuery(offset)}`);
     if (requestSeq !== assetState.requestSeq) return;
     const incoming = Array.isArray(data?.assets) ? data.assets.map((asset) => normalizePackBackedRecord(asset)) : [];
@@ -1466,8 +1498,20 @@ function buildAssetFolderTree(paths = []) {
 
 function renderAssetFolderTree() {
   if (!assetFolderTreeEl) return;
-  const allFolders = assetState.items.map((a) => String(a.folder_path || "")).filter(Boolean);
-  const root = buildAssetFolderTree(allFolders);
+  const folderRows = Array.isArray(assetState.folderSummary) ? assetState.folderSummary : [];
+  const expandedCounts = new Map();
+  for (const row of folderRows) {
+    const cleaned = String(row?.path || "").trim().replace(/^\/+|\/+$/g, "");
+    if (!cleaned) continue;
+    const count = Math.max(0, Number(row?.count || 0));
+    const parts = cleaned.split("/").filter(Boolean);
+    let pathAcc = "";
+    for (const part of parts) {
+      pathAcc = pathAcc ? `${pathAcc}/${part}` : part;
+      expandedCounts.set(pathAcc, (expandedCounts.get(pathAcc) || 0) + count);
+    }
+  }
+  const root = buildAssetFolderTree(Array.from(expandedCounts.keys()));
   const selected = String(assetState.folder || "");
   const lines = [];
 
@@ -1477,7 +1521,7 @@ function renderAssetFolderTree() {
     const indent = depth * 14;
     const caret = hasChildren ? (expanded ? "▾" : "▸") : "•";
     const label = node.path || "All folders";
-    const count = node.path ? node.count : assetState.items.length;
+    const count = node.path ? (expandedCounts.get(node.path) || 0) : Number(assetState.totalCount || 0);
     lines.push(`
       <div style="display:flex; align-items:center; gap:6px; padding:2px 4px; border-radius:6px; ${isSelected ? "background:rgba(0,209,255,0.15);" : ""}">
         <button type="button" data-folder-toggle="${escapeHtml(node.path)}" style="width:16px; text-align:center; background:transparent; border:none; color:#ddd; cursor:${hasChildren ? "pointer" : "default"};">${caret}</button>
@@ -1495,6 +1539,14 @@ function renderAssetFolderTree() {
     for (const child of children) walk(child, depth + 1);
   };
   walk(root, 0);
+  if (assetState.folderLoading) {
+    assetFolderTreeEl.innerHTML = `<div style="opacity:.75;">Loading folders…</div>`;
+    return;
+  }
+  if (assetState.folderError) {
+    assetFolderTreeEl.innerHTML = `<div style="opacity:.75;">${escapeHtml(assetState.folderError)}</div>`;
+    return;
+  }
   assetFolderTreeEl.innerHTML = lines.join("") || `<div style="opacity:.75;">(no folders)</div>`;
 }
 
