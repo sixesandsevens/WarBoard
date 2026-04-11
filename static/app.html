@@ -106,6 +106,17 @@
         </div>
         <div class="small" id="joinMsg"></div>
       </div>
+
+      <div class="card">
+        <h2>New campaign session</h2>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <input id="sessName" placeholder="Session name (e.g., Sewer Crawl)"/>
+          <input id="sessRoomName" placeholder="First room name (e.g., The Tavern)"/>
+          <button id="createSessBtn">Create Session</button>
+        </div>
+        <p class="small">Groups multiple rooms under one campaign.</p>
+        <div class="small" style="color:#ffb3b3;" id="sessMsg"></div>
+      </div>
     </div>
 
     <div class="card" style="margin-top:14px;">
@@ -420,6 +431,23 @@
     const name = document.getElementById('newName').value.trim() || 'Untitled Room';
     const data = await api('/api/rooms', {method:'POST', body: JSON.stringify({name})});
     location.href = '/static/canvas.html?room=' + encodeURIComponent(data.room_id);
+  };
+
+  document.getElementById('createSessBtn').onclick = async () => {
+    const sessMsg = document.getElementById('sessMsg');
+    sessMsg.textContent = '';
+    const sessName = document.getElementById('sessName').value.trim() || 'Untitled Session';
+    const roomName = document.getElementById('sessRoomName').value.trim() || sessName;
+    const btn = document.getElementById('createSessBtn');
+    btn.disabled = true; btn.textContent = 'Creating…';
+    try {
+      const room = await api('/api/rooms', {method:'POST', body: JSON.stringify({name: roomName})});
+      await api('/api/sessions', {method:'POST', body: JSON.stringify({name: sessName, room_id: room.room_id})});
+      location.href = '/static/canvas.html?room=' + encodeURIComponent(room.room_id);
+    } catch(e) {
+      sessMsg.textContent = e.message;
+      btn.disabled = false; btn.textContent = 'Create Session';
+    }
   };
 
   document.getElementById('joinBtn').onclick = async () => {
