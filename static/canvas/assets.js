@@ -1678,6 +1678,7 @@ function spawnPackAsset(packToken, x = null, y = null) {
     state.assets.set(id, asset);
     state.draw_order.assets = state.draw_order.assets.filter((aid) => aid !== id);
     state.draw_order.assets.push(id);
+    markAssetOrderDirty();
     requestRender();
   }
   send("ASSET_INSTANCE_CREATE", asset);
@@ -1739,6 +1740,7 @@ function spawnOverlayAsset(assetRef) {
     state.assets.set(id, overlay);
     state.draw_order.assets = state.draw_order.assets.filter((aid) => aid !== id);
     state.draw_order.assets.push(id);
+    markAssetOrderDirty();
     requestRender();
   }
   send("ASSET_INSTANCE_CREATE", overlay);
