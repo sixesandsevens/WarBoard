@@ -176,7 +176,7 @@ def apply_shape_event(
     if event_type == "SHAPE_ADD":
         sid = payload.get("id")
         shape_type = payload.get("type")
-        if shape_type not in ("rect", "circle", "line", "text"):
+        if shape_type not in ("rect", "circle", "line", "arrow", "text"):
             return WireEvent(type="ERROR", payload={"message": "Invalid shape type"})
         layer = payload.get("layer", "draw")
         if layer not in ("map", "draw", "notes"):

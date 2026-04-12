@@ -486,6 +486,7 @@
     setCtxChecked("shape_tool_rect", currentTool === "rect");
     setCtxChecked("shape_tool_circle", currentTool === "circle");
     setCtxChecked("shape_tool_line", currentTool === "line");
+    setCtxChecked("shape_tool_arrow", currentTool === "arrow");
     setCtxChecked("shape_size_2", size === 2);
     setCtxChecked("shape_size_4", size === 4);
     setCtxChecked("shape_size_8", size === 8);
@@ -783,6 +784,9 @@
         break;
       case "shape_tool_line":
         setTool("line");
+        break;
+      case "shape_tool_arrow":
+        setTool("arrow");
         break;
       case "shape_size_2":
         sizeEl.value = "2";
@@ -1158,7 +1162,7 @@
       canvas.style.cursor = "grab";
       return;
     }
-    if (t === "pen" || t === "rect" || t === "circle" || t === "line" || t === "text" || t === "ruler") {
+    if (t === "pen" || t === "rect" || t === "circle" || t === "line" || t === "arrow" || t === "text" || t === "ruler") {
       canvas.style.cursor = "crosshair";
       return;
     }
@@ -2330,7 +2334,7 @@
       showContextMenu(penCtx, e.clientX, e.clientY);
       return;
     }
-    if (t === "rect" || t === "circle" || t === "line") {
+    if (t === "rect" || t === "circle" || t === "line" || t === "arrow") {
       closeTokenMenu();
       showContextMenu(shapeCtx, e.clientX, e.clientY);
       return;
@@ -2610,7 +2614,7 @@
       return;
     }
 
-    if (t === "rect" || t === "circle" || t === "line") {
+    if (t === "rect" || t === "circle" || t === "line" || t === "arrow") {
       activeShapePreview = {
         id: makeId(),
         type: t,
@@ -2838,7 +2842,7 @@
       return;
     }
 
-    if ((t === "rect" || t === "circle" || t === "line") && activeShapePreview) {
+    if ((t === "rect" || t === "circle" || t === "line" || t === "arrow") && activeShapePreview) {
       activeShapePreview.x2 = wpos.x;
       activeShapePreview.y2 = wpos.y;
       requestRender();
@@ -3086,7 +3090,7 @@
       requestRender();
     }
 
-    if ((t === "rect" || t === "circle" || t === "line") && activeShapePreview) {
+    if ((t === "rect" || t === "circle" || t === "line" || t === "arrow") && activeShapePreview) {
       const sh = activeShapePreview;
       const x1 = ui.snap ? snap(sh.x1) : sh.x1;
       const y1 = ui.snap ? snap(sh.y1) : sh.y1;

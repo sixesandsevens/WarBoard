@@ -91,7 +91,7 @@ class Stroke(BaseModel):
 
 class Shape(BaseModel):
     id: str
-    type: Literal["rect", "circle", "line", "text"]
+    type: Literal["rect", "circle", "line", "arrow", "text"]
     x1: float
     y1: float
     x2: float

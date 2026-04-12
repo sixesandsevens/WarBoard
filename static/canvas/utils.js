@@ -111,7 +111,7 @@ function localStrokeHitsCircle(stroke, cx, cy, r) {
 
 function localShapeHitsCircle(shape, cx, cy, r) {
   const rr = r * r;
-  if (shape.type === "line") {
+  if (shape.type === "line" || shape.type === "arrow") {
     const x1 = Number(shape.x1 || 0);
     const y1 = Number(shape.y1 || 0);
     const x2 = Number(shape.x2 || 0);

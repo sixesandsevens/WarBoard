@@ -107,7 +107,7 @@ function hitTestAsset(wx, wy) {
 
 function shapeContainsPoint(sh, wx, wy) {
   const tol = Math.max(6 / cam.z, (sh.width || 3) * 0.8);
-  if (sh.type === "line") {
+  if (sh.type === "line" || sh.type === "arrow") {
     return pointToSegmentDistance(wx, wy, sh.x1, sh.y1, sh.x2, sh.y2) <= tol;
   }
   if (sh.type === "rect") {
@@ -301,6 +301,43 @@ function drawOneShape(sh, isPreview) {
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  if (sh.type === "arrow") {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len <= 0.0001) {
+      ctx.restore();
+      return;
+    }
+    const ux = dx / len;
+    const uy = dy / len;
+    const headLength = Math.min(Math.max(ctx.lineWidth * 5, 18), len * 0.45);
+    const headSpread = Math.max(ctx.lineWidth * 2.4, headLength * 0.45);
+    const shaftEndX = b.x - ux * (headLength * 0.38);
+    const shaftEndY = b.y - uy * (headLength * 0.38);
+    const perpX = -uy;
+    const perpY = ux;
+    const leftX = b.x - ux * headLength + perpX * headSpread;
+    const leftY = b.y - uy * headLength + perpY * headSpread;
+    const rightX = b.x - ux * headLength - perpX * headSpread;
+    const rightY = b.y - uy * headLength - perpY * headSpread;
+
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(shaftEndX, shaftEndY);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(leftX, leftY);
+    ctx.lineTo(rightX, rightY);
+    ctx.closePath();
+    ctx.fillStyle = sh.color || "#fff";
+    ctx.fill();
     ctx.restore();
     return;
   }
