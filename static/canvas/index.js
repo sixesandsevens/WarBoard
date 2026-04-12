@@ -635,19 +635,20 @@
         ensureAssetPanelReady();
         break;
       case "asset_duplicate": {
-        const a = state.assets.get(selectedAssetId || "");
-        if (!a || !canEditAssetLocal(a)) break;
-        const id = makeId();
         const offset = ui.snap ? ui.gridSize : Math.max(24, ui.gridSize * 0.5);
-        const clone = {
-          ...a,
-          id,
-          x: Number(a.x || 0) + offset,
-          y: Number(a.y || 0) + offset,
-          creator_id: myId(),
-          locked: false,
-        };
-        send("ASSET_INSTANCE_CREATE", clone);
+        const dupIds = selectedAssetIds.size > 1 ? Array.from(selectedAssetIds) : [selectedAssetId];
+        for (const dupId of dupIds) {
+          const a = state.assets.get(dupId || "");
+          if (!a || !canEditAssetLocal(a)) continue;
+          send("ASSET_INSTANCE_CREATE", {
+            ...a,
+            id: makeId(),
+            x: Number(a.x || 0) + offset,
+            y: Number(a.y || 0) + offset,
+            creator_id: myId(),
+            locked: false,
+          });
+        }
         break;
       }
       case "asset_show_in_library": {
@@ -733,10 +734,14 @@
         break;
       }
       case "asset_delete": {
-        const a = state.assets.get(selectedAssetId || "");
-        if (!a || !canDeleteAssetLocal(a)) break;
-        if (!confirm("Delete selected asset?")) break;
-        send("ASSET_INSTANCE_DELETE", { id: a.id });
+        const delIds = selectedAssetIds.size > 1 ? Array.from(selectedAssetIds) : [selectedAssetId];
+        const deletable = delIds.filter((id) => { const a = state.assets.get(id || ""); return a && canDeleteAssetLocal(a); });
+        if (!deletable.length) break;
+        const msg = deletable.length > 1 ? `Delete ${deletable.length} selected assets?` : "Delete selected asset?";
+        if (!confirm(msg)) break;
+        for (const id of deletable) send("ASSET_INSTANCE_DELETE", { id });
+        selectedAssetIds.clear();
+        selectedAssetId = null;
         break;
       }
       case "open_rooms":
@@ -2320,6 +2325,17 @@
     requestRender();
   }, { passive: false });
 
+  // Block the browser's native context menu everywhere in the app except inside
+  // form inputs (where right-click → paste must still work).  Runs in capture
+  // phase so it fires before any element's own handlers and catches overlay
+  // elements (tokenMenu, .ctx menus, #wrap, etc.) that sit on top of the canvas.
+  document.addEventListener("contextmenu", (e) => {
+    const tag = (e.target?.tagName || "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (e.target?.isContentEditable) return;
+    e.preventDefault();
+  }, { capture: true });
+
   canvas.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
@@ -2432,6 +2448,11 @@
       }
       const assetHit = (hit || isAssetInteractionLocked()) ? null : hitTestAsset(wpos.x, wpos.y);
       if (assetHit) {
+        // If right-clicking an asset not in the current selection, replace selection with just this one.
+        if (!selectedAssetIds.has(assetHit)) {
+          selectedAssetIds.clear();
+          selectedAssetIds.add(assetHit);
+        }
         selectedAssetId = assetHit;
         selectedShapeId = null;
         selectedTokenId = null;
@@ -2480,6 +2501,7 @@
       if (hit) {
         selectedTokenId = hit;
         selectedAssetId = null;
+        selectedAssetIds.clear();
         selectedShapeId = null;
         if (isShiftDown) {
           toggleSelection(hit);
@@ -2503,31 +2525,62 @@
           }
         }
       } else if (assetHit) {
-        selectedTokenId = null;
-        selectedAssetId = assetHit;
-        selectedShapeId = null;
         const a = state.assets.get(assetHit);
-        if (canEditAssetLocal(a)) {
-          activeDragMoveSeq = ++moveSeqCounter;
-          draggingAssetId = assetHit;
-          draggingTokenId = null;
-          draggingTokenIds = [];
-          draggingShapeId = null;
-          dragMoveStartWorld = null;
-          dragStartTokenPositions.clear();
-          shapeDragOrigin = null;
-          if (a) {
+        const isCtrl = e.ctrlKey || e.metaKey;
+        if (isCtrl) {
+          // Ctrl+click: toggle this asset in/out of the multi-selection, no drag starts.
+          if (selectedAssetIds.has(assetHit)) {
+            selectedAssetIds.delete(assetHit);
+            if (selectedAssetId === assetHit) {
+              selectedAssetId = selectedAssetIds.size ? Array.from(selectedAssetIds).at(-1) : null;
+            }
+          } else {
+            selectedAssetIds.add(assetHit);
+            selectedAssetId = assetHit;
+          }
+          selectedTokenId = null;
+          selectedShapeId = null;
+        } else {
+          // Regular click: if the asset isn't already in the selection, replace selection with just this one.
+          // If it IS already selected (part of a multi-select) keep the full selection and start dragging all.
+          if (!selectedAssetIds.has(assetHit)) {
+            selectedAssetIds.clear();
+            selectedAssetIds.add(assetHit);
+          }
+          selectedTokenId = null;
+          selectedAssetId = assetHit;
+          selectedShapeId = null;
+          if (a && canEditAssetLocal(a)) {
+            activeDragMoveSeq = ++moveSeqCounter;
+            draggingAssetId = assetHit;
+            draggingTokenId = null;
+            draggingTokenIds = [];
+            draggingShapeId = null;
+            dragMoveStartWorld = null;
+            dragStartTokenPositions.clear();
+            shapeDragOrigin = null;
+            // Build drag set: all currently selected editable assets.
+            draggingAssetIds = [];
+            dragStartAssetPositions = new Map();
+            for (const id of selectedAssetIds) {
+              const asset = state.assets.get(id);
+              if (asset && canEditAssetLocal(asset)) {
+                draggingAssetIds.push(id);
+                dragStartAssetPositions.set(id, { x: Number(asset.x || 0), y: Number(asset.y || 0) });
+              }
+            }
             assetDragOrigin = { wx: wpos.x, wy: wpos.y, x: Number(a.x || 0), y: Number(a.y || 0) };
           } else {
+            draggingAssetId = null;
+            draggingAssetIds = [];
+            dragStartAssetPositions = new Map();
             assetDragOrigin = null;
           }
-        } else {
-          draggingAssetId = null;
-          assetDragOrigin = null;
         }
       } else if (shapeHit) {
         selectedTokenId = null;
         selectedAssetId = null;
+        selectedAssetIds.clear();
         selectedShapeId = shapeHit;
         const sh = state.shapes.get(shapeHit);
         if (canEditShapeLocal(sh)) {
@@ -2549,9 +2602,12 @@
       } else {
         selectedTokenId = null;
         selectedAssetId = null;
+        selectedAssetIds.clear();
         selectedShapeId = null;
         draggingTokenId = null;
         draggingAssetId = null;
+        draggingAssetIds = [];
+        dragStartAssetPositions = new Map();
         assetDragOrigin = null;
         draggingTokenIds = [];
         dragMoveStartWorld = null;
@@ -2739,31 +2795,35 @@
     }
 
     if (t === "move" && draggingAssetId && assetDragOrigin) {
-      const a = state.assets.get(draggingAssetId);
-      if (!a) return;
       const dx = wpos.x - assetDragOrigin.wx;
       const dy = wpos.y - assetDragOrigin.wy;
-      let x = assetDragOrigin.x + dx;
-      let y = assetDragOrigin.y + dy;
-      if (ui.snap) {
-        x = snap(x);
-        y = snap(y);
+      const idsToMove = draggingAssetIds.length ? draggingAssetIds : [draggingAssetId];
+      for (const id of idsToMove) {
+        const asset = state.assets.get(id);
+        if (!asset) continue;
+        const origin = dragStartAssetPositions.get(id);
+        const baseX = origin ? origin.x : (id === draggingAssetId ? assetDragOrigin.x : 0);
+        const baseY = origin ? origin.y : (id === draggingAssetId ? assetDragOrigin.y : 0);
+        asset.x = ui.snap ? snap(baseX + dx) : baseX + dx;
+        asset.y = ui.snap ? snap(baseY + dy) : baseY + dy;
+        state.assets.set(id, asset);
       }
-      a.x = x;
-      a.y = y;
-      state.assets.set(draggingAssetId, a);
       requestRender();
       const now = Date.now();
       if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
         lastMoveSentAt = now;
-        send("ASSET_INSTANCE_UPDATE", {
-          id: draggingAssetId,
-          x,
-          y,
-          commit: false,
-          move_seq: activeDragMoveSeq,
-          move_client: localMoveClientId,
-        });
+        for (const id of idsToMove) {
+          const asset = state.assets.get(id);
+          if (!asset) continue;
+          send("ASSET_INSTANCE_UPDATE", {
+            id,
+            x: asset.x,
+            y: asset.y,
+            commit: false,
+            move_seq: activeDragMoveSeq,
+            move_client: localMoveClientId,
+          });
+        }
       }
       return;
     }
@@ -2950,9 +3010,12 @@
     const movedTokenIds = draggingTokenIds.slice();
     const movedTokenId = draggingTokenId;
     const movedAssetId = draggingAssetId;
+    const movedAssetIds = draggingAssetIds.slice();
     const movedShapeId = draggingShapeId;
     draggingTokenId = null;
     draggingAssetId = null;
+    draggingAssetIds = [];
+    dragStartAssetPositions = new Map();
     draggingShapeId = null;
     const hadMarquee = !!marqueeSelectRect;
     const finalMarqueeRect = marqueeSelectRect
@@ -3001,16 +3064,19 @@
       }
     }
     if (t === "move" && movedAssetId) {
-      const a = state.assets.get(movedAssetId);
-      if (a) {
-        send("ASSET_INSTANCE_UPDATE", {
-          id: movedAssetId,
-          x: a.x,
-          y: a.y,
-          commit: true,
-          move_seq: activeDragMoveSeq,
-          move_client: localMoveClientId,
-        });
+      const commitIds = movedAssetIds.length ? movedAssetIds : [movedAssetId];
+      for (const id of commitIds) {
+        const a = state.assets.get(id);
+        if (a) {
+          send("ASSET_INSTANCE_UPDATE", {
+            id,
+            x: a.x,
+            y: a.y,
+            commit: true,
+            move_seq: activeDragMoveSeq,
+            move_client: localMoveClientId,
+          });
+        }
       }
     }
     activeDragMoveSeq = null;

@@ -398,6 +398,8 @@ function prepareForRoomTransition() {
   dragMoveStartWorld = null;
   dragStartTokenPositions.clear();
   draggingAssetId = null;
+  draggingAssetIds = [];
+  dragStartAssetPositions = new Map();
   assetDragOrigin = null;
   draggingShapeId = null;
   shapeDragOrigin = null;
@@ -466,9 +468,12 @@ function clearLocalRoomView() {
   selectedTokenId = null;
   selectedAssetId = null;
   selectedShapeId = null;
+  selectedAssetIds.clear();
   setSelection([]);
   hoveredTokenId = null;
   draggingAssetId = null;
+  draggingAssetIds = [];
+  dragStartAssetPositions = new Map();
   assetDragOrigin = null;
   draggingShapeId = null;
   shapeDragOrigin = null;

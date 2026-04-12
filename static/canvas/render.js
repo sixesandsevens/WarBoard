@@ -471,7 +471,7 @@ function drawAssets() {
       ctx.fillStyle = "rgba(200,200,200,0.25)";
       ctx.fillRect(-w / 2, -h / 2, w, h);
     }
-    const selected = id === selectedAssetId;
+    const selected = id === selectedAssetId || selectedAssetIds.has(id);
     if (selected) {
       ctx.lineWidth = Math.max(2, 2 * cam.z);
       ctx.strokeStyle = "#00d1ff";
