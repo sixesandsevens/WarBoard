@@ -1994,6 +1994,48 @@
   // refreshFogPaintPanel, fog panel event bindings → static/canvas/fog.js
   initFogPanelBindings();
   initAssetLibBindings();
+  allCtxMenus.forEach((menuEl) => {
+    if (!menuEl) return;
+    menuEl.addEventListener("click", (e) => {
+      const item = e.target.closest(".ctx-item");
+      if (!item || !menuEl.contains(item)) return;
+      const sub = String(item.dataset.sub || "").trim();
+      if (sub) {
+        const subEl = document.getElementById(`mapCtx-${sub}`);
+        if (subEl) showSubMenu(subEl, item);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      const action = String(item.dataset.action || "").trim();
+      if (!action) return;
+      e.preventDefault();
+      e.stopPropagation();
+      handleCtxAction(action);
+      hideAllCtx();
+    });
+    menuEl.addEventListener("mouseenter", (e) => {
+      const item = e.target.closest(".ctx-item");
+      if (!item || !menuEl.contains(item)) return;
+      const sub = String(item.dataset.sub || "").trim();
+      if (!sub) {
+        if (menuEl === mapCtx) scheduleCtxSubHide();
+        return;
+      }
+      const subEl = document.getElementById(`mapCtx-${sub}`);
+      if (subEl) showSubMenu(subEl, item);
+    }, true);
+    menuEl.addEventListener("mouseleave", () => {
+      if (menuEl === mapCtx || menuEl === mapCtxBg || menuEl === mapCtxLayers || menuEl === mapCtxClear) {
+        scheduleCtxSubHide();
+      }
+    });
+    menuEl.addEventListener("mouseenter", () => {
+      if (menuEl === mapCtxBg || menuEl === mapCtxLayers || menuEl === mapCtxClear) {
+        clearCtxSubHideTimer();
+      }
+    });
+  });
   const applyTextDraft = () => {
     const v = String(toolTextInput?.value || "").trim();
     if (textPanelTargetShapeId) {
