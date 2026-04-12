@@ -14,7 +14,9 @@
   try {
     const qp = new URLSearchParams(location.search);
     const qroom = qp.get("room");
+    const qinvite = qp.get("invite");
     if (qroom) roomEl.value = qroom;
+    if (!qroom && qinvite) roomEl.value = "";
   } catch(e) {}
   const allowPlayersMoveEl = document.getElementById("allowPlayersMove");
   const allowAllMoveEl = document.getElementById("allowAllMove");
@@ -109,6 +111,7 @@
   const assetSearchInputEl = document.getElementById("assetSearchInput");
   const assetSessionShareBoxEl = document.getElementById("assetSessionShareBox");
   const assetSessionShareSummaryEl = document.getElementById("assetSessionShareSummary");
+  const assetSessionShareAllBtnEl = document.getElementById("assetSessionShareAllBtn");
   const assetSessionShareRefreshBtnEl = document.getElementById("assetSessionShareRefreshBtn");
   const assetSessionSharedListEl = document.getElementById("assetSessionSharedList");
   const assetSessionManageWrapEl = document.getElementById("assetSessionManageWrap");

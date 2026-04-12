@@ -30,6 +30,7 @@ const playSessionState = {
 let pendingRoomMoveOffer = null;
 let pendingArrivalNotice = "";
 let sharedRoomPromptShown = false;
+let sessionModalStatusOverride = "";
 
 function isLocalCanvasHost() {
   const host = String(location.hostname || "").trim().toLowerCase();
@@ -48,10 +49,111 @@ function maybeOpenSessionModalForSharedRoom(reason = "") {
   if (!shouldPromptForSharedRoomAuth() || sharedRoomPromptShown) return;
   sharedRoomPromptShown = true;
   if (reason) {
+    sessionModalStatusOverride = String(reason || "").trim();
     log(reason);
     toast(reason);
   }
   openSessionModal();
+}
+
+function setSessionModalStatus(message = "") {
+  sessionModalStatusOverride = String(message || "").trim();
+}
+
+function currentInviteCode() {
+  try {
+    return String(new URLSearchParams(location.search).get("invite") || "").trim().toUpperCase();
+  } catch (_) {
+    return "";
+  }
+}
+
+function replaceCanvasRouteParams({ room = null, invite = null } = {}) {
+  try {
+    const url = new URL(location.href);
+    if (room) url.searchParams.set("room", String(room).trim());
+    else url.searchParams.delete("room");
+    if (invite) url.searchParams.set("invite", String(invite).trim());
+    else url.searchParams.delete("invite");
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    history.replaceState({}, "", next);
+  } catch (_) {}
+}
+
+async function loadAccessibleRooms() {
+  try {
+    const data = await apiGet("/api/my/rooms");
+    return Array.isArray(data?.rooms) ? data.rooms : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+async function finishCanvasAuthFlow(user = me, options = {}) {
+  const currentUser = user && user.username ? user : me;
+  if (!currentUser || !currentUser.username) {
+    setSessionModalStatus(
+      shouldPromptForSharedRoomAuth()
+        ? "Log in or create an account to join this room."
+        : "Log in or create an account to save rooms, share sessions, and join invite links.",
+    );
+    openSessionModal();
+    return false;
+  }
+
+  const inviteCode = currentInviteCode();
+  if (inviteCode) {
+    try {
+      const joined = await apiPost("/api/join", { code: inviteCode });
+      const joinedRoomId = String(joined?.room_id || "").trim();
+      if (joinedRoomId) {
+        roomEl.value = joinedRoomId;
+        sessionRoomEl.value = joinedRoomId;
+        replaceCanvasRouteParams({ room: joinedRoomId, invite: "" });
+      }
+    } catch (e) {
+      setSessionModalStatus("That invite link is invalid or no longer available.");
+      openSessionModal();
+      log(`JOIN INVITE ERROR: ${e.message || e}`);
+      return false;
+    }
+  }
+
+  const requestedRoomId = String(roomEl.value || "").trim();
+  const rooms = await loadAccessibleRooms();
+  const accessibleRoomIds = new Set(rooms.map((room) => String(room?.room_id || "").trim()).filter(Boolean));
+
+  let targetRoomId = requestedRoomId;
+  if (!targetRoomId) {
+    const lastRoomId = String(currentUser.last_room_id || "").trim();
+    if (lastRoomId && accessibleRoomIds.has(lastRoomId)) targetRoomId = lastRoomId;
+  }
+
+  if (targetRoomId && accessibleRoomIds.has(targetRoomId)) {
+    roomEl.value = targetRoomId;
+    sessionRoomEl.value = targetRoomId;
+    replaceCanvasRouteParams({ room: targetRoomId, invite: "" });
+    cidEl.value = currentUser.username;
+    setSessionModalStatus("");
+    connectWS(true);
+    closeSessionModal();
+    return true;
+  }
+
+  if (targetRoomId && !accessibleRoomIds.has(targetRoomId)) {
+    setSessionModalStatus("You do not have access to that room yet. Use an invite link or open your account panel.");
+    openSessionModal();
+    return false;
+  }
+
+  if (options.promptWhenNoRoom) {
+    setSessionModalStatus("Open your account panel to create a room or choose one you've already joined.");
+    openSessionModal();
+  } else {
+    setSessionModalStatus("");
+    refreshSessionModalAuth();
+  }
+  return false;
 }
 
 // ─── Session activity ─────────────────────────────────────────────────────────
@@ -130,6 +232,7 @@ function refreshSessionModalAuth() {
       ? "This room requires login and room access. Sign in, then connect or open the lobby/join link."
       : "Everything works locally. Log in to host or join a shared room.";
   }
+  if (sessionModalStatusOverride) sessionStatusTextEl.textContent = sessionModalStatusOverride;
   if (me && me.username) {
     sessionAuthBoxEl.classList.add("hidden");
     sessionAccountBoxEl.classList.remove("hidden");
@@ -858,11 +961,7 @@ function initSessionBindings() {
         log(`Logged in as ${user.username}`);
         refreshSessionModalAuth();
         updateSessionPill();
-        if (roomEl.value.trim()) {
-          cidEl.value = user.username;
-          connectWS(true);
-          closeSessionModal();
-        }
+        await finishCanvasAuthFlow(user, { promptWhenNoRoom: true });
       }
     } catch (e) {
       log(`LOGIN ERROR: ${e.message || e}`);
@@ -879,11 +978,7 @@ function initSessionBindings() {
         log(`Registered and logged in as ${user.username}`);
         refreshSessionModalAuth();
         updateSessionPill();
-        if (roomEl.value.trim()) {
-          cidEl.value = user.username;
-          connectWS(true);
-          closeSessionModal();
-        }
+        await finishCanvasAuthFlow(user, { promptWhenNoRoom: true });
       }
     } catch (e) {
       log(`REGISTER ERROR: ${e.message || e}`);
@@ -902,8 +997,10 @@ function initSessionBindings() {
       try { ws.close(); } catch {}
     }
     ensureOfflineGm();
+    setSessionModalStatus("Log in or create an account to keep using shared rooms.");
     refreshSessionModalAuth();
     updateSessionPill();
+    openSessionModal();
   });
   if (sessionConnectBtn) sessionConnectBtn.addEventListener("click", () => {
     roomEl.value = sessionRoomEl.value.trim() || "demo";

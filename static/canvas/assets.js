@@ -1007,6 +1007,33 @@ async function toggleSessionSharedPack(packId, enabled) {
   }
 }
 
+async function shareAllSessionPrivatePacks() {
+  const sessionId = currentAssetSessionId();
+  if (!sessionId) return;
+  const privatePacks = Array.isArray(assetState.privatePacks) ? assetState.privatePacks : [];
+  const pending = privatePacks
+    .filter((pack) => !pack?.shared_in_session)
+    .map((pack) => Number(pack?.pack_id || 0))
+    .filter((packId) => packId > 0);
+  if (!pending.length) {
+    toast("All available packs are already shared.");
+    return;
+  }
+  try {
+    if (assetSessionShareAllBtnEl) assetSessionShareAllBtnEl.disabled = true;
+    for (const packId of pending) {
+      await apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/shared-packs/${encodeURIComponent(packId)}`, {});
+    }
+    await Promise.all([refreshAssetSessionPackData(), refreshAssetsPanel()]);
+    toast(`Shared ${pending.length} pack${pending.length === 1 ? "" : "s"} to this session.`);
+  } catch (e) {
+    log(`SHARE ALL PACKS ERROR: ${e.message || e}`);
+    toast("Could not share all packs to session.");
+  } finally {
+    if (assetSessionShareAllBtnEl) assetSessionShareAllBtnEl.disabled = false;
+  }
+}
+
 function renderAssetSessionSharePanel() {
   if (!assetSessionShareBoxEl || !assetSessionShareSummaryEl || !assetSessionSharedListEl || !assetSessionManageWrapEl || !assetSessionManageListEl) return;
   const sessionId = currentAssetSessionId();
@@ -1016,12 +1043,18 @@ function renderAssetSessionSharePanel() {
     assetSessionSharedListEl.innerHTML = "";
     assetSessionManageWrapEl.style.display = "none";
     assetSessionManageListEl.innerHTML = "";
+    if (assetSessionShareAllBtnEl) assetSessionShareAllBtnEl.disabled = true;
     return;
   }
   assetSessionShareBoxEl.style.display = "block";
   const canManageSession = ["gm", "co_gm"].includes(String(playSessionState.user_role || ""));
   const sharedPacks = Array.isArray(assetState.sessionSharedPacks) ? assetState.sessionSharedPacks : [];
   const privatePacks = Array.isArray(assetState.privatePacks) ? assetState.privatePacks : [];
+  if (assetSessionShareAllBtnEl) {
+    const shareableCount = privatePacks.filter((pack) => !pack?.shared_in_session).length;
+    assetSessionShareAllBtnEl.disabled = !canManageSession || !shareableCount || assetState.packsLoading;
+    assetSessionShareAllBtnEl.textContent = shareableCount ? `Share All Packs (${shareableCount})` : "All Packs Shared";
+  }
   assetSessionShareSummaryEl.textContent = sharedPacks.length
     ? `${sharedPacks.length} pack${sharedPacks.length === 1 ? "" : "s"} shared in ${playSessionState.name || "this session"}.`
     : `No packs are shared in ${playSessionState.name || "this session"} yet.`;
@@ -1936,6 +1969,9 @@ function initAssetLibBindings() {
     await refreshAssetSessionPackData();
     renderAssetSessionSharePanel();
     if (assetState.loaded) await refreshAssetsPanel();
+  };
+  if (assetSessionShareAllBtnEl) assetSessionShareAllBtnEl.onclick = async () => {
+    await shareAllSessionPrivatePacks();
   };
   if (assetSearchInputEl) assetSearchInputEl.addEventListener("input", () => {
     assetState.searchInput = assetSearchInputEl.value || "";

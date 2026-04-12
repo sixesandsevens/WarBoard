@@ -380,8 +380,8 @@ async def auth_gate(request: Request, call_next):
     """
     path = request.url.path
 
-    # Always allow auth endpoints and ACME.
-    if path.startswith("/api/auth/") or path.startswith("/.well-known/acme-challenge/"):
+    # Always allow auth endpoints, join links, and ACME.
+    if path.startswith("/api/auth/") or path.startswith("/join/") or path.startswith("/.well-known/acme-challenge/"):
         return await call_next(request)
 
     # Public board + minimal unauth static for offline single-session mode.
@@ -400,7 +400,7 @@ async def auth_gate(request: Request, call_next):
         nxt = request.url.path
         if request.url.query:
             nxt = f"{nxt}?{request.url.query}"
-        return RedirectResponse(url=f"/static/login.html?next={nxt}", status_code=302)
+        return RedirectResponse(url=f"/static/canvas.html?next={nxt}", status_code=302)
 
     resp = await call_next(request)
     # Large pack/static payloads should be cacheable in browsers/CDNs.
@@ -429,7 +429,9 @@ def app_dashboard(req: Request):
 
 @app.get("/join/{code}")
 def join_link(code: str, req: Request):
-    user = _require_user(req)
+    user = _get_user_from_request(req)
+    if not user:
+        return RedirectResponse(url=f"/static/canvas.html?invite={code}", status_code=302)
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
     room_id = room_id_from_join_code(code)

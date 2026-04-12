@@ -2083,8 +2083,9 @@
   refreshToolButtons();
   updateCanvasCursor();
   (async () => {
+    let user = null;
     try {
-      await loadMe();
+      user = await loadMe();
       if (!restoreOfflineState()) {
         applyStateSync(currentStateSnapshot());
       }
@@ -2096,11 +2097,7 @@
     } finally {
       appInitialized = true;
     }
-    if (me && me.username && roomEl.value.trim()) {
-      connectWS(true);
-    } else if (!me && shouldPromptForSharedRoomAuth()) {
-      maybeOpenSessionModalForSharedRoom("Log in to join this shared room.");
-    }
+    await finishCanvasAuthFlow(user, { promptWhenNoRoom: !user?.username });
   })();
 
   function refreshUI() {
