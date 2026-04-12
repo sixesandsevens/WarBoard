@@ -131,7 +131,10 @@
   const assetSetSaveBtnEl = document.getElementById("assetSetSaveBtn");
   const assetSetDeleteBtnEl = document.getElementById("assetSetDeleteBtn");
   const assetPlaceModeBtnEl = document.getElementById("assetPlaceModeBtn");
-  const assetFolderTreeEl = document.getElementById("assetFolderTree");
+  const assetRecentStripEl = document.getElementById("assetRecentStrip");
+  const assetCategoryListEl = document.getElementById("assetCategoryList");
+  const assetSubcategorySectionEl = document.getElementById("assetSubcategorySection");
+  const assetSubcategoryListEl = document.getElementById("assetSubcategoryList");
   const assetGridStatusEl = document.getElementById("assetGridStatus");
   const assetGridEl = document.getElementById("assetGrid");
   const drawerContentEl = document.querySelector(".drawer-content");

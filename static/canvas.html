@@ -514,57 +514,27 @@
               <option value="all">All Packs</option>
             </select>
           </label>
-          <button id="assetFiltersToggleBtn" class="ghost" type="button">Filters</button>
         </div>
 
         <div id="assetSearchChips" class="asset-search-chips"></div>
         <div id="assetSearchHint" class="asset-search-hint"></div>
 
-        <div id="assetAdvancedFilters" class="asset-advanced-filters" hidden>
-          <label class="asset-toolbar-field">
-            <span>Type</span>
-            <select id="assetTypeFilter">
-              <option value="all">All Files</option>
-              <option value="png">PNG</option>
-              <option value="webp">WebP</option>
-              <option value="jpg">JPG</option>
-              <option value="gif">GIF</option>
-            </select>
-          </label>
-          <label class="asset-toolbar-field">
-            <span>Alpha</span>
-            <select id="assetAlphaFilter">
-              <option value="all">Any</option>
-              <option value="yes">Has Alpha</option>
-              <option value="no">No Alpha</option>
-            </select>
-          </label>
-          <label class="asset-toolbar-field">
-            <span>Size</span>
-            <select id="assetSizeFilter">
-              <option value="all">Any</option>
-              <option value="tiny">Tiny (≤256)</option>
-              <option value="small">Small (≤512)</option>
-              <option value="medium">Medium (≤1024)</option>
-              <option value="large">Large (≤2048)</option>
-              <option value="huge">Huge (&gt;2048)</option>
-            </select>
-          </label>
-          <label class="asset-toolbar-field">
-            <span>Sort</span>
-            <select id="assetSortMode">
-              <option value="recent">Recently Used</option>
-              <option value="newest">Newest</option>
-              <option value="largest">Largest</option>
-              <option value="name">Name (A-Z)</option>
-            </select>
-          </label>
-        </div>
-
         <div class="asset-browse-layout">
-          <aside class="asset-folder-sidebar">
-            <div class="asset-sidebar-title">Folders</div>
-            <div id="assetFolderTree" class="asset-folder-tree"></div>
+          <aside class="asset-nav-sidebar">
+            <section class="asset-sidebar-section">
+              <div class="asset-sidebar-title">Quick Access</div>
+              <div id="assetRecentStrip" class="asset-recent-strip"></div>
+            </section>
+
+            <section class="asset-sidebar-section">
+              <div class="asset-sidebar-title">Categories</div>
+              <div id="assetCategoryList" class="asset-category-list"></div>
+            </section>
+
+            <section id="assetSubcategorySection" class="asset-sidebar-section" hidden>
+              <div class="asset-sidebar-title">Subcategories</div>
+              <div id="assetSubcategoryList" class="asset-subcategory-list"></div>
+            </section>
           </aside>
           <section class="asset-grid-wrap">
             <div id="assetGridStatus" class="asset-grid-status"></div>

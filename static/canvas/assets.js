@@ -114,6 +114,8 @@ const assetState = {
   searchInput: "",
   searchDebounceMs: 160,
   folder: "",
+  navCategory: "",
+  navSubcategory: "",
   viewMode: "pieces",
   packFilter: loadAssetScope(),
   typeFilter: "all",
@@ -158,7 +160,6 @@ let assetSuppressCardClick = false;
 let mapPreviewAsset = null;
 let mapPreviewSourceUrl = "";
 let mapPreviewLoadSeq = 0;
-const expandedAssetFolders = new Set([""]);
 
 // ─── Pack sanitization ────────────────────────────────────────────────────────
 
@@ -581,6 +582,16 @@ function updateAssetSearchFromParsed(parsed, removeIdx = -1) {
   if (assetSearchInputEl) assetSearchInputEl.value = assetState.searchInput;
 }
 
+function syncAssetNavSelectionFromFolder() {
+  const folder = String(assetState.folder || "").trim().replace(/^\/+|\/+$/g, "");
+  if (!folder) {
+    assetState.navSubcategory = "";
+    return;
+  }
+  assetState.navCategory = inferAssetCategory(folder);
+  assetState.navSubcategory = folder;
+}
+
 function renderAssetSearchMeta(parsed, conflictHints = []) {
   if (assetSearchChipsEl) {
     const chips = [];
@@ -621,12 +632,10 @@ function renderAssetMode() {
 }
 
 function renderAssetAdvancedFilters() {
-  if (!assetAdvancedFiltersEl) return;
+  if (!assetAdvancedFiltersEl || !assetFiltersToggleBtnEl) return;
   assetAdvancedFiltersEl.hidden = !assetState.filtersOpen;
-  if (assetFiltersToggleBtnEl) {
-    assetFiltersToggleBtnEl.textContent = assetState.filtersOpen ? "Hide Filters" : "Filters";
-    assetFiltersToggleBtnEl.classList.toggle("primary", assetState.filtersOpen);
-  }
+  assetFiltersToggleBtnEl.textContent = assetState.filtersOpen ? "Hide Filters" : "More Filters";
+  assetFiltersToggleBtnEl.classList.toggle("primary", assetState.filtersOpen);
 }
 
 function availableAssetPackOptions() {
@@ -808,6 +817,7 @@ async function applyAssetQueryChange(patch = {}, { refreshFolders = true, preser
   Object.keys(patch).forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(assetState, key)) assetState[key] = patch[key];
   });
+  syncAssetNavSelectionFromFolder();
   assetState.packFilter = normalizeAssetPackFilter(assetState.packFilter);
   if (preserveItems) softResetAssetResults();
   else resetAssetResults();
@@ -1291,11 +1301,10 @@ function renderAssetGrid() {
       assetGridStatusEl.textContent = "Open Asset Library to load items.";
     } else {
       const shown = rows.length;
-      const total = Math.max(shown, Number(assetState.totalCount || 0));
-      const moreText = assetState.serverLoading && shown ? " • Loading more assets..." : "";
+      const label = assetState.navSubcategory || (assetState.folder ? assetState.navCategory : "");
       assetGridStatusEl.textContent = shown
-        ? `Showing ${shown} of ${total}${moreText}`
-        : "No results for this filter.";
+        ? `${label ? `${label} • ` : ""}${shown} asset${shown === 1 ? "" : "s"}${assetState.serverLoading && shown ? " • loading more..." : ""}`
+        : "No matching assets.";
     }
   }
 
@@ -1331,7 +1340,7 @@ function renderAssetGrid() {
     const dimsLabel = (width > 0 && height > 0) ? `${width}x${height}` : "unknown size";
     const alphaLabel = assetHasAlphaGuess(a) ? "alpha" : "opaque";
     const packLabel = String(a.pack_slug || "").trim() || "uploads";
-    const packMetaLabel = a.shared_in_session ? `${packLabel} • session-shared` : packLabel;
+    const packMetaLabel = a.shared_in_session ? `${packLabel} • shared` : packLabel;
     const kind = assetKind(a);
     const kindBadge = kind === "map" ? "Map" : kind === "piece" ? "Piece" : "Unknown";
     const readonlyBadge = a.readonly ? `<span class="asset-card-pill">Read only</span>` : "";
@@ -1364,7 +1373,7 @@ function renderAssetGrid() {
       <div class="asset-card-body">
         <div class="asset-card-name">${escapeHtml(String(a.name || "Asset"))}</div>
         <div class="asset-card-meta">${escapeHtml(dimsLabel)} • ${escapeHtml(ext)} • ${escapeHtml(alphaLabel)}</div>
-        <div class="asset-card-submeta">${escapeHtml(String(a.folder_path || "/"))} • ${escapeHtml(packMetaLabel)}</div>
+        <div class="asset-card-submeta">${escapeHtml(packMetaLabel)}</div>
       </div>
     </button>
   `;
@@ -1543,81 +1552,138 @@ function renderAssetGrid() {
   if (!assetState.serverLoading) requestAnimationFrame(maybeLoadMoreAssets);
 }
 
-// ─── Folder tree ──────────────────────────────────────────────────────────────
+// ─── Browse navigation ───────────────────────────────────────────────────────
 
-function buildAssetFolderTree(paths = []) {
-  const root = { name: "", path: "", children: new Map(), count: 0 };
-  for (const rawPath of paths) {
-    const cleaned = String(rawPath || "").trim().replace(/^\/+|\/+$/g, "");
-    if (!cleaned) continue;
-    const parts = cleaned.split("/").filter(Boolean);
-    let node = root;
-    node.count += 1;
-    let pathAcc = "";
-    for (const part of parts) {
-      pathAcc = pathAcc ? `${pathAcc}/${part}` : part;
-      if (!node.children.has(part)) {
-        node.children.set(part, { name: part, path: pathAcc, children: new Map(), count: 0 });
-      }
-      node = node.children.get(part);
-      node.count += 1;
-    }
-  }
-  return root;
+function inferAssetCategory(path = "") {
+  const p = String(path || "").toLowerCase();
+  if (!p) return "Misc";
+  if (/(tunnel|ruin|catacomb|cave|crypt|dungeon|temple|prison|sewer)/.test(p)) return "Dungeon";
+  if (/(shop|tavern|room|house|interior|inn|kitchen|bedroom|hall|library|quarters)/.test(p)) return "Interior";
+  if (/(forest|tree|swamp|desert|nature|jungle|outdoor|garden|rock|river|mountain)/.test(p)) return "Nature";
+  if (/(goblin|orc|creature|monster|beast|undead|npc|enemy|dragon|animal)/.test(p)) return "Creatures";
+  if (/(prop|debris|furniture|barrel|door|chest|weapon|foliage|statue|object)/.test(p)) return "Props";
+  return "Misc";
 }
 
-function renderAssetFolderTree() {
-  if (!assetFolderTreeEl) return;
+function folderSummaryGroups() {
   const folderRows = Array.isArray(assetState.folderSummary) ? assetState.folderSummary : [];
-  const expandedCounts = new Map();
+  const categories = new Map();
   for (const row of folderRows) {
-    const cleaned = String(row?.path || "").trim().replace(/^\/+|\/+$/g, "");
-    if (!cleaned) continue;
+    const path = String(row?.path || "").trim().replace(/^\/+|\/+$/g, "");
+    if (!path) continue;
     const count = Math.max(0, Number(row?.count || 0));
-    const parts = cleaned.split("/").filter(Boolean);
-    let pathAcc = "";
-    for (const part of parts) {
-      pathAcc = pathAcc ? `${pathAcc}/${part}` : part;
-      expandedCounts.set(pathAcc, (expandedCounts.get(pathAcc) || 0) + count);
-    }
+    const category = inferAssetCategory(path);
+    if (!categories.has(category)) categories.set(category, { name: category, count: 0, items: [] });
+    const bucket = categories.get(category);
+    bucket.count += count;
+    bucket.items.push({ path, count, label: path.split("/").filter(Boolean).pop() || path });
   }
-  const root = buildAssetFolderTree(Array.from(expandedCounts.keys()));
-  const selected = String(assetState.folder || "");
-  const lines = [];
+  return Array.from(categories.values())
+    .map((bucket) => ({
+      ...bucket,
+      items: bucket.items.sort((a, b) => {
+        if (b.count !== a.count) return b.count - a.count;
+        return a.label.localeCompare(b.label);
+      }),
+    }))
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.name.localeCompare(b.name);
+    });
+}
 
-  const row = (node, depth, hasChildren) => {
-    const isSelected = selected === node.path;
-    const expanded = expandedAssetFolders.has(node.path);
-    const indent = depth * 14;
-    const caret = hasChildren ? (expanded ? "▾" : "▸") : "•";
-    const label = node.path || "All folders";
-    const count = node.path ? (expandedCounts.get(node.path) || 0) : Number(assetState.totalCount || 0);
-    lines.push(`
-      <div style="display:flex; align-items:center; gap:6px; padding:2px 4px; border-radius:6px; ${isSelected ? "background:rgba(0,209,255,0.15);" : ""}">
-        <button type="button" data-folder-toggle="${escapeHtml(node.path)}" style="width:16px; text-align:center; background:transparent; border:none; color:#ddd; cursor:${hasChildren ? "pointer" : "default"};">${caret}</button>
-        <button type="button" data-folder-select="${escapeHtml(node.path)}" style="flex:1; text-align:left; background:transparent; border:none; color:${isSelected ? "#fff" : "#ddd"}; cursor:pointer; padding-left:${indent}px;">
-          ${escapeHtml(label)} <span style="opacity:.65">(${count})</span>
-        </button>
-      </div>
-    `);
-  };
+function getRecentAssetRows(limit = 10) {
+  const usage = assetState.recentUsed || {};
+  return [...(assetState.items || [])]
+    .filter((asset) => usage[assetUsageKey(asset)])
+    .sort((a, b) => (usage[assetUsageKey(b)] || 0) - (usage[assetUsageKey(a)] || 0))
+    .slice(0, limit);
+}
 
-  const walk = (node, depth) => {
-    const children = Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name));
-    row(node, depth, children.length > 0);
-    if (!children.length || !expandedAssetFolders.has(node.path)) return;
-    for (const child of children) walk(child, depth + 1);
-  };
-  walk(root, 0);
-  if (assetState.folderLoading) {
-    assetFolderTreeEl.innerHTML = `<div style="opacity:.75;">Loading folders…</div>`;
+function activateAssetLibraryItem(asset) {
+  if (!asset) return;
+  const kind = assetKind(asset);
+  if (kind === "map") {
+    openMapPreview(asset);
+    return;
+  }
+  if (assetState.placeMode) {
+    dragSpawn = { ...asset, kind: "asset" };
+    dragSpawnWorld = null;
+    dragSpawnOverCanvas = false;
+    updateCanvasCursor();
+    markAssetRecentlyUsed(asset);
+    return;
+  }
+  spawnPackAsset(asset);
+}
+
+function renderAssetRecentStrip() {
+  if (!assetRecentStripEl) return;
+  const rows = getRecentAssetRows(10);
+  if (!rows.length) {
+    assetRecentStripEl.innerHTML = `<div class="asset-sidebar-empty">Use a few assets and your quick picks will appear here.</div>`;
+    return;
+  }
+  assetRecentStripEl.innerHTML = rows.map((asset, idx) => `
+    <button type="button" class="asset-recent-chip" data-asset-recent-idx="${idx}" title="${escapeHtml(String(asset?.name || "Asset"))}">
+      <span class="asset-recent-chip-name">${escapeHtml(String(asset?.name || "Asset"))}</span>
+      <span class="asset-recent-chip-meta">${escapeHtml(String(asset?.pack_name || asset?.pack_slug || "Uploads"))}</span>
+    </button>
+  `).join("");
+  assetRecentStripEl.querySelectorAll("[data-asset-recent-idx]").forEach((btn) => {
+    btn.onclick = () => {
+      const idx = Number(btn.getAttribute("data-asset-recent-idx") || "-1");
+      activateAssetLibraryItem(rows[idx]);
+    };
+  });
+}
+
+function renderAssetCategoryNav() {
+  if (!assetCategoryListEl) return;
+  const groups = folderSummaryGroups();
+  if (assetState.folderLoading && !groups.length) {
+    assetCategoryListEl.innerHTML = `<div class="asset-sidebar-empty">Loading categories…</div>`;
     return;
   }
   if (assetState.folderError) {
-    assetFolderTreeEl.innerHTML = `<div style="opacity:.75;">${escapeHtml(assetState.folderError)}</div>`;
+    assetCategoryListEl.innerHTML = `<div class="asset-sidebar-empty">${escapeHtml(assetState.folderError)}</div>`;
     return;
   }
-  assetFolderTreeEl.innerHTML = lines.join("") || `<div style="opacity:.75;">(no folders)</div>`;
+  assetCategoryListEl.innerHTML = groups.length
+    ? groups.map((group) => `
+        <button type="button" class="asset-nav-btn ${assetState.navCategory === group.name ? "active" : ""}" data-asset-category="${escapeHtml(group.name)}">
+          <span class="asset-nav-btn-name">${escapeHtml(group.name)}</span>
+          <span class="asset-nav-btn-meta">${group.count} assets</span>
+        </button>
+      `).join("")
+    : `<div class="asset-sidebar-empty">No categories yet.</div>`;
+}
+
+function renderAssetSubcategoryNav() {
+  if (!assetSubcategorySectionEl || !assetSubcategoryListEl) return;
+  const hasSearch = !!String(assetState.searchInput || assetState.search || "").trim();
+  const group = folderSummaryGroups().find((entry) => entry.name === assetState.navCategory);
+  assetSubcategorySectionEl.hidden = hasSearch || !group;
+  if (assetSubcategorySectionEl.hidden) {
+    assetSubcategoryListEl.innerHTML = "";
+    return;
+  }
+  assetSubcategoryListEl.innerHTML = group.items.length
+    ? group.items.map((item) => `
+        <button type="button" class="asset-nav-btn ${assetState.navSubcategory === item.path ? "active" : ""}" data-asset-subcategory="${escapeHtml(item.path)}">
+          <span class="asset-nav-btn-name">${escapeHtml(item.label)}</span>
+          <span class="asset-nav-btn-meta">${item.count} assets</span>
+        </button>
+      `).join("")
+    : `<div class="asset-sidebar-empty">No subcategories here yet.</div>`;
+}
+
+function renderAssetFolderTree() {
+  syncAssetNavSelectionFromFolder();
+  renderAssetRecentStrip();
+  renderAssetCategoryNav();
+  renderAssetSubcategoryNav();
 }
 
 // ─── Asset loading & refresh ──────────────────────────────────────────────────
@@ -2089,25 +2155,43 @@ function initAssetLibBindings() {
     };
     syncPlaceModeBtn();
   }
-  if (assetFolderTreeEl) assetFolderTreeEl.addEventListener("click", (e) => {
-    const toggle = e.target.closest("[data-folder-toggle]");
-    if (toggle) {
-      const path = String(toggle.getAttribute("data-folder-toggle") || "");
-      if (expandedAssetFolders.has(path)) expandedAssetFolders.delete(path);
-      else expandedAssetFolders.add(path);
-      renderAssetFolderTree();
-      return;
-    }
-    const selectBtn = e.target.closest("[data-folder-select]");
-    if (selectBtn) {
-      assetState.folder = String(selectBtn.getAttribute("data-folder-select") || "");
+  if (assetCategoryListEl) assetCategoryListEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-asset-category]");
+    if (!btn) return;
+    const category = String(btn.getAttribute("data-asset-category") || "");
+    const nextCategory = assetState.navCategory === category ? "" : category;
+    assetState.navCategory = nextCategory;
+    if (!nextCategory) {
+      assetState.navSubcategory = "";
+      if (assetState.folder) {
+        assetState.folder = "";
+        saveAssetFilterPreset();
+        renderAssetFolderTree();
+        void applyAssetQueryChange({ folder: "" }, { refreshFolders: false, preserveItems: true });
+        return;
+      }
+    } else if (assetState.navSubcategory && inferAssetCategory(assetState.navSubcategory) !== nextCategory) {
+      assetState.navSubcategory = "";
+      assetState.folder = "";
       saveAssetFilterPreset();
       renderAssetFolderTree();
-      void applyAssetQueryChange(
-        { folder: assetState.folder },
-        { refreshFolders: false, preserveItems: true },
-      );
+      void applyAssetQueryChange({ folder: "" }, { refreshFolders: false, preserveItems: true });
+      return;
     }
+    renderAssetFolderTree();
+  });
+  if (assetSubcategoryListEl) assetSubcategoryListEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-asset-subcategory]");
+    if (!btn) return;
+    const path = String(btn.getAttribute("data-asset-subcategory") || "");
+    assetState.navSubcategory = assetState.navSubcategory === path ? "" : path;
+    assetState.folder = assetState.navSubcategory;
+    saveAssetFilterPreset();
+    renderAssetFolderTree();
+    void applyAssetQueryChange(
+      { folder: assetState.folder },
+      { refreshFolders: false, preserveItems: true },
+    );
   });
   if (assetUploadBtnEl) assetUploadBtnEl.onclick = async () => {
     const file = assetFileInputEl?.files && assetFileInputEl.files[0];
