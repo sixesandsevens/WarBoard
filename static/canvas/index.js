@@ -2174,10 +2174,18 @@
       commitActiveFogStroke();
     }
     if (next === "shape") {
-      toolEl.value = isShapeTool(toolEl.value) ? toolEl.value : lastShapeTool;
+      const restore = isShapeTool(toolEl.value) ? toolEl.value : lastShapeTool;
+      toolEl.value = restore;
+      if (!isShapeTool(toolEl.value)) toolEl.value = "rect";
     } else {
       toolEl.value = next;
-      if (isShapeTool(next)) lastShapeTool = next;
+      if (isShapeTool(next) && toolEl.value !== next) {
+        // unknown shape type — fall back so tool state stays valid
+        toolEl.value = "rect";
+        lastShapeTool = "rect";
+      } else if (isShapeTool(next)) {
+        lastShapeTool = next;
+      }
     }
     const current = tool();
     if (current !== prev) {
