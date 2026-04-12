@@ -104,6 +104,12 @@ function saveAssetScope(value) {
   } catch (_) {}
 }
 
+function normalizeAssetSortMode(value, fallback = "newest") {
+  const raw = String(value || fallback).trim().toLowerCase();
+  if (raw === "recent") return "newest";
+  return ["newest", "largest", "name"].includes(raw) ? raw : fallback;
+}
+
 const assetState = {
   items: [],
   privatePacks: [],
@@ -121,7 +127,7 @@ const assetState = {
   typeFilter: "all",
   alphaFilter: "all",
   sizeFilter: "all",
-  sortMode: "recent",
+  sortMode: "newest",
   diagnostics: {},
   diagnosticsOrder: [],
   recentUsed: loadAssetRecentUsage(),
@@ -668,7 +674,7 @@ function effectiveAssetBrowseQuery() {
       ? "no"
       : "all";
   const rawKind = String(assetState.viewMode || "pieces").trim().toLowerCase();
-  const rawSort = String(assetState.sortMode || "recent").trim().toLowerCase();
+  const rawSort = normalizeAssetSortMode(assetState.sortMode);
   return {
     parsed,
     q: parsed.textTerms.join(" ").trim(),
@@ -678,7 +684,7 @@ function effectiveAssetBrowseQuery() {
     kind: ["pieces", "maps", "unknown", "all"].includes(rawKind) ? rawKind : "pieces",
     type: parsed.type || String(assetState.typeFilter || "all").trim().toLowerCase() || "all",
     alpha: normalizedAlpha,
-    sort: ["recent", "newest", "largest", "name"].includes(rawSort) ? rawSort : "recent",
+    sort: rawSort,
   };
 }
 
@@ -899,9 +905,7 @@ function markAssetRecentlyUsed(asset) {
   try {
     localStorage.setItem(ASSET_RECENT_USAGE_KEY, JSON.stringify(assetState.recentUsed));
   } catch (_) {}
-  if (assetState.sortMode === "recent" && isAssetsTabActive()) {
-    renderAssetGrid();
-  }
+  if (isAssetsTabActive()) renderAssetRecentStrip();
 }
 
 function currentAssetSessionId() {
@@ -1135,7 +1139,7 @@ function saveAssetFilterPreset(sourceValue = null) {
     typeFilter: String(assetState.typeFilter || "all"),
     alphaFilter: String(assetState.alphaFilter || "all"),
     sizeFilter: String(assetState.sizeFilter || "all"),
-    sortMode: String(assetState.sortMode || "recent"),
+    sortMode: normalizeAssetSortMode(assetState.sortMode),
     folder: String(assetState.folder || ""),
   };
   persistAssetFilterPresets();
@@ -1160,7 +1164,7 @@ function applyAssetFilterPresetForSource(sourceValue = null, announce = false) {
     assetState.typeFilter = String(preset.typeFilter || "all");
     assetState.alphaFilter = String(preset.alphaFilter || "all");
     assetState.sizeFilter = String(preset.sizeFilter || "all");
-    assetState.sortMode = String(preset.sortMode || "recent");
+    assetState.sortMode = normalizeAssetSortMode(preset.sortMode);
     assetState.folder = String(preset.folder || "");
     if (announce) {
       toast(`Restored filters for ${source === "upload" ? "Uploads" : source === "all" ? "All Packs" : `Pack: ${source}`}.`);
@@ -1170,7 +1174,7 @@ function applyAssetFilterPresetForSource(sourceValue = null, announce = false) {
     assetState.typeFilter = "all";
     assetState.alphaFilter = "all";
     assetState.sizeFilter = "all";
-    assetState.sortMode = "recent";
+    assetState.sortMode = "newest";
     assetState.folder = "";
   }
   syncAssetFilterControls();
@@ -1185,7 +1189,7 @@ function getCurrentAssetFilterSnapshot() {
     typeFilter: String(assetState.typeFilter || "all"),
     alphaFilter: String(assetState.alphaFilter || "all"),
     sizeFilter: String(assetState.sizeFilter || "all"),
-    sortMode: String(assetState.sortMode || "recent"),
+    sortMode: normalizeAssetSortMode(assetState.sortMode),
     folder: String(assetState.folder || ""),
   };
 }
@@ -1226,7 +1230,7 @@ function applyAssetFilterSnapshot(snapshot, shouldRender = true) {
   assetState.typeFilter = normalizeEnum(snapshot.typeFilter, ["all", "png", "webp", "jpg", "gif"], "all");
   assetState.alphaFilter = normalizeEnum(snapshot.alphaFilter, ["all", "yes", "no"], "all");
   assetState.sizeFilter = normalizeEnum(snapshot.sizeFilter, ["all", "tiny", "small", "medium", "large", "huge"], "all");
-  assetState.sortMode = normalizeEnum(snapshot.sortMode, ["recent", "newest", "largest", "name"], "recent");
+  assetState.sortMode = normalizeAssetSortMode(snapshot.sortMode);
   assetState.folder = folder;
   syncAssetFilterControls();
   renderAssetFolderTree();
@@ -2129,7 +2133,7 @@ function initAssetLibBindings() {
   if (assetSortModeEl) {
     assetSortModeEl.value = assetState.sortMode;
     assetSortModeEl.addEventListener("change", () => {
-      assetState.sortMode = String(assetSortModeEl.value || "recent");
+      assetState.sortMode = normalizeAssetSortMode(assetSortModeEl.value);
       saveAssetFilterPreset();
       void applyAssetQueryChange({ sortMode: assetState.sortMode });
     });

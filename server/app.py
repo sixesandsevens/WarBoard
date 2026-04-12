@@ -555,7 +555,7 @@ def list_assets_api(
     kind: str = "",
     type: str = "",
     alpha: str = "",
-    sort: str = "recent",
+    sort: str = "newest",
     session_id: str = "",
     skip_missing: int = 0,
     lite: int = 0,
@@ -1379,7 +1379,10 @@ async def rename_room(room_id: str, req: Request, gm_key: str | None = None):
         if not raw:
             raise HTTPException(status_code=404, detail="Room not found")
         state = RoomState.model_validate_json(raw)
-        if not _gm_authorized(state, user.user_id, gm_key):
+        room_manager_authorized = False
+        if meta.session_id:
+            room_manager_authorized = can_manage_game_session(meta.session_id, user.user_id)
+        if not _gm_authorized(state, user.user_id, gm_key) and not room_manager_authorized:
             raise HTTPException(status_code=403, detail="GM only")
         name = str(body.get("name", "")).strip()
         if not name:
@@ -1542,15 +1545,15 @@ async def ws_room(ws: WebSocket, room_id: str):
         now = time.time()
         if kind == "move":
             q = move_times
-            limit = 60
+            limit = 180
             window = 1.0
         elif kind == "erase":
             q = erase_times
-            limit = 30
+            limit = 90
             window = 1.0
         elif kind == "create":
             q = create_times
-            limit = 20
+            limit = 60
             window = 1.0
         else:
             q = req_sync_times

@@ -473,6 +473,37 @@ async function switchRoom(newRoomId) {
   void refreshSnapshotsPanel();
 }
 
+async function promptRenameRoom(roomId, currentName = "") {
+  const rid = String(roomId || "").trim();
+  if (!rid) return;
+  const existingName = String(currentName || "").trim();
+  const next = prompt("New room name?", existingName) || "";
+  const name = next.trim();
+  if (!name || name === existingName) return;
+  try {
+    await apiPatch(`/api/rooms/${encodeURIComponent(rid)}`, { name }, true);
+    if (rid === (state.room_id || roomEl.value.trim())) {
+      state.room_name = name;
+      updateSessionPill();
+      refreshSessionModalAuth();
+    }
+    if (playSessionState.current_room && playSessionState.current_room.id === rid) {
+      playSessionState.current_room.display_name = name;
+    }
+    if (Array.isArray(playSessionState.rooms)) {
+      playSessionState.rooms = playSessionState.rooms.map((room) => (
+        room.id === rid ? { ...room, display_name: name } : room
+      ));
+    }
+    log(`ROOM RENAMED ${rid} -> ${name}`);
+    renderSessionSummary();
+    await refreshRoomsPanel();
+    if (playSessionState.id) await refreshCurrentSessionState();
+  } catch (e) {
+    log(`RENAME ROOM ERROR: ${e.message || e}`);
+  }
+}
+
 // ─── Session summary panel ────────────────────────────────────────────────────
 
 function renderSessionSummary() {
@@ -509,10 +540,14 @@ function renderSessionSummary() {
     const moveButtons = canManageSession && !current
       ? `<button data-session-request="${room.id}" style="padding:2px 6px;">Request</button><button data-session-force="${room.id}" style="padding:2px 6px;">Force</button>`
       : "";
+    const renameButton = canManageSession
+      ? `<button data-session-rename="${room.id}" style="padding:2px 6px;">Rename</button>`
+      : "";
     return `
       <div style="display:flex; gap:6px; align-items:center; margin:4px 0; flex-wrap:wrap; ${current ? "background:rgba(91,156,246,0.14); border-radius:8px; padding:4px;" : ""}">
         <button data-session-open="${room.id}" style="padding:2px 6px;">Go</button>
         <button data-session-copy="${room.id}" style="padding:2px 6px;">Copy Link</button>
+        ${renameButton}
         ${moveButtons}
         <span style="font-weight:${current ? 700 : 500};">${room.display_name || room.id}</span>
         <span style="opacity:.65;">${occupancy} online</span>
@@ -536,6 +571,13 @@ function renderSessionSummary() {
       } catch (_) {
         log(`JOIN LINK: ${link}`);
       }
+    };
+  });
+  sessionRoomsListEl.querySelectorAll("button[data-session-rename]").forEach((btn) => {
+    btn.onclick = async () => {
+      const rid = btn.getAttribute("data-session-rename");
+      const room = playSessionState.rooms.find((entry) => entry.id === rid);
+      await promptRenameRoom(rid, room?.display_name || room?.id || "");
     };
   });
   sessionRoomsListEl.querySelectorAll("button[data-session-request]").forEach((btn) => {
@@ -869,16 +911,8 @@ async function refreshRoomsPanel() {
     roomsListEl.querySelectorAll("button[data-rename-room]").forEach((btn) => {
       btn.onclick = async () => {
         const rid = btn.getAttribute("data-rename-room");
-        const next = prompt("New room name?", "") || "";
-        const name = next.trim();
-        if (!name) return;
-        try {
-          await apiPatch(`/api/rooms/${encodeURIComponent(rid)}`, { name }, true);
-          log(`ROOM RENAMED ${rid} -> ${name}`);
-          await refreshRoomsPanel();
-        } catch (e) {
-          log(`RENAME ROOM ERROR: ${e.message || e}`);
-        }
+        const room = roomsById[rid];
+        await promptRenameRoom(rid, room?.display_name || room?.name || rid);
       };
     });
     roomsListEl.querySelectorAll("button[data-delete-room]").forEach((btn) => {
