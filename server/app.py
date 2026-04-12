@@ -1390,6 +1390,8 @@ async def rename_room(room_id: str, req: Request, gm_key: str | None = None):
         ok = update_room_name(room_id, name)
         if not ok:
             raise HTTPException(status_code=404, detail="Room not found")
+        if meta.session_id and "display_name" not in body:
+            update_room_display_name(room_id, name)
     # display_name / parent_room_id / room_order — session GM/co-GM only
     hierarchy_keys = {"display_name", "parent_room_id", "room_order"}
     if hierarchy_keys & body.keys():

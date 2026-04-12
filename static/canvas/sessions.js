@@ -484,15 +484,26 @@ async function promptRenameRoom(roomId, currentName = "") {
     await apiPatch(`/api/rooms/${encodeURIComponent(rid)}`, { name }, true);
     if (rid === (state.room_id || roomEl.value.trim())) {
       state.room_name = name;
+      if (roomEl) roomEl.value = rid;
       updateSessionPill();
       refreshSessionModalAuth();
     }
-    if (playSessionState.current_room && playSessionState.current_room.id === rid) {
+    const currentSessionRoomId = String(
+      playSessionState.current_room?.id
+      || playSessionState.current_room?.room_id
+      || playSessionState.current_room?.current_room_id
+      || "",
+    ).trim();
+    if (playSessionState.current_room && currentSessionRoomId === rid) {
       playSessionState.current_room.display_name = name;
+      playSessionState.current_room.name = name;
+      playSessionState.current_room.current_room_name = name;
     }
     if (Array.isArray(playSessionState.rooms)) {
       playSessionState.rooms = playSessionState.rooms.map((room) => (
-        room.id === rid ? { ...room, display_name: name } : room
+        String(room?.id || room?.room_id || "").trim() === rid
+          ? { ...room, display_name: name, name }
+          : room
       ));
     }
     log(`ROOM RENAMED ${rid} -> ${name}`);

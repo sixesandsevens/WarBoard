@@ -368,6 +368,28 @@
       actions.appendChild(copyBtn);
     }
 
+    if(opts.canRename){
+      const renameBtn = document.createElement('button');
+      renameBtn.className = 'btn-ghost btn-sm';
+      renameBtn.textContent = 'Rename';
+      renameBtn.onclick = async () => {
+        const currentName = String(r.display_name || r.name || '').trim();
+        const next = prompt('New room name?', currentName) || '';
+        const name = next.trim();
+        if(!name || name === currentName) return;
+        renameBtn.disabled = true; renameBtn.textContent = 'Saving…';
+        try{
+          await api(`/api/rooms/${encodeURIComponent(r.room_id)}`, {method:'PATCH', body: JSON.stringify({name})});
+          await refresh();
+        }catch(e){
+          alert('Rename failed: ' + e.message);
+          renameBtn.disabled = false;
+          renameBtn.textContent = 'Rename';
+        }
+      };
+      actions.appendChild(renameBtn);
+    }
+
     if(opts.canDelete){
       const delBtn = document.createElement('button');
       delBtn.className = 'btn-danger btn-sm';
@@ -483,8 +505,9 @@
         if(rooms.length){
           const flat = flattenTree(rooms, sess.root_room_id);
           const canDelete = sess.role === 'gm';
+          const canRename = sess.role === 'gm' || sess.role === 'co_gm';
           for(const {room, depth} of flat){
-            roomsDiv.appendChild(makeRoomNode(room, depth, {canDelete}));
+            roomsDiv.appendChild(makeRoomNode(room, depth, {canDelete, canRename}));
           }
         } else {
           const empty = document.createElement('div');
@@ -563,6 +586,28 @@
           catch(e){ alert(link); }
         };
         right.appendChild(copyBtn);
+      }
+
+      if(r.role === 'owner'){
+        const renameBtn = document.createElement('button');
+        renameBtn.className = 'btn-ghost btn-sm';
+        renameBtn.textContent = 'Rename';
+        renameBtn.onclick = async () => {
+          const currentName = String(r.name || '').trim();
+          const next = prompt('New room name?', currentName) || '';
+          const name = next.trim();
+          if(!name || name === currentName) return;
+          renameBtn.disabled = true; renameBtn.textContent = 'Saving…';
+          try{
+            await api(`/api/rooms/${encodeURIComponent(r.room_id)}`, {method:'PATCH', body: JSON.stringify({name})});
+            await refresh();
+          }catch(e){
+            alert('Rename failed: ' + e.message);
+            renameBtn.disabled = false;
+            renameBtn.textContent = 'Rename';
+          }
+        };
+        right.appendChild(renameBtn);
       }
 
       if(r.role === 'owner'){
