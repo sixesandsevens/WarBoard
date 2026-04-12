@@ -637,17 +637,26 @@
       case "asset_duplicate": {
         const offset = ui.snap ? ui.gridSize : Math.max(24, ui.gridSize * 0.5);
         const dupIds = selectedAssetIds.size > 1 ? Array.from(selectedAssetIds) : [selectedAssetId];
+        const newIds = [];
         for (const dupId of dupIds) {
           const a = state.assets.get(dupId || "");
           if (!a || !canEditAssetLocal(a)) continue;
+          const newId = makeId();
+          newIds.push(newId);
           send("ASSET_INSTANCE_CREATE", {
             ...a,
-            id: makeId(),
+            id: newId,
             x: Number(a.x || 0) + offset,
             y: Number(a.y || 0) + offset,
             creator_id: myId(),
             locked: false,
           });
+        }
+        // Transfer selection to the new duplicates so they can be immediately dragged.
+        if (newIds.length) {
+          selectedAssetIds.clear();
+          for (const id of newIds) selectedAssetIds.add(id);
+          selectedAssetId = newIds[newIds.length - 1];
         }
         break;
       }
