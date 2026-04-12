@@ -47,6 +47,7 @@ def apply_asset_event(
             asset_id=pack_asset_id,
             source=source,
             pack_slug=str(payload.get("pack_slug") or "").strip() or None,
+            folder_path=str(payload.get("folder_path") or "").strip() or None,
             mime=str(payload.get("mime") or "").strip() or None,
             ext=str(payload.get("ext") or "").strip() or None,
             image_url=image_url,

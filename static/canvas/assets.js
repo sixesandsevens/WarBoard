@@ -1722,6 +1722,27 @@ async function ensureAssetPanelReady() {
   await refreshAssetsPanel();
 }
 
+async function revealPlacedAssetInLibrary(asset) {
+  const folder = String(asset?.folder_path || "").trim();
+  const packSlug = String(asset?.pack_slug || "").trim();
+  const source = String(asset?.source || "").trim().toLowerCase();
+
+  activateDrawerTab("assets", true);
+  await ensureAssetPanelReady();
+
+  const nextPackFilter = packSlug || (source === "upload" ? "upload" : "all");
+
+  await applyAssetQueryChange(
+    {
+      search: "",
+      searchInput: "",
+      folder,
+      packFilter: nextPackFilter,
+    },
+    { refreshFolders: true, preserveItems: false },
+  );
+}
+
 function isAssetsTabActive() {
   const tab = document.getElementById("tab-assets");
   return !!tab && tab.classList.contains("active");
@@ -1856,6 +1877,7 @@ function spawnPackAsset(packToken, x = null, y = null) {
     asset_id: normalized.asset_id || normalized.id || null,
     source: normalized.source || null,
     pack_slug: normalized.pack_slug || null,
+    folder_path: normalized.folder_path || null,
     mime: normalized.mime || null,
     ext: normalized.ext || null,
     image_url: normalized.url_original || normalized.image_url || "",
@@ -1917,6 +1939,7 @@ function spawnOverlayAsset(assetRef) {
     asset_id: normalized.asset_id || normalized.id || null,
     source: normalized.source || null,
     pack_slug: normalized.pack_slug || null,
+    folder_path: normalized.folder_path || null,
     mime: normalized.mime || null,
     ext: normalized.ext || null,
     image_url: normalized.url_original || normalized.image_url || "",

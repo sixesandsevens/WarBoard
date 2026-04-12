@@ -112,6 +112,7 @@ class AssetInstance(BaseModel):
     asset_id: Optional[str] = None
     source: Optional[Literal["upload", "pack"]] = None
     pack_slug: Optional[str] = None
+    folder_path: Optional[str] = None
     mime: Optional[str] = None
     ext: Optional[str] = None
     image_url: str

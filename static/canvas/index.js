@@ -649,6 +649,14 @@
         send("ASSET_INSTANCE_CREATE", clone);
         break;
       }
+      case "asset_show_in_library": {
+        const a = state.assets.get(selectedAssetId || "");
+        if (!a) break;
+        if (typeof revealPlacedAssetInLibrary === "function") {
+          void revealPlacedAssetInLibrary(a);
+        }
+        break;
+      }
       case "asset_resize_up": {
         const a = state.assets.get(selectedAssetId || "");
         if (!a || !canEditAssetLocal(a)) break;
