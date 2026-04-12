@@ -134,10 +134,20 @@ async function finishCanvasAuthFlow(user = me, options = {}) {
     sessionRoomEl.value = targetRoomId;
     replaceCanvasRouteParams({ room: targetRoomId, invite: "" });
     cidEl.value = currentUser.username;
-    setSessionModalStatus("");
-    connectWS(true);
-    closeSessionModal();
-    return true;
+    setSessionModalStatus(`Connecting to ${targetRoomId}...`);
+    setSessionConnecting(true);
+    try {
+      await connectWS(true, { waitForSync: true, clearView: true });
+      setSessionModalStatus("");
+      closeSessionModal();
+      return true;
+    } catch (e) {
+      log(`AUTH ROOM CONNECT ERROR: ${e?.message || e}`);
+      setSessionModalStatus(`Could not connect to ${targetRoomId}.`);
+      return false;
+    } finally {
+      setSessionConnecting(false);
+    }
   }
 
   if (targetRoomId && !accessibleRoomIds.has(targetRoomId)) {
@@ -201,21 +211,30 @@ function currentRoomLabel() {
 }
 
 function updateSessionPill() {
+  if (!sessionPill) return;
   const connected = online && !!(ws && ws.readyState === 1);
   const roomText = currentRoomLabel();
+
+  sessionPill.classList.remove("ok", "bad");
+
+  if (sessionConnecting) {
+    sessionPill.textContent = `◌ Connecting · ${roomText}`;
+    sessionDisconnectBtn?.classList.add("hidden");
+    return;
+  }
+
   if (connected) {
     sessionPill.textContent = `● Connected - ${roomText}`;
     sessionPill.classList.add("ok");
-    sessionPill.classList.remove("bad");
-    sessionDisconnectBtn.classList.remove("hidden");
-  } else {
-    sessionPill.textContent = shouldPromptForSharedRoomAuth()
-      ? `○ Disconnected - Sign in to join ${roomText}`
-      : "○ Disconnected - Single Session Mode";
-    sessionPill.classList.add("bad");
-    sessionPill.classList.remove("ok");
-    sessionDisconnectBtn.classList.add("hidden");
+    sessionDisconnectBtn?.classList.remove("hidden");
+    return;
   }
+
+  sessionPill.textContent = shouldPromptForSharedRoomAuth()
+    ? `○ Disconnected - Sign in to join ${roomText}`
+    : "○ Disconnected - Single Session Mode";
+  sessionPill.classList.add("bad");
+  sessionDisconnectBtn?.classList.add("hidden");
 }
 
 function refreshSessionModalAuth() {
@@ -461,16 +480,42 @@ function clearLocalRoomView() {
 }
 
 async function switchRoom(newRoomId) {
+  const nextRoomId = String(newRoomId || "").trim();
+  if (!nextRoomId) return false;
+
   const priorRoomId = roomEl.value.trim();
-  prepareForRoomTransition();
-  roomEl.value = newRoomId;
-  snapshotRoomLabelEl.textContent = newRoomId;
-  if (playSessionState.id && priorRoomId && priorRoomId !== newRoomId) {
-    const nextRoom = playSessionState.rooms.find((room) => room.id === newRoomId);
-    addSessionActivity(`Switching from ${priorRoomId} to ${nextRoom?.display_name || newRoomId}.`, { kind: "switch" });
+  if (priorRoomId === nextRoomId && online && ws && ws.readyState === WebSocket.OPEN) {
+    return true;
   }
-  connectWS(true);
-  void refreshSnapshotsPanel();
+
+  prepareForRoomTransition();
+  roomEl.value = nextRoomId;
+  if (sessionRoomEl) sessionRoomEl.value = nextRoomId;
+  if (snapshotRoomLabelEl) snapshotRoomLabelEl.textContent = nextRoomId;
+  if (typeof replaceCanvasRouteParams === "function") {
+    replaceCanvasRouteParams({ room: nextRoomId, invite: "" });
+  }
+
+  if (playSessionState.id && priorRoomId && priorRoomId !== nextRoomId) {
+    const nextRoom = playSessionState.rooms.find((room) => room.id === nextRoomId);
+    addSessionActivity(`Switching from ${priorRoomId} to ${nextRoom?.display_name || nextRoomId}.`, { kind: "switch" });
+  }
+
+  setSessionModalStatus(`Connecting to ${nextRoomId}...`);
+  setSessionConnecting(true);
+
+  try {
+    await connectWS(true, { waitForSync: true, clearView: true });
+    await refreshSnapshotsPanel();
+    setSessionModalStatus("");
+    return true;
+  } catch (e) {
+    log(`ROOM SWITCH ERROR: ${e?.message || e}`);
+    setSessionModalStatus(`Could not connect to ${nextRoomId}.`);
+    return false;
+  } finally {
+    setSessionConnecting(false);
+  }
 }
 
 async function promptRenameRoom(roomId, currentName = "") {
@@ -810,7 +855,6 @@ function _flattenRoomTree(rooms, rootRoomId) {
 
 async function refreshRoomsPanel() {
   try {
-    await refreshCurrentSessionState();
     const currentSessionId = playSessionState.id;
 
     let rooms = [];
@@ -1047,12 +1091,23 @@ function initSessionBindings() {
     updateSessionPill();
     openSessionModal();
   });
-  if (sessionConnectBtn) sessionConnectBtn.addEventListener("click", () => {
-    roomEl.value = sessionRoomEl.value.trim() || "demo";
+  if (sessionConnectBtn) sessionConnectBtn.addEventListener("click", async () => {
+    const targetRoomId = String(sessionRoomEl?.value || roomEl?.value || "").trim() || "demo";
+    roomEl.value = targetRoomId;
     if (!me || !me.username) { log("Connect blocked: log in first."); return; }
     cidEl.value = me.username;
-    connectWS(true);
-    closeSessionModal();
+    setSessionModalStatus(`Connecting to ${targetRoomId}...`);
+    setSessionConnecting(true);
+    try {
+      await connectWS(true, { waitForSync: true, clearView: true });
+      setSessionModalStatus("");
+      closeSessionModal();
+    } catch (e) {
+      log(`MANUAL ROOM CONNECT ERROR: ${e?.message || e}`);
+      setSessionModalStatus(`Could not connect to ${targetRoomId}.`);
+    } finally {
+      setSessionConnecting(false);
+    }
   });
   if (sessionDisconnectBtn) sessionDisconnectBtn.addEventListener("click", () => {
     if (ws && (ws.readyState === 0 || ws.readyState === 1 || ws.readyState === WebSocket.OPEN)) {
@@ -1085,8 +1140,10 @@ function initSessionBindings() {
   if (roomsPanelBtnEl) roomsPanelBtnEl.onclick = async () => {
     activateDrawerTab("rooms", true);
     await refreshCurrentSessionState();
-    await refreshRoomsPanel();
-    await refreshSnapshotsPanel();
+    await Promise.all([
+      refreshRoomsPanel(),
+      refreshSnapshotsPanel(),
+    ]);
   };
   const roomsPanelCloseBtnEl = document.getElementById("roomsPanelClose");
   if (roomsPanelCloseBtnEl) roomsPanelCloseBtnEl.onclick = () => { drawer.classList.add("hidden"); };

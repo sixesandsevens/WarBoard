@@ -17,6 +17,11 @@ let lastInboundChangeTs = Date.now();
 let lastResyncRequestTs = 0;
 let resyncBadgeTimer = null;
 let seenInboundMutationSinceConnect = false;
+let sessionConnecting = false;
+let wsReadyPromise = null;
+let wsReadyResolver = null;
+let wsReadyRejector = null;
+let wsReadyRoomId = "";
 const players = new Set();
 const STATE_CHANGE_EVENTS = new Set([
   "STATE_SYNC",
@@ -219,3 +224,45 @@ const OFFLINE_MUTATION_TYPES = new Set([
   "COGM_ADD",
   "COGM_REMOVE",
 ]);
+
+// ─── WS readiness helpers ──────────────────────────────────────────────────────
+
+function resetWsReadyState() {
+  wsReadyPromise = null;
+  wsReadyResolver = null;
+  wsReadyRejector = null;
+  wsReadyRoomId = "";
+}
+
+function beginWsReadyWait(roomId) {
+  const targetRoomId = String(roomId || "").trim();
+  wsReadyRoomId = targetRoomId;
+  wsReadyPromise = new Promise((resolve, reject) => {
+    wsReadyResolver = resolve;
+    wsReadyRejector = reject;
+  });
+  return wsReadyPromise;
+}
+
+function resolveWsReady(roomId) {
+  const targetRoomId = String(roomId || "").trim();
+  if (!wsReadyResolver) return;
+  if (wsReadyRoomId && targetRoomId && wsReadyRoomId !== targetRoomId) return;
+  const resolve = wsReadyResolver;
+  resetWsReadyState();
+  resolve(true);
+}
+
+function rejectWsReady(message) {
+  if (!wsReadyRejector) return;
+  const reject = wsReadyRejector;
+  resetWsReadyState();
+  reject(new Error(message || "WebSocket closed before room was ready."));
+}
+
+function setSessionConnecting(next) {
+  sessionConnecting = !!next;
+  if (typeof updateSessionPill === "function") {
+    updateSessionPill();
+  }
+}

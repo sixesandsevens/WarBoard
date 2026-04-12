@@ -12,25 +12,32 @@ function send(type, payload = {}) {
   applyLocalEvent(type, payload);
 }
 
-function connectWS(force = false) {
+function connectWS(force = false, options = {}) {
+  const waitForSync = !!options.waitForSync;
+  const clearView = options.clearView !== false;
+  const targetRoomId = roomEl.value.trim();
+
   if (!appInitialized) {
     log("Connect deferred: app not initialized yet.");
-    return;
+    return waitForSync ? Promise.reject(new Error("App not initialized.")) : undefined;
   }
 
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     if (!force) {
       log(ws.readyState === 1 ? "Already connected." : "Connection in progress.");
-      return;
+      return waitForSync ? Promise.reject(new Error("Already connected.")) : undefined;
     }
     try { ws.close(); } catch {}
   }
 
-  if (!force) clearLocalRoomView();
+  if (clearView) clearLocalRoomView();
   const room = encodeURIComponent(roomEl.value.trim());
   const cid = encodeURIComponent(cidEl.value.trim());
   const proto = (location.protocol === "https:") ? "wss" : "ws";
   const url = `${proto}://${location.host}/ws/${room}?client_id=${cid}`;
+
+  const readyPromise = waitForSync ? beginWsReadyWait(targetRoomId) : null;
+  setSessionConnecting(true);
 
   const thisWs = new WebSocket(url);
   const thisSeq = ++wsConnectSeq;
@@ -51,6 +58,8 @@ function connectWS(force = false) {
   };
   thisWs.onclose = (ev) => {
     if (ws !== thisWs || thisSeq !== wsConnectSeq) return;
+    setSessionConnecting(false);
+    rejectWsReady("WebSocket closed before room sync completed.");
     ws = null;
     online = false;
     hideResyncBadge();
@@ -75,6 +84,8 @@ function connectWS(force = false) {
   };
   thisWs.onerror = () => {
     if (ws !== thisWs || thisSeq !== wsConnectSeq) return;
+    setSessionConnecting(false);
+    rejectWsReady("WebSocket error before room sync completed.");
     log("ws error");
     updateSessionPill();
     refreshSessionModalAuth();
@@ -96,6 +107,8 @@ function connectWS(force = false) {
     if (ev.type === "STATE_SYNC") {
       hideResyncBadge();
       applyStateSync(ev.payload);
+      setSessionConnecting(false);
+      resolveWsReady(roomEl.value.trim());
       if (pendingArrivalNotice) {
         toast(pendingArrivalNotice);
         log(pendingArrivalNotice);
@@ -580,5 +593,6 @@ function connectWS(force = false) {
     }
   };
 
-  refreshSnapshotsPanel();
+  if (!waitForSync) refreshSnapshotsPanel();
+  return readyPromise;
 }
