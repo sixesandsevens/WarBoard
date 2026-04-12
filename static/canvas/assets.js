@@ -1278,6 +1278,7 @@ function renderAssetGrid() {
   if (parsedSearch.tags.length) conflictHints.push(`tag:${parsedSearch.tags.join(",")}`);
   renderAssetSearchMeta(parsedSearch, conflictHints);
   const rows = (assetState.items || [])
+    .filter((asset) => !shouldSuppressAssetPath(asset?.folder_path || ""))
     .filter((asset) => sizeFilter === "all" || assetSizeBucket(asset) === sizeFilter)
     .slice();
   if (query.sort === "recent") {
@@ -1339,6 +1340,7 @@ function renderAssetGrid() {
     const ext = assetFileExt(a).toUpperCase() || "IMG";
     const dimsLabel = (width > 0 && height > 0) ? `${width}x${height}` : "unknown size";
     const alphaLabel = assetHasAlphaGuess(a) ? "alpha" : "opaque";
+    const mediaClass = assetHasAlphaGuess(a) ? "asset-card-media asset-card-media--alpha" : "asset-card-media";
     const packLabel = String(a.pack_slug || "").trim() || "uploads";
     const packMetaLabel = a.shared_in_session ? `${packLabel} • shared` : packLabel;
     const kind = assetKind(a);
@@ -1351,7 +1353,7 @@ function renderAssetGrid() {
       data-asset-idx="${idx}"
       class="asset-card"
       title="${escapeHtml(String(a.name || "Asset"))} (Shift+Right-click: classify)">
-      <div class="asset-card-media" style="aspect-ratio:${previewAspect};">
+      <div class="${mediaClass}" style="aspect-ratio:${previewAspect};">
         <img class="asset-thumb" ${thumbAttrs} alt="${escapeHtml(String(a.name || "Asset"))}">
         <div class="asset-card-badges">
           <div class="asset-card-pill-row">
