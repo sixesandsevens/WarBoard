@@ -2130,7 +2130,7 @@
   refreshPacks();
 
   function tool() { return toolEl.value; }
-  function isShapeTool(v) { return v === "rect" || v === "circle" || v === "line"; }
+  function isShapeTool(v) { return v === "rect" || v === "circle" || v === "line" || v === "arrow"; }
   function refreshToolButtons() {
     const t = tool();
     toolBtnMove.classList.toggle("active", t === "move");
