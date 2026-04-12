@@ -1565,11 +1565,18 @@ function inferAssetCategory(path = "") {
   return "Misc";
 }
 
+function shouldSuppressAssetPath(path = "") {
+  const p = String(path || "").toLowerCase();
+  if (!p) return false;
+  return p.includes("300 dpi") || p.includes("(print)");
+}
+
 function folderSummaryGroups() {
   const folderRows = Array.isArray(assetState.folderSummary) ? assetState.folderSummary : [];
   const categories = new Map();
   for (const row of folderRows) {
     const path = String(row?.path || "").trim().replace(/^\/+|\/+$/g, "");
+    if (shouldSuppressAssetPath(path)) continue;
     if (!path) continue;
     const count = Math.max(0, Number(row?.count || 0));
     const category = inferAssetCategory(path);
