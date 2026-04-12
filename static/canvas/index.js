@@ -2347,8 +2347,6 @@
     closeTokenMenu();
     hideAllCtx();
     hideToolPanels();
-    canvas.setPointerCapture(e.pointerId);
-    pointerCaptured = true;
 
     const rect = canvas.getBoundingClientRect();
     const sx = e.clientX - rect.left;
@@ -2397,8 +2395,13 @@
       }
       isPanning = true;
       panStart = { sx: e.clientX, sy: e.clientY, camX: cam.x, camY: cam.y };
+      canvas.setPointerCapture(e.pointerId);
+      pointerCaptured = true;
       return;
     }
+
+    canvas.setPointerCapture(e.pointerId);
+    pointerCaptured = true;
 
     erasingActive = false;
     lastEraseWorld = null;
