@@ -1340,10 +1340,12 @@ function renderAssetGrid() {
     const ext = assetFileExt(a).toUpperCase() || "IMG";
     const dimsLabel = (width > 0 && height > 0) ? `${width}x${height}` : "unknown size";
     const alphaLabel = assetHasAlphaGuess(a) ? "alpha" : "opaque";
-    const mediaClass = assetHasAlphaGuess(a) ? "asset-card-media asset-card-media--alpha" : "asset-card-media";
     const packLabel = String(a.pack_slug || "").trim() || "uploads";
     const packMetaLabel = a.shared_in_session ? `${packLabel} • shared` : packLabel;
     const kind = assetKind(a);
+    const mediaClass = kind === "map"
+      ? "asset-card-media asset-card-media--map"
+      : "asset-card-media asset-card-media--piece";
     const kindBadge = kind === "map" ? "Map" : kind === "piece" ? "Piece" : "Unknown";
     const readonlyBadge = a.readonly ? `<span class="asset-card-pill">Read only</span>` : "";
     const sharedBadge = a.shared_in_session ? `<span class="asset-card-pill">Shared</span>` : "";
