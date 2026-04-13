@@ -91,10 +91,10 @@ const state = {
   assets: new Map(),
   terrain_paint: {
     materials: {
-      mud:       { id: "mud",       label: "Mud",       style: "dirt",      seedOfs: 101, mode: "macro_soft", scale: 1.0, zOrder: 0 },
+      mud:       { id: "mud",       label: "Mud",       style: "dirt",      seedOfs: 101, mode: "mud",        scale: 1.0, zOrder: 0 },
       stone:     { id: "stone",     label: "Ground",    style: "grassland", seedOfs: 202, mode: "micro",      scale: 1.0, zOrder: 1 },
-      shore:     { id: "shore",     label: "Shore",     style: "shore",     seedOfs: 909, mode: "macro_soft", scale: 1.0, zOrder: 2 },
-      dirt_road: { id: "dirt_road", label: "Dirt Road", style: "dirt",      seedOfs: 505, mode: "micro",      scale: 1.0, zOrder: 3 },
+      shore:     { id: "shore",     label: "Shore",     style: "shore",     seedOfs: 909, mode: "shore",      scale: 1.0, zOrder: 2 },
+      dirt_road: { id: "dirt_road", label: "Dirt Road", style: "dirt",      seedOfs: 505, mode: "path",       scale: 1.0, zOrder: 3 },
       cobble:    { id: "cobble",    label: "Cobble",    style: "cobble",    seedOfs: 404, mode: "cobble",     scale: 1.0, zOrder: 4, transparentBase: true },
       slime:     { id: "slime",     label: "Water",     style: "water",     seedOfs: 303, mode: "macro_soft", scale: 1.0, zOrder: 5 },
       sand:      { id: "sand",      label: "Sand",      style: "desert",    seedOfs: 606, mode: "macro_soft", scale: 1.0, zOrder: 6 },

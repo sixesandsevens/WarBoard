@@ -43,14 +43,14 @@ const BIOME_PALETTES = {
     shadowShade: [18, 15, 12],
   },
   shore: {
-    base: "#6c5a45",
-    speckA: "#7b6851",
-    speckB: "#5b4b3a",
-    strokeA: "#8b765b",
-    strokeB: "#4a3d2f",
-    stain: "#8a7557",
-    pebbleA: "#8b7a67",
-    pebbleB: "#695b4c",
+    base: "#72604a",
+    speckA: "#816d56",
+    speckB: "#60503f",
+    strokeA: "#8e7a61",
+    strokeB: "#544536",
+    stain: "#947c5f",
+    pebbleA: "#8c7b68",
+    pebbleB: "#6d5d4d",
     shadowShade: [20, 17, 14],
   },
   snow: {
@@ -550,6 +550,154 @@ function buildTerrainPattern(ctxMain, seed, tileSize = 512, opts = {}) {
       c.fillRect(0, 0, tileSize, tileSize);
       c.globalCompositeOperation = "source-over";
     }
+  } else if (mode === "mud") {
+    const img = c.getImageData(0, 0, tileSize, tileSize);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (rnd() - 0.5) * 22;
+      d[i + 0] = clampByte(d[i + 0] + n);
+      d[i + 1] = clampByte(d[i + 1] + n);
+      d[i + 2] = clampByte(d[i + 2] + n);
+    }
+    c.putImageData(img, 0, 0);
+
+    // Broad pooled stains: mud should feel heavy and low.
+    const poolCount = Math.max(5, Math.round(8 / Math.sqrt(scale)));
+    for (let i = 0; i < poolCount; i++) {
+      const cx = rnd() * tileSize;
+      const cy = rnd() * tileSize;
+      const r = tileSize * (0.08 + rnd() * 0.14) * scale;
+      const g = c.createRadialGradient(cx, cy, r * 0.18, cx, cy, r);
+      g.addColorStop(0, colorWithAlpha(palette.strokeB, 0.22));
+      g.addColorStop(1, colorWithAlpha(palette.strokeB, 0));
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(cx, cy, r, 0, Math.PI * 2);
+      c.fill();
+    }
+
+    c.globalAlpha = 0.06;
+    const gritCount = Math.max(1200, Math.round(2200 / Math.sqrt(scale)));
+    for (let i = 0; i < gritCount; i++) {
+      const x = rnd() * tileSize;
+      const y = rnd() * tileSize;
+      c.fillStyle = rnd() < 0.65 ? palette.speckA : palette.speckB;
+      c.fillRect(x, y, 1, 1);
+    }
+    c.globalAlpha = 1;
+
+    // Very short broken marks only — mud should not read like a road.
+    c.globalAlpha = 0.08;
+    const scarCount = Math.max(220, Math.round(420 / Math.sqrt(scale)));
+    for (let i = 0; i < scarCount; i++) {
+      const x = rnd() * tileSize;
+      const y = rnd() * tileSize;
+      const len = (1.5 + rnd() * 5.5) * Math.sqrt(scale);
+      const ang = rnd() * Math.PI * 2;
+      c.strokeStyle = rnd() < 0.55 ? palette.strokeA : palette.strokeB;
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(x, y);
+      c.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+      c.stroke();
+    }
+    c.globalAlpha = 1;
+
+    c.globalCompositeOperation = "multiply";
+    c.fillStyle = "rgba(18,16,14,0.10)";
+    c.fillRect(0, 0, tileSize, tileSize);
+    c.globalCompositeOperation = "source-over";
+  } else if (mode === "shore") {
+    const img = c.getImageData(0, 0, tileSize, tileSize);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (rnd() - 0.5) * 16;
+      d[i + 0] = clampByte(d[i + 0] + n);
+      d[i + 1] = clampByte(d[i + 1] + n);
+      d[i + 2] = clampByte(d[i + 2] + n);
+    }
+    c.putImageData(img, 0, 0);
+
+    // Soft wet streaks: shore should feel transitional, not engineered.
+    c.globalAlpha = 0.10;
+    const streakCount = Math.max(340, Math.round(720 / Math.sqrt(scale)));
+    for (let i = 0; i < streakCount; i++) {
+      const x = rnd() * tileSize;
+      const y = rnd() * tileSize;
+      const len = (6 + rnd() * 22) * Math.sqrt(scale);
+      const ang = (rnd() - 0.5) * 0.55; // mostly horizontal/soft wash
+      c.strokeStyle = rnd() < 0.6 ? palette.strokeA : palette.strokeB;
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(x, y);
+      c.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+      c.stroke();
+    }
+    c.globalAlpha = 1;
+
+    c.globalAlpha = 0.08;
+    const pebbleCount = Math.max(650, Math.round(1200 / Math.sqrt(scale)));
+    for (let i = 0; i < pebbleCount; i++) {
+      const x = rnd() * tileSize;
+      const y = rnd() * tileSize;
+      const r = 0.7 + rnd() * 1.2;
+      c.fillStyle = rnd() < 0.55 ? palette.pebbleA : palette.pebbleB;
+      c.beginPath();
+      c.arc(x, y, r, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.globalAlpha = 1;
+
+    c.globalCompositeOperation = "multiply";
+    c.fillStyle = "rgba(22,20,18,0.06)";
+    c.fillRect(0, 0, tileSize, tileSize);
+    c.globalCompositeOperation = "source-over";
+  } else if (mode === "path") {
+    const img = c.getImageData(0, 0, tileSize, tileSize);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (rnd() - 0.5) * 14;
+      d[i + 0] = clampByte(d[i + 0] + n);
+      d[i + 1] = clampByte(d[i + 1] + n);
+      d[i + 2] = clampByte(d[i + 2] + n);
+    }
+    c.putImageData(img, 0, 0);
+
+    // Directional grain: roads should feel traveled and slightly dragged.
+    c.globalAlpha = 0.14;
+    const grainCount = Math.max(900, Math.round(1800 / Math.sqrt(scale)));
+    for (let i = 0; i < grainCount; i++) {
+      const x = rnd() * tileSize;
+      const y = rnd() * tileSize;
+      const len = (5 + rnd() * 18) * Math.sqrt(scale);
+      const ang = (rnd() - 0.5) * 0.32; // strong horizontal bias
+      c.strokeStyle = rnd() < 0.6 ? palette.strokeA : palette.strokeB;
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(x, y);
+      c.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+      c.stroke();
+    }
+    c.globalAlpha = 1;
+
+    c.globalAlpha = 0.09;
+    const rutCount = Math.max(18, Math.round(28 / Math.sqrt(scale)));
+    for (let i = 0; i < rutCount; i++) {
+      const y = rnd() * tileSize;
+      const sway = (rnd() - 0.5) * 18;
+      c.strokeStyle = colorWithAlpha(palette.strokeB, 0.65);
+      c.lineWidth = 1.1;
+      c.beginPath();
+      c.moveTo(-20, y + sway);
+      c.lineTo(tileSize + 20, y - sway * 0.35);
+      c.stroke();
+    }
+    c.globalAlpha = 1;
+
+    c.globalCompositeOperation = "multiply";
+    c.fillStyle = "rgba(20,18,14,0.04)";
+    c.fillRect(0, 0, tileSize, tileSize);
+    c.globalCompositeOperation = "source-over";
   } else {
     const img = c.getImageData(0, 0, tileSize, tileSize);
     const d = img.data;
