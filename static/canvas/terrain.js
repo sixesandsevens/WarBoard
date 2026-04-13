@@ -42,6 +42,17 @@ const BIOME_PALETTES = {
     pebbleB: "#5a4c3d",
     shadowShade: [18, 15, 12],
   },
+  shore: {
+    base: "#6c5a45",
+    speckA: "#7b6851",
+    speckB: "#5b4b3a",
+    strokeA: "#8b765b",
+    strokeB: "#4a3d2f",
+    stain: "#8a7557",
+    pebbleA: "#8b7a67",
+    pebbleB: "#695b4c",
+    shadowShade: [20, 17, 14],
+  },
   snow: {
     base: "#bcc2c7",
     speckA: "#c9d0d5",
