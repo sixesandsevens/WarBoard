@@ -253,12 +253,12 @@ function worldToneParams() {
     t,
     terrainMicroAlpha: 0.28 + (0.24 * t),
     terrainBreakupAlpha: 0.08 + (0.10 * t),
-    terrainWashAlpha: 0.18 * (1 - t),
-    assetWashAlpha: 0.15 * (1 - t),
-    bgWashAlpha: 0.14 * (1 - t),
-    terrainLiftAlpha: 0.08 * t,
-    assetLiftAlpha: 0.06 * t,
-    bgLiftAlpha: 0.05 * t,
+    terrainWashAlpha: 0.24 * (1 - t),
+    assetWashAlpha: 0,
+    bgWashAlpha: 0.20 * (1 - t),
+    terrainLiftAlpha: 0.12 * t,
+    assetLiftAlpha: 0,
+    bgLiftAlpha: 0.08 * t,
     label: describeWorldTone(t),
   };
 }

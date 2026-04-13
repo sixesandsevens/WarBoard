@@ -43,6 +43,7 @@ function renderNow() {
 // the sorted array and only rebuild when something invalidates it.
 let _cachedOrderedAssetIds = [];
 let _assetOrderDirty = true;
+const _tonedAssetImageCache = new WeakMap();
 
 function markAssetOrderDirty() {
   _assetOrderDirty = true;
@@ -59,6 +60,55 @@ function _getOrderedAssetIds() {
   });
   _cachedOrderedAssetIds = ids;
   return ids;
+}
+
+function getTonedAssetImage(img) {
+  if (!img || !img.complete || img.naturalWidth <= 0 || img.naturalHeight <= 0) return img;
+
+  const tone = worldToneParams();
+  const bucket = Math.round(tone.t * 16);
+  let variants = _tonedAssetImageCache.get(img);
+  if (!variants) {
+    variants = new Map();
+    _tonedAssetImageCache.set(img, variants);
+  }
+  if (variants.has(bucket)) return variants.get(bucket);
+
+  const off = document.createElement("canvas");
+  off.width = img.naturalWidth;
+  off.height = img.naturalHeight;
+  const octx = off.getContext("2d", { willReadFrequently: true });
+  octx.drawImage(img, 0, 0);
+
+  const imageData = octx.getImageData(0, 0, off.width, off.height);
+  const d = imageData.data;
+  const saturation = 0.68 + (0.64 * tone.t);
+  const brightness = 0.80 + (0.30 * tone.t);
+  const contrast = 0.92 + (0.16 * tone.t);
+  const tint = [
+    0.86 + (0.16 * tone.t),
+    0.82 + (0.20 * tone.t),
+    0.78 + (0.28 * tone.t),
+  ];
+
+  for (let i = 0; i < d.length; i += 4) {
+    const alpha = d[i + 3];
+    if (!alpha) continue;
+    const gray = (d[i] + d[i + 1] + d[i + 2]) / 3;
+    let r = (d[i] * saturation + gray * (1 - saturation)) * brightness * tint[0];
+    let g = (d[i + 1] * saturation + gray * (1 - saturation)) * brightness * tint[1];
+    let b = (d[i + 2] * saturation + gray * (1 - saturation)) * brightness * tint[2];
+    r = ((r - 128) * contrast) + 128;
+    g = ((g - 128) * contrast) + 128;
+    b = ((b - 128) * contrast) + 128;
+    d[i] = clamp(Math.round(r), 0, 255);
+    d[i + 1] = clamp(Math.round(g), 0, 255);
+    d[i + 2] = clamp(Math.round(b), 0, 255);
+  }
+
+  octx.putImageData(imageData, 0, 0);
+  variants.set(bucket, off);
+  return off;
 }
 
 function screenToWorld(sx, sy) { return { x: (sx - cam.x) / cam.z, y: (sy - cam.y) / cam.z }; }
@@ -463,24 +513,14 @@ function drawAssets() {
     const sxSign = signedAssetScale(a.scale_x, 1) < 0 ? -1 : 1;
     const sySign = signedAssetScale(a.scale_y, 1) < 0 ? -1 : 1;
     const img = tokenImage(a);
+    const tonedImg = getTonedAssetImage(img);
     ctx.save();
     ctx.translate(s.x, s.y);
     if (angle) ctx.rotate(angle);
     if (sxSign < 0 || sySign < 0) ctx.scale(sxSign, sySign);
     ctx.globalAlpha = opacity;
-    if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
-      const tone = worldToneParams();
-      ctx.drawImage(img, -w / 2, -h / 2, w, h);
-      if (tone.assetWashAlpha > 0.001) {
-        ctx.globalCompositeOperation = "multiply";
-        ctx.fillStyle = `rgba(52,42,34,${tone.assetWashAlpha.toFixed(3)})`;
-        ctx.fillRect(-w / 2, -h / 2, w, h);
-        ctx.globalCompositeOperation = "source-over";
-      }
-      if (tone.assetLiftAlpha > 0.001) {
-        ctx.fillStyle = `rgba(228,220,204,${tone.assetLiftAlpha.toFixed(3)})`;
-        ctx.fillRect(-w / 2, -h / 2, w, h);
-      }
+    if (tonedImg) {
+      ctx.drawImage(tonedImg, -w / 2, -h / 2, w, h);
     } else {
       ctx.fillStyle = "rgba(200,200,200,0.25)";
       ctx.fillRect(-w / 2, -h / 2, w, h);
@@ -643,7 +683,7 @@ function drawDragSpawnGhost() {
     if (dragSpawn.url_original || dragSpawn.image_url) {
       const img = tokenImage(dragSpawn);
       if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        ctx.drawImage(img, s.x - w / 2, s.y - h / 2, w, h);
+        ctx.drawImage(getTonedAssetImage(img), s.x - w / 2, s.y - h / 2, w, h);
       } else {
         ctx.fillStyle = "rgba(220,220,220,0.3)";
         ctx.fillRect(s.x - w / 2, s.y - h / 2, w, h);
