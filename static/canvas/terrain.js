@@ -249,30 +249,36 @@ function describeWorldTone(t = normalizedWorldTone()) {
 
 function worldToneParams() {
   const t = normalizedWorldTone();
-  const eased = t * t * (3 - (2 * t));
-  const grim = 1 - eased;
+  const midpoint = 0.5;
+  const grim = Math.pow(clamp((midpoint - t) / midpoint, 0, 1), 1.6);
+  const whimsy = Math.pow(clamp((t - midpoint) / midpoint, 0, 1), 1.2);
+  const neutral = 1 - Math.max(grim, whimsy);
+  const assetToneStrength = 0.8;
   return {
     t,
-    eased,
+    eased: t * t * (3 - (2 * t)),
     grim,
-    terrainMicroAlpha: 0.30 + (0.18 * eased),
-    terrainBreakupAlpha: 0.09 + (0.07 * eased),
-    terrainWashAlpha: 0.16 * grim,
+    whimsy,
+    neutral,
+    assetToneStrength,
+    terrainMicroAlpha: 0.34 + (0.12 * whimsy) - (0.03 * grim),
+    terrainBreakupAlpha: 0.10 + (0.06 * whimsy) - (0.015 * grim),
+    terrainWashAlpha: 0.20 * grim,
     assetWashAlpha: 0,
-    bgWashAlpha: 0.14 * grim,
-    terrainLiftAlpha: 0.09 * eased,
+    bgWashAlpha: 0.16 * grim,
+    terrainLiftAlpha: 0.10 * whimsy,
     assetLiftAlpha: 0,
-    bgLiftAlpha: 0.06 * eased,
-    assetSaturation: 0.78 + (0.32 * eased),
-    assetBrightness: 0.90 + (0.14 * eased),
-    assetContrast: 0.97 + (0.08 * eased),
+    bgLiftAlpha: 0.07 * whimsy,
+    assetSaturation: 1 - (0.16 * grim * assetToneStrength) + (0.25 * whimsy * assetToneStrength),
+    assetBrightness: 1 - (0.10 * grim * assetToneStrength) + (0.08 * whimsy * assetToneStrength),
+    assetContrast: 1 + (0.25 * grim * assetToneStrength) + (0.04 * whimsy * assetToneStrength),
     assetTint: [
-      0.92 + (0.10 * eased),
-      0.90 + (0.11 * eased),
-      0.88 + (0.16 * eased),
+      1 - (0.05 * grim * assetToneStrength) + (0.02 * whimsy * assetToneStrength),
+      1 - (0.04 * grim * assetToneStrength) + (0.03 * whimsy * assetToneStrength),
+      1 - (0.01 * grim * assetToneStrength) + (0.08 * whimsy * assetToneStrength),
     ],
-    assetHighlightPreserve: 10 + (10 * grim),
-    assetShadowLift: 6 + (6 * eased),
+    assetHighlightPreserve: 8 + (12 * grim) + (4 * whimsy),
+    assetShadowLift: 4 + (8 * grim) + (2 * whimsy),
     label: describeWorldTone(t),
   };
 }
@@ -288,7 +294,7 @@ function applyWorldToneWashRect(x, y, w, h, alpha = null) {
   if (washAlpha <= 0.001 || w <= 0 || h <= 0) return;
   ctx.save();
   ctx.globalCompositeOperation = "multiply";
-  ctx.fillStyle = `rgba(48,42,36,${washAlpha.toFixed(3)})`;
+  ctx.fillStyle = `rgba(42,44,50,${washAlpha.toFixed(3)})`;
   ctx.fillRect(x, y, w, h);
   ctx.restore();
 }
@@ -840,16 +846,22 @@ function drawTerrainBackground() {
   const botRight = screenToWorld(w, h);
 
   const tone = worldToneParams();
+  const terrainStyle = state?.terrain_style || terrain?.style || "";
+  const isWater = terrainStyle === "water";
+  const microAlpha = isWater ? tone.terrainMicroAlpha * 0.9 : tone.terrainMicroAlpha;
+  const breakupAlpha = isWater ? tone.terrainBreakupAlpha * 0.85 : tone.terrainBreakupAlpha;
+  const washAlpha = isWater ? tone.terrainWashAlpha * 0.85 : tone.terrainWashAlpha;
+  const liftAlpha = isWater ? tone.terrainLiftAlpha * 0.75 : tone.terrainLiftAlpha;
   ctx.save();
   ctx.translate(cam.x, cam.y);
   ctx.scale(cam.z, cam.z);
   ctx.globalAlpha = 1.0;
   ctx.fillStyle = terrain.patternA;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
-  ctx.globalAlpha = tone.terrainMicroAlpha;
+  ctx.globalAlpha = microAlpha;
   ctx.fillStyle = terrain.patternB;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
-  ctx.globalAlpha = tone.terrainBreakupAlpha;
+  ctx.globalAlpha = breakupAlpha;
   ctx.fillStyle = terrain.patternC;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
   ctx.globalAlpha = 1.0;
@@ -864,14 +876,14 @@ function drawTerrainBackground() {
   ctx.fillRect(0, 0, w, h);
   ctx.restore();
 
-  if (tone.terrainWashAlpha > 0.001) {
+  if (washAlpha > 0.001) {
     ctx.save();
     ctx.globalCompositeOperation = "multiply";
-    ctx.fillStyle = `rgba(48,40,30,${tone.terrainWashAlpha.toFixed(3)})`;
+    ctx.fillStyle = `rgba(42,44,50,${washAlpha.toFixed(3)})`;
     ctx.fillRect(0, 0, w, h);
     ctx.restore();
   }
-  applyWorldToneLiftRect(0, 0, w, h, tone.terrainLiftAlpha);
+  applyWorldToneLiftRect(0, 0, w, h, liftAlpha);
 }
 
 function refreshTerrainBadge() {
