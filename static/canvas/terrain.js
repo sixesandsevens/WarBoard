@@ -21,81 +21,81 @@ const TERRAIN_BREAKUP_TILE = 1536;
 const TERRAIN_STYLES = new Set(["grassland", "dirt", "snow", "desert", "water", "volcano"]);
 const BIOME_PALETTES = {
   grassland: {
-    base: "#2f5f2a",
-    speckA: "#3c7034",
-    speckB: "#275227",
-    strokeA: "#3f7a35",
-    strokeB: "#204820",
-    stain: "#bda46a",
-    pebbleA: "#7c7c7c",
-    pebbleB: "#6b635a",
-    shadowShade: [14, 22, 14],
+    base: "#2d3d22",
+    speckA: "#38492a",
+    speckB: "#24311d",
+    strokeA: "#465a33",
+    strokeB: "#1d2818",
+    stain: "#6a5b3d",
+    pebbleA: "#6d6a63",
+    pebbleB: "#4f4b45",
+    shadowShade: [16, 18, 14],
   },
   dirt: {
-    base: "#5a4934",
-    speckA: "#6a573f",
-    speckB: "#4a3a2a",
-    strokeA: "#7b6546",
-    strokeB: "#3c2f22",
-    stain: "#9f8458",
-    pebbleA: "#8b7b67",
-    pebbleB: "#665845",
-    shadowShade: [18, 16, 12],
+    base: "#4b3c2f",
+    speckA: "#584637",
+    speckB: "#3c3026",
+    strokeA: "#6a5642",
+    strokeB: "#2f251d",
+    stain: "#7d6545",
+    pebbleA: "#7a6a58",
+    pebbleB: "#5a4c3d",
+    shadowShade: [18, 15, 12],
   },
   snow: {
-    base: "#d7dde0",
-    speckA: "#e6eef2",
-    speckB: "#c7d1d7",
-    strokeA: "#c8d8e2",
-    strokeB: "#b3c0c8",
-    stain: "#b8c2ca",
-    pebbleA: "#9ca8b3",
-    pebbleB: "#7f8a93",
-    shadowShade: [28, 30, 33],
+    base: "#bcc2c7",
+    speckA: "#c9d0d5",
+    speckB: "#aab1b7",
+    strokeA: "#d1d8de",
+    strokeB: "#929ba2",
+    stain: "#9aa2aa",
+    pebbleA: "#7e878f",
+    pebbleB: "#666f77",
+    shadowShade: [24, 26, 30],
   },
   desert: {
-    base: "#c9ad71",
-    speckA: "#d7bb7c",
-    speckB: "#b99560",
-    strokeA: "#cfb074",
-    strokeB: "#a6844f",
-    stain: "#b58f53",
-    pebbleA: "#8f7550",
-    pebbleB: "#6f5a3d",
-    shadowShade: [24, 20, 12],
+    base: "#a58a5e",
+    speckA: "#b39668",
+    speckB: "#8f7750",
+    strokeA: "#b79a69",
+    strokeB: "#7a6544",
+    stain: "#8c6f48",
+    pebbleA: "#7b6545",
+    pebbleB: "#5e4d36",
+    shadowShade: [22, 18, 12],
   },
   water: {
-    base: "#1f4f6a",
-    speckA: "#2a6788",
-    speckB: "#1a4259",
-    strokeA: "#3779a2",
-    strokeB: "#15384c",
-    stain: "#4f9cc8",
-    pebbleA: "#6aa9c8",
-    pebbleB: "#3e7e9f",
-    shadowShade: [10, 20, 28],
+    base: "#27485a",
+    speckA: "#305a70",
+    speckB: "#203b4a",
+    strokeA: "#3c6b82",
+    strokeB: "#162b36",
+    stain: "#3b6477",
+    pebbleA: "#567c8f",
+    pebbleB: "#345564",
+    shadowShade: [8, 16, 22],
   },
   volcano: {
-    base: "#2e2725",
-    speckA: "#3a312f",
-    speckB: "#221d1b",
-    strokeA: "#4a3b36",
-    strokeB: "#1a1412",
-    stain: "#b94621",
-    pebbleA: "#675b55",
-    pebbleB: "#4b433f",
-    shadowShade: [22, 14, 12],
+    base: "#2a2321",
+    speckA: "#352c2a",
+    speckB: "#1d1816",
+    strokeA: "#43352f",
+    strokeB: "#130f0d",
+    stain: "#8e371d",
+    pebbleA: "#5e544f",
+    pebbleB: "#403935",
+    shadowShade: [20, 12, 10],
   },
   cobble: {
-    base: "#4f4c49",
-    speckA: "#5b5854",
-    speckB: "#3f3d3a",
-    strokeA: "#7a7671",
-    strokeB: "#2c2a28",
-    stain: "#5f5b56",
-    pebbleA: "#68645f",
-    pebbleB: "#54504b",
-    shadowShade: [34, 32, 30],
+    base: "#474441",
+    speckA: "#55514d",
+    speckB: "#373431",
+    strokeA: "#6e6964",
+    strokeB: "#252321",
+    stain: "#57524d",
+    pebbleA: "#625d58",
+    pebbleB: "#4d4844",
+    shadowShade: [30, 28, 26],
   },
 };
 const terrain = {
@@ -124,6 +124,10 @@ function normalizeTerrainSeed(seed, fallback = 1) {
 
 function normalizeTerrainStyle(style) {
   return TERRAIN_STYLES.has(style) ? style : "grassland";
+}
+
+function normalizeBiomeStyle(style) {
+  return BIOME_PALETTES[style] ? style : "grassland";
 }
 
 function randomTerrainSeed() {
@@ -204,10 +208,37 @@ function drawCloudShadows(c, rnd, tileSize, intensity = 0.045) {
   }
 }
 
+function applyTerrainMoodPass(c, tileSize, style) {
+  const img = c.getImageData(0, 0, tileSize, tileSize);
+  const d = img.data;
+  const tint = style === "snow"
+    ? [0.94, 0.96, 0.97]
+    : style === "water"
+      ? [0.92, 0.95, 0.93]
+      : [0.95, 0.97, 0.93];
+
+  for (let i = 0; i < d.length; i += 4) {
+    const alpha = d[i + 3];
+    if (!alpha) continue;
+    const gray = (d[i] + d[i + 1] + d[i + 2]) / 3;
+    d[i] = clamp(Math.round((d[i] * 0.78 + gray * 0.22) * 0.87 * tint[0]), 0, 255);
+    d[i + 1] = clamp(Math.round((d[i + 1] * 0.78 + gray * 0.22) * 0.87 * tint[1]), 0, 255);
+    d[i + 2] = clamp(Math.round((d[i + 2] * 0.78 + gray * 0.22) * 0.87 * tint[2]), 0, 255);
+  }
+
+  c.putImageData(img, 0, 0);
+
+  c.save();
+  c.globalCompositeOperation = "multiply";
+  c.fillStyle = style === "snow" ? "rgba(24, 28, 26, 0.08)" : "rgba(36, 30, 24, 0.10)";
+  c.fillRect(0, 0, tileSize, tileSize);
+  c.restore();
+}
+
 function buildTerrainPattern(ctxMain, seed, tileSize = 512, opts = {}) {
   const mode = opts.mode || "macro";
   const scale = clamp(opts.scale || 1, 0.55, 2.4);
-  const style = normalizeTerrainStyle(opts.style);
+  const style = normalizeBiomeStyle(opts.style);
   const transparentBase = !!opts.transparentBase;
   const palette = BIOME_PALETTES[style];
   const off = document.createElement("canvas");
@@ -517,6 +548,8 @@ function buildTerrainPattern(ctxMain, seed, tileSize = 512, opts = {}) {
     c.globalAlpha = 1;
   }
 
+  applyTerrainMoodPass(c, tileSize, style);
+
   return { tileCanvas: off, pattern: ctxMain.createPattern(off, "repeat") };
 }
 
@@ -746,10 +779,10 @@ function drawTerrainBackground() {
   ctx.globalAlpha = 1.0;
   ctx.fillStyle = terrain.patternA;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
-  ctx.globalAlpha = 0.55;
+  ctx.globalAlpha = 0.38;
   ctx.fillStyle = terrain.patternB;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
-  ctx.globalAlpha = 0.18;
+  ctx.globalAlpha = 0.12;
   ctx.fillStyle = terrain.patternC;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
   ctx.globalAlpha = 1.0;
