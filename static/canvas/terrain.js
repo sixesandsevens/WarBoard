@@ -251,12 +251,14 @@ function worldToneParams() {
   const t = normalizedWorldTone();
   return {
     t,
-    filter: `saturate(${(0.72 + (0.56 * t)).toFixed(3)}) brightness(${(0.82 + (0.24 * t)).toFixed(3)}) contrast(${(0.95 + (0.08 * t)).toFixed(3)})`,
     terrainMicroAlpha: 0.28 + (0.24 * t),
     terrainBreakupAlpha: 0.08 + (0.10 * t),
     terrainWashAlpha: 0.18 * (1 - t),
     assetWashAlpha: 0.15 * (1 - t),
     bgWashAlpha: 0.14 * (1 - t),
+    terrainLiftAlpha: 0.08 * t,
+    assetLiftAlpha: 0.06 * t,
+    bgLiftAlpha: 0.05 * t,
     label: describeWorldTone(t),
   };
 }
@@ -273,6 +275,14 @@ function applyWorldToneWashRect(x, y, w, h, alpha = null) {
   ctx.save();
   ctx.globalCompositeOperation = "multiply";
   ctx.fillStyle = `rgba(54,44,34,${washAlpha.toFixed(3)})`;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+}
+
+function applyWorldToneLiftRect(x, y, w, h, alpha = 0) {
+  if (alpha <= 0.001 || w <= 0 || h <= 0) return;
+  ctx.save();
+  ctx.fillStyle = `rgba(228,220,204,${alpha.toFixed(3)})`;
   ctx.fillRect(x, y, w, h);
   ctx.restore();
 }
@@ -819,7 +829,6 @@ function drawTerrainBackground() {
   ctx.save();
   ctx.translate(cam.x, cam.y);
   ctx.scale(cam.z, cam.z);
-  ctx.filter = tone.filter;
   ctx.globalAlpha = 1.0;
   ctx.fillStyle = terrain.patternA;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
@@ -830,7 +839,6 @@ function drawTerrainBackground() {
   ctx.fillStyle = terrain.patternC;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
   ctx.globalAlpha = 1.0;
-  ctx.filter = "none";
   ctx.restore();
 
   // Slight edge darkening improves token/readability over textured terrain.
@@ -849,6 +857,7 @@ function drawTerrainBackground() {
     ctx.fillRect(0, 0, w, h);
     ctx.restore();
   }
+  applyWorldToneLiftRect(0, 0, w, h, tone.terrainLiftAlpha);
 }
 
 function refreshTerrainBadge() {

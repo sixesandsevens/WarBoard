@@ -185,12 +185,9 @@ function drawBackground() {
     const w = b.x - a.x;
     const h = b.y - a.y;
     const tone = worldToneParams();
-    ctx.save();
-    ctx.filter = tone.filter;
     ctx.drawImage(bgImage, a.x, a.y, w, h);
-    ctx.filter = "none";
-    ctx.restore();
     applyWorldToneWashRect(a.x, a.y, w, h, tone.bgWashAlpha);
+    applyWorldToneLiftRect(a.x, a.y, w, h, tone.bgLiftAlpha);
   }
 
   if (state.background_mode === "url" && bgImageStatus === "loading") {
@@ -473,14 +470,16 @@ function drawAssets() {
     ctx.globalAlpha = opacity;
     if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
       const tone = worldToneParams();
-      ctx.filter = tone.filter;
       ctx.drawImage(img, -w / 2, -h / 2, w, h);
-      ctx.filter = "none";
       if (tone.assetWashAlpha > 0.001) {
         ctx.globalCompositeOperation = "multiply";
         ctx.fillStyle = `rgba(52,42,34,${tone.assetWashAlpha.toFixed(3)})`;
         ctx.fillRect(-w / 2, -h / 2, w, h);
         ctx.globalCompositeOperation = "source-over";
+      }
+      if (tone.assetLiftAlpha > 0.001) {
+        ctx.fillStyle = `rgba(228,220,204,${tone.assetLiftAlpha.toFixed(3)})`;
+        ctx.fillRect(-w / 2, -h / 2, w, h);
       }
     } else {
       ctx.fillStyle = "rgba(200,200,200,0.25)";
