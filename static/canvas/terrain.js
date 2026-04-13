@@ -249,16 +249,30 @@ function describeWorldTone(t = normalizedWorldTone()) {
 
 function worldToneParams() {
   const t = normalizedWorldTone();
+  const eased = t * t * (3 - (2 * t));
+  const grim = 1 - eased;
   return {
     t,
-    terrainMicroAlpha: 0.28 + (0.24 * t),
-    terrainBreakupAlpha: 0.08 + (0.10 * t),
-    terrainWashAlpha: 0.24 * (1 - t),
+    eased,
+    grim,
+    terrainMicroAlpha: 0.30 + (0.18 * eased),
+    terrainBreakupAlpha: 0.09 + (0.07 * eased),
+    terrainWashAlpha: 0.16 * grim,
     assetWashAlpha: 0,
-    bgWashAlpha: 0.20 * (1 - t),
-    terrainLiftAlpha: 0.12 * t,
+    bgWashAlpha: 0.14 * grim,
+    terrainLiftAlpha: 0.09 * eased,
     assetLiftAlpha: 0,
-    bgLiftAlpha: 0.08 * t,
+    bgLiftAlpha: 0.06 * eased,
+    assetSaturation: 0.78 + (0.32 * eased),
+    assetBrightness: 0.90 + (0.14 * eased),
+    assetContrast: 0.97 + (0.08 * eased),
+    assetTint: [
+      0.92 + (0.10 * eased),
+      0.90 + (0.11 * eased),
+      0.88 + (0.16 * eased),
+    ],
+    assetHighlightPreserve: 10 + (10 * grim),
+    assetShadowLift: 6 + (6 * eased),
     label: describeWorldTone(t),
   };
 }
@@ -274,7 +288,7 @@ function applyWorldToneWashRect(x, y, w, h, alpha = null) {
   if (washAlpha <= 0.001 || w <= 0 || h <= 0) return;
   ctx.save();
   ctx.globalCompositeOperation = "multiply";
-  ctx.fillStyle = `rgba(54,44,34,${washAlpha.toFixed(3)})`;
+  ctx.fillStyle = `rgba(48,42,36,${washAlpha.toFixed(3)})`;
   ctx.fillRect(x, y, w, h);
   ctx.restore();
 }

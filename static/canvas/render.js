@@ -82,25 +82,33 @@ function getTonedAssetImage(img) {
 
   const imageData = octx.getImageData(0, 0, off.width, off.height);
   const d = imageData.data;
-  const saturation = 0.68 + (0.64 * tone.t);
-  const brightness = 0.80 + (0.30 * tone.t);
-  const contrast = 0.92 + (0.16 * tone.t);
-  const tint = [
-    0.86 + (0.16 * tone.t),
-    0.82 + (0.20 * tone.t),
-    0.78 + (0.28 * tone.t),
-  ];
+  const saturation = tone.assetSaturation;
+  const brightness = tone.assetBrightness;
+  const contrast = tone.assetContrast;
+  const tint = tone.assetTint;
 
   for (let i = 0; i < d.length; i += 4) {
     const alpha = d[i + 3];
     if (!alpha) continue;
     const gray = (d[i] + d[i + 1] + d[i + 2]) / 3;
+    const hi = clamp((gray - 110) / 110, 0, 1);
+    const hiEase = hi * hi * (3 - (2 * hi));
+    const sh = clamp((96 - gray) / 96, 0, 1);
+    const shEase = sh * sh;
+
     let r = (d[i] * saturation + gray * (1 - saturation)) * brightness * tint[0];
     let g = (d[i + 1] * saturation + gray * (1 - saturation)) * brightness * tint[1];
     let b = (d[i + 2] * saturation + gray * (1 - saturation)) * brightness * tint[2];
     r = ((r - 128) * contrast) + 128;
     g = ((g - 128) * contrast) + 128;
     b = ((b - 128) * contrast) + 128;
+
+    const hiBoost = tone.assetHighlightPreserve * hiEase;
+    const shBoost = tone.assetShadowLift * shEase;
+    r += hiBoost + shBoost;
+    g += hiBoost * 0.97 + shBoost;
+    b += hiBoost * 0.94 + shBoost * 0.92;
+
     d[i] = clamp(Math.round(r), 0, 255);
     d[i + 1] = clamp(Math.round(g), 0, 255);
     d[i + 2] = clamp(Math.round(b), 0, 255);
