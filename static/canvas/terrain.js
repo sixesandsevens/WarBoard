@@ -235,6 +235,48 @@ function applyTerrainMoodPass(c, tileSize, style) {
   c.restore();
 }
 
+function normalizedWorldTone() {
+  return clamp(Number(state?.world_tone ?? 0.32), 0, 1);
+}
+
+function describeWorldTone(t = normalizedWorldTone()) {
+  if (t <= 0.16) return "Grimdark";
+  if (t <= 0.38) return "Moody";
+  if (t <= 0.62) return "Neutral";
+  if (t <= 0.84) return "Heroic";
+  return "Whimsy";
+}
+
+function worldToneParams() {
+  const t = normalizedWorldTone();
+  return {
+    t,
+    filter: `saturate(${(0.72 + (0.56 * t)).toFixed(3)}) brightness(${(0.82 + (0.24 * t)).toFixed(3)}) contrast(${(0.95 + (0.08 * t)).toFixed(3)})`,
+    terrainMicroAlpha: 0.28 + (0.24 * t),
+    terrainBreakupAlpha: 0.08 + (0.10 * t),
+    terrainWashAlpha: 0.18 * (1 - t),
+    assetWashAlpha: 0.15 * (1 - t),
+    bgWashAlpha: 0.14 * (1 - t),
+    label: describeWorldTone(t),
+  };
+}
+
+function refreshWorldToneUi() {
+  if (worldToneEl) worldToneEl.value = String(Math.round(normalizedWorldTone() * 100));
+  if (worldToneValEl) worldToneValEl.textContent = describeWorldTone();
+}
+
+function applyWorldToneWashRect(x, y, w, h, alpha = null) {
+  const tone = worldToneParams();
+  const washAlpha = alpha == null ? tone.assetWashAlpha : alpha;
+  if (washAlpha <= 0.001 || w <= 0 || h <= 0) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
+  ctx.fillStyle = `rgba(54,44,34,${washAlpha.toFixed(3)})`;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+}
+
 function buildTerrainPattern(ctxMain, seed, tileSize = 512, opts = {}) {
   const mode = opts.mode || "macro";
   const scale = clamp(opts.scale || 1, 0.55, 2.4);
@@ -773,19 +815,22 @@ function drawTerrainBackground() {
   const topLeft = screenToWorld(0, 0);
   const botRight = screenToWorld(w, h);
 
+  const tone = worldToneParams();
   ctx.save();
   ctx.translate(cam.x, cam.y);
   ctx.scale(cam.z, cam.z);
+  ctx.filter = tone.filter;
   ctx.globalAlpha = 1.0;
   ctx.fillStyle = terrain.patternA;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
-  ctx.globalAlpha = 0.38;
+  ctx.globalAlpha = tone.terrainMicroAlpha;
   ctx.fillStyle = terrain.patternB;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
-  ctx.globalAlpha = 0.12;
+  ctx.globalAlpha = tone.terrainBreakupAlpha;
   ctx.fillStyle = terrain.patternC;
   ctx.fillRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
   ctx.globalAlpha = 1.0;
+  ctx.filter = "none";
   ctx.restore();
 
   // Slight edge darkening improves token/readability over textured terrain.
@@ -796,6 +841,14 @@ function drawTerrainBackground() {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
   ctx.restore();
+
+  if (tone.terrainWashAlpha > 0.001) {
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = `rgba(48,40,30,${tone.terrainWashAlpha.toFixed(3)})`;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
 }
 
 function refreshTerrainBadge() {

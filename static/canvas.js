@@ -27,6 +27,8 @@
   const uploadBgEl = document.getElementById("uploadBg");
   const terrainBgEl = document.getElementById("terrainBg");
   const terrainStyleEl = document.getElementById("terrainStyle");
+  const worldToneEl = document.getElementById("worldTone");
+  const worldToneValEl = document.getElementById("worldToneVal");
   const regenTerrainEl = document.getElementById("regenTerrain");
   const terrainBadgeEl = document.getElementById("terrainBadge");
 

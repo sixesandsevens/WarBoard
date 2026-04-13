@@ -181,6 +181,7 @@ class RoomState(BaseModel):
     background_url: Optional[str] = None
     terrain_seed: int = 1
     terrain_style: Literal["grassland", "dirt", "snow", "desert", "water", "volcano"] = "grassland"
+    world_tone: float = 0.32
     layer_visibility: Dict[str, bool] = Field(
         default_factory=lambda: {"grid": True, "drawings": True, "shapes": True, "assets": True, "tokens": True}
     )

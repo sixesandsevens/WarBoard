@@ -54,6 +54,12 @@ def apply_settings_event(
             room.state.terrain_style = style
         else:
             return WireEvent(type="ERROR", payload={"message": "Invalid terrain_style"})
+    if "world_tone" in payload:
+        try:
+            tone = float(payload.get("world_tone"))
+        except (TypeError, ValueError):
+            return WireEvent(type="ERROR", payload={"message": "Invalid world_tone"})
+        room.state.world_tone = max(0.0, min(1.0, tone))
     if room.state.background_mode == "terrain" and room.state.terrain_seed <= 0:
         room.state.terrain_seed = random.randint(1, 2_147_483_647)
     if room.state.background_mode == "terrain" and mode_changed_to_terrain and not had_explicit_terrain_seed:
@@ -74,6 +80,7 @@ def apply_settings_event(
             "background_url": room.state.background_url,
             "terrain_seed": room.state.terrain_seed,
             "terrain_style": room.state.terrain_style,
+            "world_tone": room.state.world_tone,
             "layer_visibility": room.state.layer_visibility,
         },
     )

@@ -261,6 +261,7 @@
     moveControlTo(sceneBackground, "uploadBg");
     moveControlTo(sceneBackground, "terrainBg");
     moveControlTo(sceneBackground, "terrainStyle");
+    moveControlTo(sceneBackground, "worldTone");
     moveControlTo(sceneBackground, "regenTerrain");
     moveControlTo(sceneBackground, "terrainBadge");
 
@@ -358,8 +359,11 @@
     toolSizePanel.classList.add("hidden");
     toolTextPanel.classList.add("hidden");
     // terrain/fog paint panels stay visible while those tools are active
+    pendingTextPlacement = null;
     textPanelTargetShapeId = null;
     colorPanelTargetShapeId = null;
+    sizePanelTargetShapeId = null;
+    sizePanelMode = "brush";
   }
 
   function showFloatingToolPanel(panelEl, x, y) {
@@ -381,6 +385,7 @@
   function openToolColorPanel(title = "Color", opts = {}) {
     colorPanelTargetShapeId = opts?.shapeId || null;
     textPanelTargetShapeId = null;
+    sizePanelTargetShapeId = null;
     toolColorTitle.textContent = title;
     if (colorPanelTargetShapeId) {
       const sh = state.shapes.get(colorPanelTargetShapeId);
@@ -391,18 +396,56 @@
     showFloatingToolPanel(toolColorPanel, lastCtxClientPos.x + 8, lastCtxClientPos.y + 8);
   }
 
-  function openToolSizePanel(title = "Size") {
+  function openToolSizePanel(title = "Size", opts = {}) {
     textPanelTargetShapeId = null;
     colorPanelTargetShapeId = null;
-    const size = clamp(Number(sizeEl.value || "3"), 1, 30);
+    sizePanelMode = opts?.mode === "text" ? "text" : "brush";
+    sizePanelTargetShapeId = opts?.shapeId || null;
+    const min = sizePanelMode === "text" ? 8 : 1;
+    const max = sizePanelMode === "text" ? 96 : 30;
+    const currentTextSize = sizePanelTargetShapeId
+      ? Number(state.shapes.get(sizePanelTargetShapeId)?.font_size || ui.textFontSize || 24)
+      : Number(ui.textFontSize || 24);
+    const size = clamp(
+      Number(sizePanelMode === "text" ? currentTextSize : (sizeEl.value || "3")),
+      min,
+      max
+    );
     toolSizeTitle.textContent = title;
+    toolSizeSlider.min = String(min);
+    toolSizeSlider.max = String(max);
+    toolSizeSlider.step = "1";
     toolSizeSlider.value = String(Math.round(size));
     toolSizeValue.textContent = String(Math.round(size));
     showFloatingToolPanel(toolSizePanel, lastCtxClientPos.x + 8, lastCtxClientPos.y + 8);
   }
 
+  function createTextShapeAt(pos, text) {
+    if (!pos) return;
+    const content = String(text || "").trim();
+    if (!content) return;
+    send("SHAPE_ADD", {
+      id: makeId(),
+      type: "text",
+      x1: pos.x,
+      y1: pos.y,
+      x2: pos.x,
+      y2: pos.y,
+      text: content,
+      font_size: clamp(Number(ui.textFontSize || 24), 8, 96),
+      color: brushColor(),
+      width: 1,
+      fill: false,
+      locked: false,
+      layer: "draw",
+      layer_band: drawingLayerBand(),
+      creator_id: myId(),
+    });
+  }
+
   function openToolTextPanel() {
     colorPanelTargetShapeId = null;
+    sizePanelTargetShapeId = null;
     if (textPanelTargetShapeId) {
       const sh = state.shapes.get(textPanelTargetShapeId);
       toolTextInput.value = String(sh?.text || ui.textDraft || "");
@@ -877,23 +920,14 @@
         refreshToolContextChecks();
         break;
       case "text_size_custom": {
-        const currentSize = selectedShapeId
-          ? Number(state.shapes.get(selectedShapeId)?.font_size || ui.textFontSize || 24)
-          : Number(ui.textFontSize || 24);
-        const raw = prompt("Text size (8-96):", String(currentSize));
-        if (raw == null) break;
-        const n = clamp(Number(raw), 8, 96);
-        if (!Number.isFinite(n)) break;
         if (selectedShapeId) {
           const sh = state.shapes.get(selectedShapeId);
           if (sh && sh.type === "text" && canEditShapeLocal(sh)) {
-            send("SHAPE_UPDATE", { id: selectedShapeId, font_size: n, commit: true });
-            refreshToolContextChecks();
+            openToolSizePanel("Text Size", { mode: "text", shapeId: selectedShapeId });
             break;
           }
         }
-        ui.textFontSize = n;
-        refreshToolContextChecks();
+        openToolSizePanel("Text Size", { mode: "text" });
         break;
       }
       case "text_color_custom":
@@ -1387,6 +1421,7 @@
     state.allow_players_move = !!s.allow_players_move;
     state.allow_all_move = !!s.allow_all_move;
     state.lockdown = !!s.lockdown;
+    state.world_tone = clamp(Number(s.world_tone ?? state.world_tone ?? 0.32), 0, 1);
     applyBackgroundState(s.background_mode, s.background_url, s.terrain_seed, s.terrain_style);
     state.layer_visibility = {
       grid: s.layer_visibility?.grid ?? true,
@@ -1457,6 +1492,7 @@
       background_url: state.background_url || null,
       terrain_seed: Number(state.terrain_seed || 1),
       terrain_style: state.terrain_style || "grassland",
+      world_tone: clamp(Number(state.world_tone ?? 0.32), 0, 1),
       layer_visibility: { ...state.layer_visibility },
       version: Number(state.version || 0),
       tokens: toPlainObjectMap(state.tokens),
@@ -1587,6 +1623,7 @@
       if ("allow_players_move" in payload) state.allow_players_move = !!payload.allow_players_move;
       if ("allow_all_move" in payload) state.allow_all_move = !!payload.allow_all_move;
       if ("lockdown" in payload) state.lockdown = !!payload.lockdown;
+      if ("world_tone" in payload) state.world_tone = clamp(Number(payload.world_tone ?? state.world_tone ?? 0.32), 0, 1);
       if ("background_mode" in payload || "background_url" in payload || "terrain_seed" in payload || "terrain_style" in payload) {
         applyBackgroundState(
           ("background_mode" in payload) ? payload.background_mode : state.background_mode,
@@ -2068,11 +2105,16 @@
       const sh = state.shapes.get(textPanelTargetShapeId);
       if (sh && sh.type === "text" && canEditShapeLocal(sh)) {
         const next = v || sh.text || "Text";
+        state.shapes.set(textPanelTargetShapeId, { ...sh, text: next });
         send("SHAPE_UPDATE", { id: textPanelTargetShapeId, text: next, commit: true });
       }
+    } else if (pendingTextPlacement) {
+      ui.textDraft = v;
+      createTextShapeAt(pendingTextPlacement, v);
     } else {
-      ui.textDraft = v || "Text";
+      ui.textDraft = v;
     }
+    pendingTextPlacement = null;
     textPanelTargetShapeId = null;
     refreshToolContextChecks();
   };
@@ -2080,6 +2122,49 @@
     applyTextDraft();
     hideToolPanels();
   });
+  if (toolColorPicker) {
+    const applyToolColor = () => {
+      const next = String(toolColorPicker.value || "#ffffff");
+      if (colorPanelTargetShapeId) {
+        const sh = state.shapes.get(colorPanelTargetShapeId);
+        if (sh && canEditShapeLocal(sh)) {
+          state.shapes.set(colorPanelTargetShapeId, { ...sh, color: next });
+          send("SHAPE_UPDATE", { id: colorPanelTargetShapeId, color: next, commit: true });
+        }
+      } else {
+        colorEl.value = next;
+      }
+      refreshToolContextChecks();
+      requestRender();
+    };
+    toolColorPicker.addEventListener("input", applyToolColor);
+    toolColorPicker.addEventListener("change", applyToolColor);
+  }
+  if (toolSizeSlider) {
+    const applyToolSize = () => {
+      const min = Number(toolSizeSlider.min || "1");
+      const max = Number(toolSizeSlider.max || "30");
+      const next = clamp(Number(toolSizeSlider.value || min), min, max);
+      toolSizeValue.textContent = String(Math.round(next));
+      if (sizePanelMode === "text") {
+        if (sizePanelTargetShapeId) {
+          const sh = state.shapes.get(sizePanelTargetShapeId);
+          if (sh && sh.type === "text" && canEditShapeLocal(sh)) {
+            state.shapes.set(sizePanelTargetShapeId, { ...sh, font_size: next });
+            send("SHAPE_UPDATE", { id: sizePanelTargetShapeId, font_size: next, commit: true });
+          }
+        } else {
+          ui.textFontSize = next;
+        }
+      } else {
+        sizeEl.value = String(next);
+      }
+      refreshToolContextChecks();
+      requestRender();
+    };
+    toolSizeSlider.addEventListener("input", applyToolSize);
+    toolSizeSlider.addEventListener("change", applyToolSize);
+  }
   if (toolTextInput) {
     toolTextInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
@@ -2708,26 +2793,14 @@
 
     if (t === "text") {
       const text = String(ui.textDraft || "").trim();
-      if (!text) return;
       const x = ui.snap ? snap(wpos.x) : wpos.x;
       const y = ui.snap ? snap(wpos.y) : wpos.y;
-      send("SHAPE_ADD", {
-        id: makeId(),
-        type: "text",
-        x1: x,
-        y1: y,
-        x2: x,
-        y2: y,
-        text,
-        font_size: clamp(Number(ui.textFontSize || 24), 8, 96),
-        color: brushColor(),
-        width: 1,
-        fill: false,
-        locked: false,
-        layer: "draw",
-        layer_band: drawingLayerBand(),
-        creator_id: myId(),
-      });
+      if (!text) {
+        pendingTextPlacement = { x, y };
+        openToolTextPanel();
+        return;
+      }
+      createTextShapeAt({ x, y }, text);
       return;
     }
 

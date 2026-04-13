@@ -702,6 +702,7 @@ function refreshGmUI() {
   uploadBgEl.disabled = !gm;
   terrainBgEl.disabled = !gm;
   terrainStyleEl.disabled = !gm;
+  if (worldToneEl) worldToneEl.disabled = !gm;
   document.getElementById("setBg").disabled = !gm;
   regenTerrainEl.disabled = !gm;
   document.getElementById("undo").disabled = !gm;
@@ -721,6 +722,7 @@ function refreshGmUI() {
   bgUrlEl.value = state.background_url || "";
   terrainBgEl.checked = state.background_mode === "terrain";
   terrainStyleEl.value = state.terrain_style || "grassland";
+  refreshWorldToneUi();
   refreshTerrainBadge();
   if (toolBtnTerrainPaint) toolBtnTerrainPaint.classList.toggle("hidden", !gm);
   if (toolBtnFogPaint) toolBtnFogPaint.classList.toggle("hidden", !gm);
@@ -1270,6 +1272,16 @@ function initSessionBindings() {
   terrainStyleEl.addEventListener("change", () => {
     send("ROOM_SETTINGS", { background_mode: "terrain", terrain_style: terrainStyleEl.value });
   });
+  if (worldToneEl) {
+    worldToneEl.addEventListener("input", () => {
+      state.world_tone = clamp(Number(worldToneEl.value || 32) / 100, 0, 1);
+      refreshWorldToneUi();
+      requestRender();
+    });
+    worldToneEl.addEventListener("change", () => {
+      send("ROOM_SETTINGS", { world_tone: clamp(Number(worldToneEl.value || 32) / 100, 0, 1) });
+    });
+  }
   regenTerrainEl.addEventListener("click", () => {
     send("ROOM_SETTINGS", { background_mode: "terrain", terrain_seed: randomTerrainSeed(), terrain_style: terrainStyleEl.value });
   });

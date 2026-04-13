@@ -81,6 +81,7 @@ const state = {
   background_url: null,
   terrain_seed: 1,
   terrain_style: "grassland",
+  world_tone: 0.32,
   layer_visibility: { grid: true, drawings: true, shapes: true, assets: true, tokens: true },
   draw_order: { strokes: [], shapes: [], assets: [] },
   version: 0,
@@ -117,7 +118,7 @@ const ui = {
   showGrid: true,
   feetPerSq: 5,
   tokenSpawnScale: 1.0,
-  textDraft: "Text",
+  textDraft: "",
   textFontSize: 24,
   lockAssetMove: loadStoredAssetMoveLock(),
 };
@@ -158,8 +159,11 @@ const ERASE_SEND_INTERVAL_MS = 40;
 let dragSpawn = null;
 let dragSpawnWorld = null;
 let dragSpawnOverCanvas = false;
+let pendingTextPlacement = null;
 let textPanelTargetShapeId = null;
 let colorPanelTargetShapeId = null;
+let sizePanelTargetShapeId = null;
+let sizePanelMode = "brush";
 let tokenMenuTokenId = null;
 let mapCtxWorld = null;
 let ctxSubHideTimer = null;
