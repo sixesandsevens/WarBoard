@@ -668,6 +668,11 @@ const terrainMasks = {
   disp: null,          // scratch canvas for zoom-correct overlay rendering
   dispCtx: null,
   dispPx: 0,
+  fx: null,            // scratch canvas for shoreline/wet-edge effects
+  fxCtx: null,
+  fxMask: null,
+  fxMaskCtx: null,
+  fxPx: 0,
 };
 
 function maskKey(materialId, tx, ty) { return `${materialId}:${tx},${ty}`; }
@@ -792,6 +797,87 @@ function viewWorldRect() {
   return { x0: tl.x, y0: tl.y, x1: br.x, y1: br.y };
 }
 
+function ensureTerrainFxCanvas(dp) {
+  if (terrainMasks.fxPx === dp && terrainMasks.fx && terrainMasks.fxMask) return;
+  terrainMasks.fx = document.createElement("canvas");
+  terrainMasks.fx.width = dp;
+  terrainMasks.fx.height = dp;
+  terrainMasks.fxCtx = terrainMasks.fx.getContext("2d");
+  terrainMasks.fxMask = document.createElement("canvas");
+  terrainMasks.fxMask.width = dp;
+  terrainMasks.fxMask.height = dp;
+  terrainMasks.fxMaskCtx = terrainMasks.fxMask.getContext("2d");
+  terrainMasks.fxPx = dp;
+}
+
+function drawShoreWetEdge(ctxWorld, tx, ty, wx, wy, dp) {
+  const shoreMask = terrainMasks.tiles.get(maskKey("shore", tx, ty));
+  if (!shoreMask) return;
+
+  let hasNearbyWater = false;
+  for (let oy = -1; oy <= 1 && !hasNearbyWater; oy++) {
+    for (let ox = -1; ox <= 1; ox++) {
+      if (terrainMasks.tiles.get(maskKey("slime", tx + ox, ty + oy))) {
+        hasNearbyWater = true;
+        break;
+      }
+    }
+  }
+  if (!hasNearbyWater) return;
+
+  ensureTerrainFxCanvas(dp);
+  const fx = terrainMasks.fxCtx;
+  const fxMask = terrainMasks.fxMaskCtx;
+  fx.clearRect(0, 0, dp, dp);
+  fxMask.clearRect(0, 0, dp, dp);
+
+  for (let oy = -1; oy <= 1; oy++) {
+    for (let ox = -1; ox <= 1; ox++) {
+      const waterMask = terrainMasks.tiles.get(maskKey("slime", tx + ox, ty + oy));
+      if (!waterMask) continue;
+      const dx = ox * dp;
+      const dy = oy * dp;
+
+      fxMask.globalAlpha = 0.9;
+      fxMask.drawImage(waterMask, dx, dy, dp, dp);
+
+      // Expand the water influence slightly so the shore picks up a damp edge,
+      // not just the exact overlap.
+      fx.globalAlpha = 0.14;
+      for (let sy = -2; sy <= 2; sy++) {
+        for (let sx = -2; sx <= 2; sx++) {
+          if (sx === 0 && sy === 0) continue;
+          fx.drawImage(waterMask, dx + sx * 4, dy + sy * 4, dp, dp);
+        }
+      }
+      fx.globalAlpha = 0.20;
+      fx.drawImage(waterMask, dx, dy, dp, dp);
+    }
+  }
+
+  fx.globalAlpha = 1;
+  fxMask.globalAlpha = 1;
+
+  // Keep only the shore area that is close to water.
+  fx.globalCompositeOperation = "destination-in";
+  fx.drawImage(shoreMask, 0, 0, dp, dp);
+  fx.globalCompositeOperation = "source-over";
+
+  ctxWorld.save();
+  ctxWorld.drawImage(terrainMasks.fx, wx, wy, TERRAIN_MASK_TILE_WORLD, TERRAIN_MASK_TILE_WORLD);
+  ctxWorld.globalCompositeOperation = "source-in";
+  ctxWorld.globalAlpha = 0.32;
+  ctxWorld.fillStyle = "#2f3136";
+  ctxWorld.fillRect(wx, wy, TERRAIN_MASK_TILE_WORLD, TERRAIN_MASK_TILE_WORLD);
+  ctxWorld.globalCompositeOperation = "source-over";
+  ctxWorld.drawImage(terrainMasks.fx, wx, wy, TERRAIN_MASK_TILE_WORLD, TERRAIN_MASK_TILE_WORLD);
+  ctxWorld.globalCompositeOperation = "source-in";
+  ctxWorld.globalAlpha = 0.12;
+  ctxWorld.fillStyle = "#6b5a45";
+  ctxWorld.fillRect(wx, wy, TERRAIN_MASK_TILE_WORLD, TERRAIN_MASK_TILE_WORLD);
+  ctxWorld.restore();
+}
+
 function drawTerrainOverlays() {
   const mats = state.terrain_paint?.materials;
   if (!mats) return;
@@ -811,6 +897,7 @@ function drawTerrainOverlays() {
     terrainMasks.dispCtx = terrainMasks.disp.getContext("2d");
     terrainMasks.dispPx = neededPx;
   }
+  ensureTerrainFxCanvas(neededPx);
   const dc = terrainMasks.dispCtx;
   const dp = terrainMasks.dispPx;
   // Scale pattern so one period covers the full tile — matches the old visual scale
@@ -841,6 +928,9 @@ function drawTerrainOverlays() {
         dc.drawImage(mask, 0, 0, dp, dp);
         dc.globalCompositeOperation = "source-over";
         ctx.drawImage(terrainMasks.disp, wx, wy, TERRAIN_MASK_TILE_WORLD, TERRAIN_MASK_TILE_WORLD);
+        if (materialId === "shore") {
+          drawShoreWetEdge(ctx, tx, ty, wx, wy, dp);
+        }
       }
     }
     pattern.setTransform(new DOMMatrix()); // reset
