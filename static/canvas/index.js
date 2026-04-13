@@ -2191,6 +2191,11 @@
   initSessionBindings();
   updateSessionPill();
   setLogCollapsed(false);
+  if (logToggleEl && logWrapEl) {
+    logToggleEl.addEventListener("click", () => {
+      setLogCollapsed(!logWrapEl.classList.contains("collapsed"));
+    });
+  }
   refreshToolButtons();
   updateCanvasCursor();
   (async () => {
