@@ -385,12 +385,19 @@
     tokenMenuTokenId = null;
   }
 
+  function openInteriorEdgeMenu(edge, x, y) {
+    if (!interiorEdgeMenu || !edge || !isGM()) return;
+    showContextMenu(interiorEdgeMenu, x, y);
+    currentInteriorEdge = edge;
+  }
+
   function hideAllCtx() {
     if (ctxSubHideTimer) {
       clearTimeout(ctxSubHideTimer);
       ctxSubHideTimer = null;
     }
     for (const m of allCtxMenus) m.classList.add("hidden");
+    currentInteriorEdge = null;
   }
 
   function hideToolPanels() {
@@ -1455,12 +1462,16 @@
     assetDragOrigin = null;
     marqueeSelectRect = null;
     draggingInteriorId = null;
+    resizingInterior = null;
     dragSpawn = null;
     dragSpawnWorld = null;
     dragSpawnOverCanvas = false;
     activeStroke = null;
     activeShapePreview = null;
     activeInteriorPreview = null;
+    interiorDragStart = null;
+    interiorDragOrigin = null;
+    currentInteriorEdge = null;
     activeRuler = null;
     activePaintStroke = null;
     activeFogStroke = null;
@@ -1734,6 +1745,8 @@
       state.interiors.delete(id);
       state.draw_order.interiors = state.draw_order.interiors.filter((x) => x !== id);
       if (selectedInteriorId === id) selectedInteriorId = null;
+      if (draggingInteriorId === id) draggingInteriorId = null;
+      if (resizingInterior?.id === id) resizingInterior = null;
       for (const [edgeId, edge] of state.interior_edges.entries()) {
         if (edge.room_a_id === id || edge.room_b_id === id) state.interior_edges.delete(edgeId);
       }
@@ -2225,6 +2238,23 @@
       }
     });
   });
+  if (interiorEdgeMenu) {
+    interiorEdgeMenu.addEventListener("click", (e) => {
+      const item = e.target.closest("[data-edge-mode]");
+      if (!item || !currentInteriorEdge || !isGM()) return;
+      const mode = String(item.dataset.edgeMode || "").trim();
+      if (!mode) return;
+      send("INTERIOR_EDGE_SET", {
+        id: makeId(),
+        edge_key: currentInteriorEdge.edge_key,
+        room_a_id: currentInteriorEdge.room_a_id,
+        room_b_id: currentInteriorEdge.room_b_id,
+        mode,
+      });
+      hideAllCtx();
+      requestRender();
+    });
+  }
   const applyTextDraft = () => {
     const v = String(toolTextInput?.value || "").trim();
     if (textPanelTargetShapeId) {
@@ -2562,6 +2592,15 @@
       requestRender();
       return;
     }
+    if (e.key === "Escape" && (draggingInteriorId || resizingInterior || activeInteriorPreview)) {
+      draggingInteriorId = null;
+      resizingInterior = null;
+      activeInteriorPreview = null;
+      interiorDragStart = null;
+      interiorDragOrigin = null;
+      requestRender();
+      return;
+    }
     if (!isTyping && e.key.toLowerCase() === "d" && selectedTokenId && isGM()) {
       if (online) {
         setTokenBadgeLocal(selectedTokenId, "downed", null);
@@ -2707,6 +2746,14 @@
       requestRender();
       return;
     }
+    const edgeHit = (!hit && !assetHit) ? hitTestInteriorEdge(wpos.x, wpos.y) : null;
+    if (edgeHit && isGM()) {
+      selectedInteriorId = edgeHit.room_a_id || edgeHit.room_b_id || selectedInteriorId;
+      closeTokenMenu();
+      openInteriorEdgeMenu(edgeHit, e.clientX, e.clientY);
+      requestRender();
+      return;
+    }
     if (interiorHit) {
       selectedInteriorId = interiorHit;
       selectedAssetId = null;
@@ -2818,6 +2865,7 @@
       const hit = hitTestToken(wpos.x, wpos.y);
       const assetHit = (hit || isAssetInteractionLocked()) ? null : hitTestAsset(wpos.x, wpos.y);
       const interiorHit = (hit || assetHit) ? null : hitTestInterior(wpos.x, wpos.y);
+      const interiorResize = (hit || assetHit) ? null : hitTestInteriorResize(wpos.x, wpos.y);
       const shapeHitRaw = (hit || assetHit || interiorHit) ? null : hitTestShape(wpos.x, wpos.y);
       let shapeHit = shapeHitRaw;
       if (!hit && !shapeHit && selectedShapeId) {
@@ -2908,13 +2956,39 @@
             assetDragOrigin = null;
           }
         }
+      } else if (interiorResize) {
+        const room = state.interiors.get(interiorResize.id);
+        selectedTokenId = null;
+        selectedAssetId = null;
+        selectedAssetIds.clear();
+        selectedShapeId = null;
+        selectedInteriorId = interiorResize.id;
+        if (room && isGM()) {
+          activeDragMoveSeq = ++moveSeqCounter;
+          resizingInterior = interiorResize;
+          draggingInteriorId = interiorResize.id;
+          interiorDragStart = { x: wpos.x, y: wpos.y };
+          interiorDragOrigin = { ...room };
+        }
       } else if (interiorHit) {
         selectedTokenId = null;
         selectedAssetId = null;
         selectedAssetIds.clear();
         selectedShapeId = null;
         selectedInteriorId = interiorHit;
-        draggingInteriorId = null;
+        const room = state.interiors.get(interiorHit);
+        if (room && isGM()) {
+          activeDragMoveSeq = ++moveSeqCounter;
+          draggingInteriorId = interiorHit;
+          resizingInterior = null;
+          interiorDragStart = { x: wpos.x, y: wpos.y };
+          interiorDragOrigin = { ...room };
+        } else {
+          draggingInteriorId = null;
+          resizingInterior = null;
+          interiorDragStart = null;
+          interiorDragOrigin = null;
+        }
       } else if (shapeHit) {
         selectedTokenId = null;
         selectedAssetId = null;
@@ -2952,6 +3026,9 @@
         draggingTokenIds = [];
         dragMoveStartWorld = null;
         dragStartTokenPositions.clear();
+        resizingInterior = null;
+        interiorDragStart = null;
+        interiorDragOrigin = null;
         if (!isShiftDown) setSelection([]);
         marqueeSelectRect = { x1: wpos.x, y1: wpos.y, x2: wpos.x, y2: wpos.y, additive: isShiftDown };
       }
@@ -3144,6 +3221,76 @@
         } else {
           send("TOKENS_MOVE", { moves, commit: false, move_seq: activeDragMoveSeq, move_client: localMoveClientId });
         }
+      }
+      return;
+    }
+
+    if (t === "move" && draggingInteriorId && interiorDragStart && interiorDragOrigin) {
+      const room = state.interiors.get(draggingInteriorId);
+      if (!room) return;
+      if (resizingInterior) {
+        let { x, y, w, h } = interiorDragOrigin;
+        if (resizingInterior.side === "right") {
+          w = snap(wpos.x) - x;
+        }
+        if (resizingInterior.side === "left") {
+          const nx = snap(wpos.x);
+          w = (x + w) - nx;
+          x = nx;
+        }
+        if (resizingInterior.side === "bottom") {
+          h = snap(wpos.y) - y;
+        }
+        if (resizingInterior.side === "top") {
+          const ny = snap(wpos.y);
+          h = (y + h) - ny;
+          y = ny;
+        }
+        w = Math.max(ui.gridSize, w);
+        h = Math.max(ui.gridSize, h);
+        room.x = x;
+        room.y = y;
+        room.w = w;
+        room.h = h;
+        state.interiors.set(room.id, room);
+        markInteriorsDirty();
+        requestRender();
+        const now = Date.now();
+        if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
+          lastMoveSentAt = now;
+          send("INTERIOR_UPDATE", {
+            id: room.id,
+            x,
+            y,
+            w,
+            h,
+            commit: false,
+            move_seq: activeDragMoveSeq,
+            move_client: localMoveClientId,
+          });
+        }
+        return;
+      }
+      const dx = wpos.x - interiorDragStart.x;
+      const dy = wpos.y - interiorDragStart.y;
+      const nx = snap(interiorDragOrigin.x + dx);
+      const ny = snap(interiorDragOrigin.y + dy);
+      room.x = nx;
+      room.y = ny;
+      state.interiors.set(room.id, room);
+      markInteriorsDirty();
+      requestRender();
+      const now = Date.now();
+      if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
+        lastMoveSentAt = now;
+        send("INTERIOR_UPDATE", {
+          id: room.id,
+          x: nx,
+          y: ny,
+          commit: false,
+          move_seq: activeDragMoveSeq,
+          move_client: localMoveClientId,
+        });
       }
       return;
     }
@@ -3387,13 +3534,17 @@
     const movedAssetId = draggingAssetId;
     const movedAssetIds = draggingAssetIds.slice();
     const movedShapeId = draggingShapeId;
+    const movedInteriorId = draggingInteriorId;
+    const movedInteriorResize = resizingInterior ? { ...resizingInterior } : null;
     const pendingInteriorPreview = activeInteriorPreview ? { ...activeInteriorPreview } : null;
+    const finalSeq = activeDragMoveSeq;
     draggingTokenId = null;
     draggingAssetId = null;
     draggingAssetIds = [];
     dragStartAssetPositions = new Map();
     draggingShapeId = null;
     draggingInteriorId = null;
+    resizingInterior = null;
     const hadMarquee = !!marqueeSelectRect;
     const finalMarqueeRect = marqueeSelectRect
       ? normalizeWorldRect({ x: marqueeSelectRect.x1, y: marqueeSelectRect.y1 }, { x: marqueeSelectRect.x2, y: marqueeSelectRect.y2 })
@@ -3405,6 +3556,8 @@
     dragMoveStartWorld = null;
     dragStartTokenPositions.clear();
     assetDragOrigin = null;
+    interiorDragStart = null;
+    interiorDragOrigin = null;
 
     if (t === "move" && hadMarquee && finalMarqueeRect) {
       const hitIds = [];
@@ -3433,11 +3586,11 @@
           x: moves[0].x,
           y: moves[0].y,
           commit: true,
-          move_seq: activeDragMoveSeq,
+          move_seq: finalSeq,
           move_client: localMoveClientId,
         });
       } else if (moves.length > 1) {
-        send("TOKENS_MOVE", { moves, commit: true, move_seq: activeDragMoveSeq, move_client: localMoveClientId });
+        send("TOKENS_MOVE", { moves, commit: true, move_seq: finalSeq, move_client: localMoveClientId });
       }
     }
     if (t === "move" && movedAssetId) {
@@ -3450,13 +3603,12 @@
             x: a.x,
             y: a.y,
             commit: true,
-            move_seq: activeDragMoveSeq,
+            move_seq: finalSeq,
             move_client: localMoveClientId,
           });
         }
       }
     }
-    activeDragMoveSeq = null;
     if (t === "move" && movedShapeId) {
       const sh = state.shapes.get(movedShapeId);
       if (sh) {
@@ -3467,12 +3619,31 @@
           x2: sh.x2,
           y2: sh.y2,
           commit: true,
-          move_seq: activeDragMoveSeq,
+          move_seq: finalSeq,
           move_client: localMoveClientId,
         });
       }
       shapeDragOrigin = null;
     }
+    if (t === "move" && movedInteriorId) {
+      const room = state.interiors.get(movedInteriorId);
+      if (room) {
+        const payload = {
+          id: room.id,
+          x: room.x,
+          y: room.y,
+          commit: true,
+          move_seq: finalSeq,
+          move_client: localMoveClientId,
+        };
+        if (movedInteriorResize) {
+          payload.w = room.w;
+          payload.h = room.h;
+        }
+        send("INTERIOR_UPDATE", payload);
+      }
+    }
+    activeDragMoveSeq = null;
 
     if (t === "interior" && pendingInteriorPreview && isGM()) {
       const room = normalizeInteriorRecord({

@@ -239,6 +239,8 @@ function connectWS(force = false, options = {}) {
       state.interiors.delete(interiorId);
       state.draw_order.interiors = state.draw_order.interiors.filter((id) => id !== interiorId);
       if (selectedInteriorId === interiorId) selectedInteriorId = null;
+      if (draggingInteriorId === interiorId) draggingInteriorId = null;
+      if (resizingInterior?.id === interiorId) resizingInterior = null;
       for (const [edgeId, edge] of state.interior_edges.entries()) {
         if (edge.room_a_id === interiorId || edge.room_b_id === interiorId) state.interior_edges.delete(edgeId);
       }

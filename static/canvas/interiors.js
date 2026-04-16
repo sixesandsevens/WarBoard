@@ -43,6 +43,15 @@ function canonicalInteriorEdgeKey(roomAId, roomBId, orientation, line, start, en
   return `${ids[0]}|${ids[1]}|${orientation}|${line}|${start}|${end}`;
 }
 
+function carveDoorSegment(start, end, gridSize) {
+  const width = Math.min(end - start, Math.max(gridSize * 0.8, 1));
+  const mid = (start + end) / 2;
+  return [
+    { start, end: mid - width / 2 },
+    { start: mid + width / 2, end },
+  ].filter((segment) => segment.end > segment.start);
+}
+
 function subtractSharedSegments(start, end, ranges) {
   if (!Array.isArray(ranges) || !ranges.length) return [{ start, end }];
   const sorted = [...ranges]
@@ -111,53 +120,6 @@ function drawInteriorWalls(visibleWalls, doors) {
     ctx.stroke();
   }
   ctx.restore();
-
-  if (!Array.isArray(doors) || !doors.length) return;
-  ctx.save();
-  ctx.strokeStyle = "#21170f";
-  ctx.lineWidth = Math.max(3, ui.gridSize * cam.z * 0.08);
-  ctx.lineCap = "square";
-  for (const door of doors) {
-    const gapStart = Number(door.doorStart);
-    const gapEnd = Number(door.doorEnd);
-    if (!(gapEnd > gapStart)) continue;
-    if (door.orientation === "h") {
-      if (door.start < gapStart) {
-        const a = worldToScreen(door.start, door.line);
-        const b = worldToScreen(gapStart, door.line);
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      }
-      if (gapEnd < door.end) {
-        const a = worldToScreen(gapEnd, door.line);
-        const b = worldToScreen(door.end, door.line);
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      }
-    } else {
-      if (door.start < gapStart) {
-        const a = worldToScreen(door.line, door.start);
-        const b = worldToScreen(door.line, gapStart);
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      }
-      if (gapEnd < door.end) {
-        const a = worldToScreen(door.line, gapEnd);
-        const b = worldToScreen(door.line, door.end);
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      }
-    }
-  }
-  ctx.restore();
 }
 
 function drawInteriorSelection() {
@@ -166,8 +128,9 @@ function drawInteriorSelection() {
     if (room) {
       const topLeft = worldToScreen(room.x, room.y);
       ctx.save();
-      ctx.strokeStyle = "#00d1ff";
-      ctx.lineWidth = Math.max(2, cam.z * 2);
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = "#ffd54a";
+      ctx.lineWidth = Math.max(2, cam.z * 3);
       ctx.strokeRect(topLeft.x, topLeft.y, room.w * cam.z, room.h * cam.z);
       ctx.restore();
     }
@@ -183,6 +146,37 @@ function drawInteriorSelection() {
     ctx.strokeRect(topLeft.x, topLeft.y, activeInteriorPreview.w * cam.z, activeInteriorPreview.h * cam.z);
     ctx.restore();
   }
+}
+
+function hitTestInteriorEdge(wx, wy, tolerance = 6 / cam.z) {
+  const resolved = getResolvedInteriors();
+  for (const edge of resolved.sharedEdges) {
+    if (edge.orientation === "h") {
+      if (Math.abs(wy - edge.line) <= tolerance && wx >= edge.start - tolerance && wx <= edge.end + tolerance) {
+        return edge;
+      }
+    } else if (Math.abs(wx - edge.line) <= tolerance && wy >= edge.start - tolerance && wy <= edge.end + tolerance) {
+      return edge;
+    }
+  }
+  return null;
+}
+
+function hitTestInteriorResize(wx, wy, tolerance = 6 / cam.z) {
+  const order = state.draw_order?.interiors || [];
+  for (let i = order.length - 1; i >= 0; i -= 1) {
+    const room = state.interiors.get(order[i]);
+    if (!room) continue;
+    if (wy >= room.y - tolerance && wy <= room.y + room.h + tolerance) {
+      if (Math.abs(wx - room.x) < tolerance) return { id: room.id, side: "left" };
+      if (Math.abs(wx - (room.x + room.w)) < tolerance) return { id: room.id, side: "right" };
+    }
+    if (wx >= room.x - tolerance && wx <= room.x + room.w + tolerance) {
+      if (Math.abs(wy - room.y) < tolerance) return { id: room.id, side: "top" };
+      if (Math.abs(wy - (room.y + room.h)) < tolerance) return { id: room.id, side: "bottom" };
+    }
+  }
+  return null;
 }
 
 function resolveInteriorGeometry() {
@@ -224,18 +218,40 @@ function resolveInteriorGeometry() {
         end: overlap.end,
         mode,
       });
-      if (mode === "auto" || mode === "open" || mode === "door") {
-        const keyA = `${a.roomId}:${a.side}:${a.line}`;
-        const keyB = `${b.roomId}:${b.side}:${b.line}`;
-        if (!sharedByRoomEdge.has(keyA)) sharedByRoomEdge.set(keyA, []);
-        if (!sharedByRoomEdge.has(keyB)) sharedByRoomEdge.set(keyB, []);
+      const keyA = `${a.roomId}:${a.side}:${a.line}`;
+      const keyB = `${b.roomId}:${b.side}:${b.line}`;
+      if (!sharedByRoomEdge.has(keyA)) sharedByRoomEdge.set(keyA, []);
+      if (!sharedByRoomEdge.has(keyB)) sharedByRoomEdge.set(keyB, []);
+      if (mode === "auto" || mode === "open") {
         sharedByRoomEdge.get(keyA).push(overlap);
         sharedByRoomEdge.get(keyB).push(overlap);
+      } else if (mode === "door") {
+        const carvedSegments = carveDoorSegment(overlap.start, overlap.end, ui.gridSize);
+        const gapStart = carvedSegments.length ? carvedSegments[0].end : overlap.start;
+        const gapEnd = carvedSegments.length > 1 ? carvedSegments[1].start : overlap.end;
+        if (gapEnd > gapStart) {
+          sharedByRoomEdge.get(keyA).push({ start: gapStart, end: gapEnd });
+          sharedByRoomEdge.get(keyB).push({ start: gapStart, end: gapEnd });
+        }
       }
     }
   }
 
   const visibleWalls = [];
+
+  for (const sharedEdge of sharedEdges) {
+    if (sharedEdge.mode === "wall") {
+      visibleWalls.push({
+        roomId: sharedEdge.room_a_id,
+        orientation: sharedEdge.orientation,
+        line: sharedEdge.line,
+        start: sharedEdge.start,
+        end: sharedEdge.end,
+        mode: "wall",
+      });
+    }
+  }
+
   for (const room of rooms) {
     for (const edge of roomEdges(room)) {
       const edgeKey = `${edge.roomId}:${edge.side}:${edge.line}`;
@@ -253,29 +269,25 @@ function resolveInteriorGeometry() {
       }
     }
   }
+  const dedupedWalls = new Map();
+  for (const wall of visibleWalls) {
+    const key = `${wall.orientation}|${wall.line}|${wall.start}|${wall.end}`;
+    if (!dedupedWalls.has(key)) dedupedWalls.set(key, wall);
+  }
 
   const doors = [];
   for (const sharedEdge of sharedEdges) {
-    if (sharedEdge.mode === "wall") {
-      visibleWalls.push({
-        roomId: sharedEdge.room_a_id,
-        orientation: sharedEdge.orientation,
-        line: sharedEdge.line,
-        start: sharedEdge.start,
-        end: sharedEdge.end,
-        mode: "wall",
-      });
-    } else if (sharedEdge.mode === "door") {
-      const segmentLength = sharedEdge.end - sharedEdge.start;
-      const doorWidth = Math.min(segmentLength * 0.7, Math.max(ui.gridSize * 0.9, 1));
-      const center = (sharedEdge.start + sharedEdge.end) / 2;
+    if (sharedEdge.mode === "door") {
+      const carvedSegments = carveDoorSegment(sharedEdge.start, sharedEdge.end, ui.gridSize);
+      const gapStart = carvedSegments.length ? carvedSegments[0].end : sharedEdge.start;
+      const gapEnd = carvedSegments.length > 1 ? carvedSegments[1].start : sharedEdge.end;
       doors.push({
         ...sharedEdge,
-        doorStart: Math.max(sharedEdge.start, center - doorWidth / 2),
-        doorEnd: Math.min(sharedEdge.end, center + doorWidth / 2),
+        doorStart: gapStart,
+        doorEnd: gapEnd,
       });
     }
   }
 
-  return { rooms, visibleWalls, sharedEdges, doors };
+  return { rooms, visibleWalls: Array.from(dedupedWalls.values()), sharedEdges, doors };
 }

@@ -501,9 +501,13 @@ function clearLocalRoomView() {
   assetDragOrigin = null;
   draggingShapeId = null;
   draggingInteriorId = null;
+  resizingInterior = null;
   shapeDragOrigin = null;
+  interiorDragStart = null;
+  interiorDragOrigin = null;
   activeInteriorPreview = null;
   hoveredInteriorEdge = null;
+  currentInteriorEdge = null;
   markInteriorsDirty();
   dragSpawn = null;
   dragSpawnWorld = null;
