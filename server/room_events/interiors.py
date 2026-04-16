@@ -111,15 +111,41 @@ def apply_interior_event(
         if not edge_id or not edge_key or not room_a_id:
             return WireEvent(type="ERROR", payload={"message": "Invalid edge override"})
         manager._push_history(room)
+        existing_ids = [
+            existing_id
+            for existing_id, existing in room.state.interior_edges.items()
+            if existing.edge_key == edge_key
+        ]
+
+        if mode == "auto":
+            for existing_id in existing_ids:
+                room.state.interior_edges.pop(existing_id, None)
+            manager._mark_dirty(room_id, room)
+            return WireEvent(
+                type="INTERIOR_EDGE_SET",
+                payload={
+                    "id": existing_ids[-1] if existing_ids else edge_id,
+                    "edge_key": edge_key,
+                    "room_a_id": room_a_id,
+                    "room_b_id": room_b_id,
+                    "mode": "auto",
+                },
+            )
+
+        keep_id = existing_ids[-1] if existing_ids else edge_id
+        for existing_id in existing_ids:
+            if existing_id != keep_id:
+                room.state.interior_edges.pop(existing_id, None)
+
         edge = InteriorEdgeOverride(
-            id=edge_id,
+            id=keep_id,
             edge_key=edge_key,
             room_a_id=room_a_id,
             room_b_id=room_b_id,
             mode=mode,
             creator_id=client_id,
         )
-        room.state.interior_edges[edge.id] = edge
+        room.state.interior_edges[keep_id] = edge
         manager._mark_dirty(room_id, room)
         return WireEvent(type="INTERIOR_EDGE_SET", payload=edge.model_dump())
 

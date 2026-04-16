@@ -210,6 +210,26 @@
     };
   }
 
+  function applyInteriorEdgeOverrideToState(record = {}) {
+    const edge = normalizeInteriorEdgeRecord(record);
+    if (!edge.edge_key) return null;
+
+    const matchingIds = [];
+    for (const [existingId, existing] of state.interior_edges.entries()) {
+      if (existing?.edge_key === edge.edge_key) matchingIds.push(existingId);
+    }
+    for (const existingId of matchingIds) state.interior_edges.delete(existingId);
+
+    if (edge.mode === "auto") return null;
+
+    const keepId = edge.id || matchingIds[matchingIds.length - 1] || "";
+    if (!keepId) return null;
+
+    const normalized = { ...edge, id: keepId };
+    state.interior_edges.set(keepId, normalized);
+    return normalized;
+  }
+
   function activateDrawerTab(tab, openDrawer = true) {
     const tabId = String(tab || "tokens");
     document.querySelectorAll(".tab-btn").forEach((b) => {
@@ -387,6 +407,16 @@
 
   function openInteriorEdgeMenu(edge, x, y) {
     if (!interiorEdgeMenu || !edge || !isGM()) return;
+    const currentMode = (() => {
+      for (const existing of state.interior_edges.values()) {
+        if (existing?.edge_key === edge.edge_key) return existing.mode || "auto";
+      }
+      return "auto";
+    })();
+    interiorEdgeMenu.querySelectorAll(".ctx-item[data-edge-mode]").forEach((item) => {
+      if (!item.dataset.baseLabel) item.dataset.baseLabel = item.textContent.replace(/^✓\s*/, "");
+      item.textContent = `${item.dataset.edgeMode === currentMode ? "✓ " : ""}${item.dataset.baseLabel}`;
+    });
     showContextMenu(interiorEdgeMenu, x, y);
     currentInteriorEdge = edge;
   }
@@ -1508,7 +1538,7 @@
     state.interiors.clear();
     for (const [id, room] of Object.entries(s.interiors || {})) state.interiors.set(id, normalizeInteriorRecord(room));
     state.interior_edges.clear();
-    for (const [id, edge] of Object.entries(s.interior_edges || {})) state.interior_edges.set(id, normalizeInteriorEdgeRecord(edge));
+    for (const [id, edge] of Object.entries(s.interior_edges || {})) applyInteriorEdgeOverrideToState({ id, ...edge });
     state.draw_order = {
       strokes: Array.isArray(s.draw_order?.strokes) ? s.draw_order.strokes.filter((id) => state.strokes.has(id)) : [],
       shapes: Array.isArray(s.draw_order?.shapes) ? s.draw_order.shapes.filter((id) => state.shapes.has(id)) : [],
@@ -1770,11 +1800,8 @@
     }
 
     if (type === "INTERIOR_EDGE_SET") {
-      const edge = normalizeInteriorEdgeRecord(payload);
-      if (edge.id) {
-        state.interior_edges.set(edge.id, edge);
-        markInteriorsDirty();
-      }
+      applyInteriorEdgeOverrideToState(payload);
+      markInteriorsDirty();
       requestRender();
       scheduleOfflineSave();
       return;

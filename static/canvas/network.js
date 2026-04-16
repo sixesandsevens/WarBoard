@@ -262,11 +262,8 @@ function connectWS(force = false, options = {}) {
     }
 
     if (ev.type === "INTERIOR_EDGE_SET") {
-      const p = normalizeInteriorEdgeRecord(ev.payload);
-      if (p.id) {
-        state.interior_edges.set(p.id, p);
-        markInteriorsDirty();
-      }
+      applyInteriorEdgeOverrideToState(ev.payload);
+      markInteriorsDirty();
       requestRender();
       return;
     }
