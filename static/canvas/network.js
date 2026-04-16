@@ -208,6 +208,67 @@ function connectWS(force = false, options = {}) {
       return;
     }
 
+    if (ev.type === "INTERIOR_ADD") {
+      const p = ev.payload;
+      if (p?.id) {
+        state.interiors.set(p.id, normalizeInteriorRecord(p));
+        state.draw_order.interiors = state.draw_order.interiors.filter((id) => id !== p.id);
+        state.draw_order.interiors.push(p.id);
+        markInteriorsDirty();
+      }
+      requestRender();
+      return;
+    }
+
+    if (ev.type === "INTERIOR_UPDATE") {
+      const p = ev.payload;
+      const respSeq = parseMoveSeq(p);
+      const isLocalMoveResponse = p?.move_client === localMoveClientId;
+      if (isLocalMoveResponse && respSeq !== null && activeDragMoveSeq !== null && respSeq !== activeDragMoveSeq) return;
+      if (p?.id) {
+        state.interiors.set(p.id, normalizeInteriorRecord({ ...(state.interiors.get(p.id) || {}), ...p }));
+        if (!state.draw_order.interiors.includes(p.id)) state.draw_order.interiors.push(p.id);
+        markInteriorsDirty();
+      }
+      requestRender();
+      return;
+    }
+
+    if (ev.type === "INTERIOR_DELETE") {
+      const interiorId = ev.payload?.id;
+      state.interiors.delete(interiorId);
+      state.draw_order.interiors = state.draw_order.interiors.filter((id) => id !== interiorId);
+      if (selectedInteriorId === interiorId) selectedInteriorId = null;
+      for (const [edgeId, edge] of state.interior_edges.entries()) {
+        if (edge.room_a_id === interiorId || edge.room_b_id === interiorId) state.interior_edges.delete(edgeId);
+      }
+      markInteriorsDirty();
+      requestRender();
+      return;
+    }
+
+    if (ev.type === "INTERIOR_SET_LOCK") {
+      const p = ev.payload;
+      const room = state.interiors.get(p?.id);
+      if (room) {
+        room.locked = !!p.locked;
+        state.interiors.set(room.id, room);
+        markInteriorsDirty();
+      }
+      requestRender();
+      return;
+    }
+
+    if (ev.type === "INTERIOR_EDGE_SET") {
+      const p = normalizeInteriorEdgeRecord(ev.payload);
+      if (p.id) {
+        state.interior_edges.set(p.id, p);
+        markInteriorsDirty();
+      }
+      requestRender();
+      return;
+    }
+
     if (ev.type === "TOKEN_CREATE") {
       const p = ev.payload;
       if (p?.id) {

@@ -89,16 +89,20 @@ Example:
       "drawings": true,
       "shapes": true,
       "assets": true,
-      "tokens": true
+      "tokens": true,
+      "interiors": true
     },
     "tokens": {},
     "strokes": {},
     "shapes": {},
     "assets": {},
+    "interiors": {},
+    "interior_edges": {},
     "draw_order": {
       "strokes": [],
       "shapes": [],
-      "assets": []
+      "assets": [],
+      "interiors": []
     },
     "terrain_paint": {
       "base_material_id": null,
@@ -259,6 +263,21 @@ Notes:
 - pack-backed instances are normalized to `/api/assets/file/{asset_id}`
 - non-GM edits and deletes depend on lockdown, lock state, `allow_all_move`, and creator ownership
 
+### Interior events
+
+- `INTERIOR_ADD`
+- `INTERIOR_UPDATE`
+- `INTERIOR_DELETE`
+- `INTERIOR_SET_LOCK`
+- `INTERIOR_EDGE_SET`
+
+Notes:
+
+- GM and co-GM only in v1
+- interiors persist room rectangles and edge overrides, not resolved walls
+- shared wall suppression is resolved client-side from axis-aligned grid-snapped rectangles
+- edge override modes are `auto`, `wall`, `open`, `door`
+
 ### Terrain events
 
 - `TERRAIN_STROKE_ADD`
@@ -354,13 +373,13 @@ The websocket endpoint applies simple per-socket in-memory limits:
   `REQ_STATE_SYNC`
   6 events per 30 seconds
 - move/update requests:
-  `TOKEN_MOVE`, `SHAPE_UPDATE`, `ASSET_INSTANCE_UPDATE`
+  `TOKEN_MOVE`, `SHAPE_UPDATE`, `ASSET_INSTANCE_UPDATE`, `INTERIOR_UPDATE`
   60 events per second
 - erase requests:
   `ERASE_AT`
   30 events per second
 - create requests:
-  `TOKEN_CREATE`, `STROKE_ADD`, `SHAPE_ADD`, `ASSET_INSTANCE_CREATE`, `FOG_STROKE_ADD`
+  `TOKEN_CREATE`, `STROKE_ADD`, `SHAPE_ADD`, `ASSET_INSTANCE_CREATE`, `INTERIOR_ADD`, `FOG_STROKE_ADD`
   20 events per second
 
 Rate-limited requests receive:
@@ -402,6 +421,11 @@ Declared in [server/models.py](/home/sixesandsevens/Projects/WarBoard/server/mod
 - `ASSET_INSTANCE_CREATE`
 - `ASSET_INSTANCE_UPDATE`
 - `ASSET_INSTANCE_DELETE`
+- `INTERIOR_ADD`
+- `INTERIOR_UPDATE`
+- `INTERIOR_DELETE`
+- `INTERIOR_SET_LOCK`
+- `INTERIOR_EDGE_SET`
 - `TERRAIN_STROKE_ADD`
 - `TERRAIN_STROKE_UNDO`
 - `FOG_STATE_SYNC`

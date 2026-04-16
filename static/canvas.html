@@ -20,6 +20,7 @@
         <button id="toolBtnText" class="tool-btn" data-tool="text" data-tip="Place text label">🔤 Text</button>
         <button id="toolBtnErase" class="tool-btn" data-tool="eraser" data-tip="Erase drawings">🧽 Erase</button>
         <button id="toolBtnRuler" class="tool-btn" data-tool="ruler" data-tip="Measure distance">📏 Ruler</button>
+        <button id="toolBtnInterior" class="tool-btn gm-only" data-tool="interior" data-tip="Draw modular interior rooms (GM only)">🏠 Interior</button>
         <button id="toolBtnTerrainPaint" class="tool-btn gm-only" data-tool="terrain_paint" data-tip="Paint terrain overlays (GM only)">🖌 Terrain</button>
         <button id="toolBtnFogPaint" class="tool-btn gm-only" data-tool="fog_paint" data-tip="Paint fog of war (GM only)">🌫 Fog</button>
       </div>
@@ -81,6 +82,7 @@
         <option value="arrow">Arrow</option>
         <option value="text">Text</option>
         <option value="ruler">Ruler</option>
+        <option value="interior">Interior</option>
         <option value="terrain_paint">Terrain Paint</option>
         <option value="fog_paint">Fog Paint</option>
       </select>
@@ -99,6 +101,7 @@
     <label><input type="checkbox" id="layerShapes" checked> Layer Shapes</label>
     <label><input type="checkbox" id="layerAssets" checked> Layer Assets</label>
     <label><input type="checkbox" id="layerTokens" checked> Layer Tokens</label>
+    <label><input type="checkbox" id="layerInteriors" checked> Layer Interiors</label>
   </div>
 
   <div id="wrap">
@@ -261,6 +264,7 @@
       <div class="ctx-item" data-action="toggle_layer_shapes" data-gm="1">Toggle Shapes</div>
       <div class="ctx-item" data-action="toggle_layer_assets" data-gm="1">Toggle Assets</div>
       <div class="ctx-item" data-action="toggle_layer_tokens" data-gm="1">Toggle Tokens</div>
+      <div class="ctx-item" data-action="toggle_layer_interiors" data-gm="1">Toggle Interiors</div>
     </div>
     <div id="mapCtx-clear" class="ctx hidden ctx-sub" role="menu" aria-label="Clear menu">
       <div class="ctx-title">Clear</div>
@@ -690,6 +694,7 @@
 <script src="/static/canvas/fog.js"></script>
 <script src="/static/canvas/assets.js"></script>
 <script src="/static/canvas/sessions.js"></script>
+<script src="/static/canvas/interiors.js"></script>
 <script src="/static/canvas/render.js"></script>
 <script src="/static/canvas.js"></script>
 <script src="/static/canvas/index.js"></script>

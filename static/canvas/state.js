@@ -45,6 +45,11 @@ const STATE_CHANGE_EVENTS = new Set([
   "ASSET_INSTANCE_CREATE",
   "ASSET_INSTANCE_UPDATE",
   "ASSET_INSTANCE_DELETE",
+  "INTERIOR_ADD",
+  "INTERIOR_UPDATE",
+  "INTERIOR_DELETE",
+  "INTERIOR_SET_LOCK",
+  "INTERIOR_EDGE_SET",
 ]);
 const WATCHDOG_MUTATION_EVENTS = new Set([
   "ROOM_SETTINGS",
@@ -67,6 +72,11 @@ const WATCHDOG_MUTATION_EVENTS = new Set([
   "ASSET_INSTANCE_CREATE",
   "ASSET_INSTANCE_UPDATE",
   "ASSET_INSTANCE_DELETE",
+  "INTERIOR_ADD",
+  "INTERIOR_UPDATE",
+  "INTERIOR_DELETE",
+  "INTERIOR_SET_LOCK",
+  "INTERIOR_EDGE_SET",
 ]);
 
 const state = {
@@ -82,13 +92,15 @@ const state = {
   terrain_seed: 1,
   terrain_style: "grassland",
   world_tone: 0.32,
-  layer_visibility: { grid: true, drawings: true, shapes: true, assets: true, tokens: true },
-  draw_order: { strokes: [], shapes: [], assets: [] },
+  layer_visibility: { grid: true, drawings: true, shapes: true, assets: true, tokens: true, interiors: true },
+  draw_order: { strokes: [], shapes: [], assets: [], interiors: [] },
   version: 0,
   tokens: new Map(),
   strokes: new Map(),
   shapes: new Map(),
   assets: new Map(),
+  interiors: new Map(),
+  interior_edges: new Map(),
   terrain_paint: {
     materials: {
       mud:       { id: "mud",       label: "Mud",       style: "dirt",      seedOfs: 101, mode: "mud",        scale: 1.0, zOrder: 0 },
@@ -127,9 +139,11 @@ const ui = {
 let draggingTokenId = null;
 let draggingAssetId = null;
 let draggingShapeId = null;
+let draggingInteriorId = null;
 let selectedTokenId = null;
 let selectedAssetId = null;
 let selectedShapeId = null;
+let selectedInteriorId = null;
 const selectedAssetIds = new Set();
 let draggingAssetIds = [];
 let dragStartAssetPositions = new Map();
@@ -151,7 +165,9 @@ let pointerCaptured = false;
 
 let activeStroke = null;
 let activeShapePreview = null;
+let activeInteriorPreview = null;
 let activeRuler = null;
+let hoveredInteriorEdge = null;
 let erasingActive = false;
 let lastEraseWorld = null;
 
@@ -226,6 +242,11 @@ const OFFLINE_MUTATION_TYPES = new Set([
   "ASSET_INSTANCE_CREATE",
   "ASSET_INSTANCE_UPDATE",
   "ASSET_INSTANCE_DELETE",
+  "INTERIOR_ADD",
+  "INTERIOR_UPDATE",
+  "INTERIOR_DELETE",
+  "INTERIOR_SET_LOCK",
+  "INTERIOR_EDGE_SET",
   "TERRAIN_STROKE_ADD",
   "TERRAIN_STROKE_UNDO",
   "FOG_STROKE_ADD",

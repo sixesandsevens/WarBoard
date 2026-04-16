@@ -34,6 +34,11 @@ EventType = Literal[
     "ASSET_INSTANCE_CREATE",
     "ASSET_INSTANCE_UPDATE",
     "ASSET_INSTANCE_DELETE",
+    "INTERIOR_ADD",
+    "INTERIOR_UPDATE",
+    "INTERIOR_DELETE",
+    "INTERIOR_SET_LOCK",
+    "INTERIOR_EDGE_SET",
     "TERRAIN_STROKE_ADD",
     "TERRAIN_STROKE_UNDO",
     "FOG_STATE_SYNC",
@@ -129,6 +134,26 @@ class AssetInstance(BaseModel):
     locked: bool = False
 
 
+class InteriorRoom(BaseModel):
+    id: str
+    x: float
+    y: float
+    w: float
+    h: float
+    style: Literal["wood"] = "wood"
+    creator_id: Optional[str] = None
+    locked: bool = False
+
+
+class InteriorEdgeOverride(BaseModel):
+    id: str
+    edge_key: str
+    room_a_id: str
+    room_b_id: Optional[str] = None
+    mode: Literal["auto", "wall", "open", "door"] = "auto"
+    creator_id: Optional[str] = None
+
+
 class TerrainStroke(BaseModel):
     id: str
     material_id: str
@@ -183,13 +208,24 @@ class RoomState(BaseModel):
     terrain_style: Literal["grassland", "dirt", "snow", "desert", "water", "volcano"] = "grassland"
     world_tone: float = 0.32
     layer_visibility: Dict[str, bool] = Field(
-        default_factory=lambda: {"grid": True, "drawings": True, "shapes": True, "assets": True, "tokens": True}
+        default_factory=lambda: {
+            "grid": True,
+            "drawings": True,
+            "shapes": True,
+            "assets": True,
+            "tokens": True,
+            "interiors": True,
+        }
     )
     tokens: Dict[str, Token] = Field(default_factory=dict)
     strokes: Dict[str, Stroke] = Field(default_factory=dict)
     shapes: Dict[str, Shape] = Field(default_factory=dict)
     assets: Dict[str, AssetInstance] = Field(default_factory=dict)
-    draw_order: Dict[str, List[str]] = Field(default_factory=lambda: {"strokes": [], "shapes": [], "assets": []})
+    interiors: Dict[str, InteriorRoom] = Field(default_factory=dict)
+    interior_edges: Dict[str, InteriorEdgeOverride] = Field(default_factory=dict)
+    draw_order: Dict[str, List[str]] = Field(
+        default_factory=lambda: {"strokes": [], "shapes": [], "assets": [], "interiors": []}
+    )
     terrain_paint: TerrainPaintState = Field(default_factory=TerrainPaintState)
     fog_paint: FogPaintState = Field(default_factory=FogPaintState)
 

@@ -485,10 +485,13 @@ function clearLocalRoomView() {
   state.strokes.clear();
   state.shapes.clear();
   state.assets.clear();
-  state.draw_order = { strokes: [], shapes: [], assets: [] };
+  state.interiors.clear();
+  state.interior_edges.clear();
+  state.draw_order = { strokes: [], shapes: [], assets: [], interiors: [] };
   selectedTokenId = null;
   selectedAssetId = null;
   selectedShapeId = null;
+  selectedInteriorId = null;
   selectedAssetIds.clear();
   setSelection([]);
   hoveredTokenId = null;
@@ -497,7 +500,11 @@ function clearLocalRoomView() {
   dragStartAssetPositions = new Map();
   assetDragOrigin = null;
   draggingShapeId = null;
+  draggingInteriorId = null;
   shapeDragOrigin = null;
+  activeInteriorPreview = null;
+  hoveredInteriorEdge = null;
+  markInteriorsDirty();
   dragSpawn = null;
   dragSpawnWorld = null;
   dragSpawnOverCanvas = false;
@@ -794,7 +801,7 @@ function refreshGmUI() {
   document.getElementById("undo").disabled = !gm;
   document.getElementById("redo").disabled = !gm;
 
-  [layerGridEl, layerDrawEl, layerShapesEl, layerAssetsEl, layerTokensEl].forEach((el) => { el.disabled = !gm; });
+  [layerGridEl, layerDrawEl, layerShapesEl, layerAssetsEl, layerTokensEl, layerInteriorsEl].forEach((el) => { if (el) el.disabled = !gm; });
 
   allowPlayersMoveEl.checked = !!state.allow_players_move;
   allowAllMoveEl.checked = !!state.allow_all_move;
@@ -805,6 +812,7 @@ function refreshGmUI() {
   layerShapesEl.checked = !!state.layer_visibility.shapes;
   layerAssetsEl.checked = !!state.layer_visibility.assets;
   layerTokensEl.checked = !!state.layer_visibility.tokens;
+  if (layerInteriorsEl) layerInteriorsEl.checked = !!state.layer_visibility.interiors;
   bgUrlEl.value = state.background_url || "";
   terrainBgEl.checked = state.background_mode === "terrain";
   terrainStyleEl.value = state.terrain_style || "grassland";
@@ -812,6 +820,7 @@ function refreshGmUI() {
   refreshTerrainBadge();
   if (toolBtnTerrainPaint) toolBtnTerrainPaint.classList.toggle("hidden", !gm);
   if (toolBtnFogPaint) toolBtnFogPaint.classList.toggle("hidden", !gm);
+  if (toolBtnInterior) toolBtnInterior.classList.toggle("hidden", !gm);
 
   const arr = Array.from(players).sort();
   playerListEl.innerHTML = arr.map((id) => {
@@ -1383,6 +1392,7 @@ function initSessionBindings() {
         shapes: layerShapesEl.checked,
         assets: layerAssetsEl.checked,
         tokens: layerTokensEl.checked,
+        interiors: layerInteriorsEl ? layerInteriorsEl.checked : true,
       },
     });
   }
@@ -1391,4 +1401,5 @@ function initSessionBindings() {
   layerShapesEl.addEventListener("change", sendLayerVisibility);
   layerAssetsEl.addEventListener("change", sendLayerVisibility);
   layerTokensEl.addEventListener("change", sendLayerVisibility);
+  if (layerInteriorsEl) layerInteriorsEl.addEventListener("change", sendLayerVisibility);
 }

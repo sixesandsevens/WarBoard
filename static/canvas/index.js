@@ -185,6 +185,31 @@
     return { ...shape, layer_band: normalizeLayerBand(shape.layer_band) };
   }
 
+  function normalizeInteriorRecord(record = {}) {
+    return {
+      id: String(record.id || ""),
+      x: Number(record.x || 0),
+      y: Number(record.y || 0),
+      w: Math.max(1, Number(record.w || 1)),
+      h: Math.max(1, Number(record.h || 1)),
+      style: "wood",
+      creator_id: record.creator_id || null,
+      locked: !!record.locked,
+    };
+  }
+
+  function normalizeInteriorEdgeRecord(record = {}) {
+    const mode = (record.mode === "wall" || record.mode === "open" || record.mode === "door") ? record.mode : "auto";
+    return {
+      id: String(record.id || ""),
+      edge_key: String(record.edge_key || ""),
+      room_a_id: String(record.room_a_id || ""),
+      room_b_id: record.room_b_id ? String(record.room_b_id) : null,
+      mode,
+      creator_id: record.creator_id || null,
+    };
+  }
+
   function activateDrawerTab(tab, openDrawer = true) {
     const tabId = String(tab || "tokens");
     document.querySelectorAll(".tab-btn").forEach((b) => {
@@ -283,6 +308,7 @@
     moveControlTo(sceneLayers, "layerShapes");
     moveControlTo(sceneLayers, "layerAssets");
     moveControlTo(sceneLayers, "layerTokens");
+    moveControlTo(sceneLayers, "layerInteriors");
 
     const settingsTools = drawerSection(tabSettings, "Tool Defaults");
     moveControlTo(settingsTools, "color");
@@ -304,6 +330,7 @@
       <div><b>T</b> Text tool</div>
       <div><b>E</b> Eraser tool</div>
       <div><b>R</b> Ruler tool</div>
+      <div><b>I</b> Interior tool (GM)</div>
       <div><b>Shift+Drag</b> Marquee select tokens</div>
       <div><b>G / U</b> Group / Ungroup selected (GM)</div>
       <div><b>D</b> Toggle Downed badge (GM, selected token)</div>
@@ -585,6 +612,7 @@
     layerShapesEl.checked = !!state.layer_visibility.shapes;
     layerAssetsEl.checked = !!state.layer_visibility.assets;
     layerTokensEl.checked = !!state.layer_visibility.tokens;
+    if (layerInteriorsEl) layerInteriorsEl.checked = !!state.layer_visibility.interiors;
     send("ROOM_SETTINGS", { layer_visibility: state.layer_visibility });
     requestRender();
   }
@@ -666,6 +694,10 @@
       case "toggle_layer_tokens":
         if (!isGM()) return;
         setLayerVisibility({ tokens: !state.layer_visibility.tokens });
+        break;
+      case "toggle_layer_interiors":
+        if (!isGM()) return;
+        setLayerVisibility({ interiors: !state.layer_visibility.interiors });
         break;
       case "clear_drawings":
         if (!isGM()) return;
@@ -1422,11 +1454,13 @@
     dragStartTokenPositions.clear();
     assetDragOrigin = null;
     marqueeSelectRect = null;
+    draggingInteriorId = null;
     dragSpawn = null;
     dragSpawnWorld = null;
     dragSpawnOverCanvas = false;
     activeStroke = null;
     activeShapePreview = null;
+    activeInteriorPreview = null;
     activeRuler = null;
     activePaintStroke = null;
     activeFogStroke = null;
@@ -1445,6 +1479,7 @@
       shapes: s.layer_visibility?.shapes ?? true,
       assets: s.layer_visibility?.assets ?? true,
       tokens: s.layer_visibility?.tokens ?? true,
+      interiors: s.layer_visibility?.interiors ?? true,
     };
     state.version = s.version || 0;
 
@@ -1459,15 +1494,22 @@
     for (const [id, sh] of Object.entries(s.shapes || {})) state.shapes.set(id, normalizeShapeRecord(sh));
     state.assets.clear();
     for (const [id, a] of Object.entries(s.assets || {})) state.assets.set(id, normalizePackBackedRecord(a));
+    state.interiors.clear();
+    for (const [id, room] of Object.entries(s.interiors || {})) state.interiors.set(id, normalizeInteriorRecord(room));
+    state.interior_edges.clear();
+    for (const [id, edge] of Object.entries(s.interior_edges || {})) state.interior_edges.set(id, normalizeInteriorEdgeRecord(edge));
     state.draw_order = {
       strokes: Array.isArray(s.draw_order?.strokes) ? s.draw_order.strokes.filter((id) => state.strokes.has(id)) : [],
       shapes: Array.isArray(s.draw_order?.shapes) ? s.draw_order.shapes.filter((id) => state.shapes.has(id)) : [],
       assets: Array.isArray(s.draw_order?.assets) ? s.draw_order.assets.filter((id) => state.assets.has(id)) : [],
+      interiors: Array.isArray(s.draw_order?.interiors) ? s.draw_order.interiors.filter((id) => state.interiors.has(id)) : [],
     };
     for (const id of state.strokes.keys()) if (!state.draw_order.strokes.includes(id)) state.draw_order.strokes.push(id);
     for (const id of state.shapes.keys()) if (!state.draw_order.shapes.includes(id)) state.draw_order.shapes.push(id);
     for (const id of state.assets.keys()) if (!state.draw_order.assets.includes(id)) state.draw_order.assets.push(id);
+    for (const id of state.interiors.keys()) if (!state.draw_order.interiors.includes(id)) state.draw_order.interiors.push(id);
     markAssetOrderDirty();
+    markInteriorsDirty();
 
     if (s.terrain_paint) {
       state.terrain_paint.strokes = s.terrain_paint.strokes || {};
@@ -1485,6 +1527,7 @@
     if (selectedTokenId && !state.tokens.has(selectedTokenId)) selectedTokenId = null;
     if (selectedShapeId && !state.shapes.has(selectedShapeId)) selectedShapeId = null;
     if (selectedAssetId && !state.assets.has(selectedAssetId)) selectedAssetId = null;
+    if (selectedInteriorId && !state.interiors.has(selectedInteriorId)) selectedInteriorId = null;
     setSelection(selectedIdsArray(), selectedTokenId);
     if (hoveredTokenId && !state.tokens.has(hoveredTokenId)) hoveredTokenId = null;
     players.add(myId());
@@ -1515,10 +1558,13 @@
       strokes: toPlainObjectMap(state.strokes),
       shapes: toPlainObjectMap(state.shapes),
       assets: toPlainObjectMap(state.assets),
+      interiors: toPlainObjectMap(state.interiors),
+      interior_edges: toPlainObjectMap(state.interior_edges),
       draw_order: {
         strokes: [...(state.draw_order?.strokes || [])],
         shapes: [...(state.draw_order?.shapes || [])],
         assets: [...(state.draw_order?.assets || [])],
+        interiors: [...(state.draw_order?.interiors || [])],
       },
       terrain_paint: {
         materials: { ...(state.terrain_paint?.materials || {}) },
@@ -1652,6 +1698,70 @@
         state.layer_visibility = { ...state.layer_visibility, ...payload.layer_visibility };
       }
       refreshGmUI();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "INTERIOR_ADD") {
+      const room = normalizeInteriorRecord(payload);
+      if (room.id) {
+        state.interiors.set(room.id, room);
+        state.draw_order.interiors = state.draw_order.interiors.filter((id) => id !== room.id);
+        state.draw_order.interiors.push(room.id);
+        markInteriorsDirty();
+      }
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "INTERIOR_UPDATE") {
+      const current = state.interiors.get(payload?.id) || {};
+      const room = normalizeInteriorRecord({ ...current, ...payload });
+      if (room.id) {
+        state.interiors.set(room.id, room);
+        if (!state.draw_order.interiors.includes(room.id)) state.draw_order.interiors.push(room.id);
+        markInteriorsDirty();
+      }
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "INTERIOR_DELETE") {
+      const id = String(payload?.id || "");
+      state.interiors.delete(id);
+      state.draw_order.interiors = state.draw_order.interiors.filter((x) => x !== id);
+      if (selectedInteriorId === id) selectedInteriorId = null;
+      for (const [edgeId, edge] of state.interior_edges.entries()) {
+        if (edge.room_a_id === id || edge.room_b_id === id) state.interior_edges.delete(edgeId);
+      }
+      markInteriorsDirty();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "INTERIOR_SET_LOCK") {
+      const id = String(payload?.id || "");
+      const room = state.interiors.get(id);
+      if (room) {
+        room.locked = !!payload.locked;
+        state.interiors.set(id, room);
+        markInteriorsDirty();
+      }
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "INTERIOR_EDGE_SET") {
+      const edge = normalizeInteriorEdgeRecord(payload);
+      if (edge.id) {
+        state.interior_edges.set(edge.id, edge);
+        markInteriorsDirty();
+      }
       requestRender();
       scheduleOfflineSave();
       return;
@@ -2061,7 +2171,7 @@
     log(`UI INIT ERROR: ${e?.message || e}`);
     toast(`UI init error: ${e?.message || e}`);
   }
-  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnTerrainPaint, toolBtnFogPaint].forEach((btn) => {
+  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnInterior, toolBtnTerrainPaint, toolBtnFogPaint].forEach((btn) => {
     if (!btn) return;
     btn.onclick = () => setTool(btn.dataset.tool);
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
@@ -2334,6 +2444,7 @@
     toolBtnText.classList.toggle("active", t === "text");
     toolBtnErase.classList.toggle("active", t === "eraser");
     toolBtnRuler.classList.toggle("active", t === "ruler");
+    if (toolBtnInterior) toolBtnInterior.classList.toggle("active", t === "interior");
     if (toolBtnTerrainPaint) toolBtnTerrainPaint.classList.toggle("active", t === "terrain_paint");
     if (toolBtnFogPaint) toolBtnFogPaint.classList.toggle("active", t === "fog_paint");
     if (selectModeLabelEl) selectModeLabelEl.classList.toggle("hidden", t !== "move");
@@ -2360,7 +2471,7 @@
   // positionTerrainPaintPanel → static/canvas/terrain.js
   // positionFogPaintPanel → static/canvas/fog.js
   function setTool(next) {
-    if ((next === "terrain_paint" || next === "fog_paint") && !isGM()) return;
+    if ((next === "terrain_paint" || next === "fog_paint" || next === "interior") && !isGM()) return;
     const prev = tool();
     if (prev === "terrain_paint" && next !== "terrain_paint" && activePaintStroke && isGM()) {
       commitActiveTerrainStroke();
@@ -2390,6 +2501,7 @@
       else if (current === "text") flashToolActivate(toolBtnText);
       else if (current === "eraser") flashToolActivate(toolBtnErase);
       else if (current === "ruler") flashToolActivate(toolBtnRuler);
+      else if (current === "interior" && toolBtnInterior) flashToolActivate(toolBtnInterior);
       else if (current === "terrain_paint" && toolBtnTerrainPaint) flashToolActivate(toolBtnTerrainPaint);
       else if (current === "fog_paint" && toolBtnFogPaint) flashToolActivate(toolBtnFogPaint);
     }
@@ -2420,6 +2532,7 @@
       if (k === "t") { setTool("text"); e.preventDefault(); return; }
       if (k === "e") { setTool("eraser"); e.preventDefault(); return; }
       if (k === "r") { setTool("ruler"); e.preventDefault(); return; }
+      if (k === "i" && isGM()) { setTool("interior"); e.preventDefault(); return; }
       if (k === "f" && isGM()) { setTool("terrain_paint"); e.preventDefault(); return; }
       if (k === "h" && isGM()) { setTool("fog_paint"); e.preventDefault(); return; }
       if (k === "z" && e.ctrlKey && tool() === "terrain_paint" && isGM()) {
@@ -2538,6 +2651,7 @@
     if (t === "text") {
       selectedTokenId = null;
       selectedShapeId = hitTestShape(wpos.x, wpos.y);
+      selectedInteriorId = null;
       closeTokenMenu();
       showContextMenu(textCtx, e.clientX, e.clientY);
       requestRender();
@@ -2576,10 +2690,12 @@
       return;
     }
     const assetHit = isAssetInteractionLocked() ? null : hitTestAsset(wpos.x, wpos.y);
+    const interiorHit = (!hit && !assetHit) ? hitTestInterior(wpos.x, wpos.y) : null;
     if (assetHit) {
       selectedAssetId = assetHit;
       selectedShapeId = null;
       selectedTokenId = null;
+      selectedInteriorId = null;
       closeTokenMenu();
       const a = state.assets.get(assetHit);
       if (a && (canEditAssetLocal(a) || canDeleteAssetLocal(a))) {
@@ -2591,10 +2707,20 @@
       requestRender();
       return;
     }
+    if (interiorHit) {
+      selectedInteriorId = interiorHit;
+      selectedAssetId = null;
+      selectedShapeId = null;
+      selectedTokenId = null;
+      closeTokenMenu();
+      requestRender();
+      return;
+    }
     const shapeHit = hitTestShape(wpos.x, wpos.y);
     if (shapeHit) {
       selectedShapeId = shapeHit;
       selectedTokenId = null;
+      selectedInteriorId = null;
       const sh = state.shapes.get(shapeHit);
       closeTokenMenu();
       if (sh?.type === "text" && canEditShapeLocal(sh)) {
@@ -2631,12 +2757,14 @@
       if (hit && (isGM() || canEditTokenLocal(tok) || canDeleteTokenLocal(tok))) {
         if (isShiftDown) toggleSelection(hit);
         else if (!selectedTokenIds.has(hit)) selectOnly(hit);
+        selectedInteriorId = null;
         openTokenMenu(hit, e.clientX, e.clientY);
         refreshGmUI();
         requestRender();
         return;
       }
       const assetHit = (hit || isAssetInteractionLocked()) ? null : hitTestAsset(wpos.x, wpos.y);
+      const interiorHit = (hit || assetHit) ? null : hitTestInterior(wpos.x, wpos.y);
       if (assetHit) {
         // If right-clicking an asset not in the current selection, replace selection with just this one.
         if (!selectedAssetIds.has(assetHit)) {
@@ -2646,6 +2774,7 @@
         selectedAssetId = assetHit;
         selectedShapeId = null;
         selectedTokenId = null;
+        selectedInteriorId = null;
         const a = state.assets.get(assetHit);
         if (a && (canEditAssetLocal(a) || canDeleteAssetLocal(a))) {
           const lockItem = assetCtx?.querySelector('[data-action="asset_lock_toggle"]');
@@ -2653,6 +2782,14 @@
           syncAssetCtxSliders();
           showContextMenu(assetCtx, e.clientX, e.clientY);
         }
+        requestRender();
+        return;
+      }
+      if (interiorHit) {
+        selectedInteriorId = interiorHit;
+        selectedAssetId = null;
+        selectedShapeId = null;
+        selectedTokenId = null;
         requestRender();
         return;
       }
@@ -2680,7 +2817,8 @@
     if (t === "move") {
       const hit = hitTestToken(wpos.x, wpos.y);
       const assetHit = (hit || isAssetInteractionLocked()) ? null : hitTestAsset(wpos.x, wpos.y);
-      const shapeHitRaw = (hit || assetHit) ? null : hitTestShape(wpos.x, wpos.y);
+      const interiorHit = (hit || assetHit) ? null : hitTestInterior(wpos.x, wpos.y);
+      const shapeHitRaw = (hit || assetHit || interiorHit) ? null : hitTestShape(wpos.x, wpos.y);
       let shapeHit = shapeHitRaw;
       if (!hit && !shapeHit && selectedShapeId) {
         const selectedShape = state.shapes.get(selectedShapeId);
@@ -2693,6 +2831,7 @@
         selectedAssetId = null;
         selectedAssetIds.clear();
         selectedShapeId = null;
+        selectedInteriorId = null;
         if (isShiftDown) {
           toggleSelection(hit);
           requestRender();
@@ -2730,6 +2869,7 @@
           }
           selectedTokenId = null;
           selectedShapeId = null;
+          selectedInteriorId = null;
         } else {
           // Regular click: if the asset isn't already in the selection, replace selection with just this one.
           // If it IS already selected (part of a multi-select) keep the full selection and start dragging all.
@@ -2740,6 +2880,7 @@
           selectedTokenId = null;
           selectedAssetId = assetHit;
           selectedShapeId = null;
+          selectedInteriorId = null;
           if (a && canEditAssetLocal(a)) {
             activeDragMoveSeq = ++moveSeqCounter;
             draggingAssetId = assetHit;
@@ -2767,10 +2908,18 @@
             assetDragOrigin = null;
           }
         }
+      } else if (interiorHit) {
+        selectedTokenId = null;
+        selectedAssetId = null;
+        selectedAssetIds.clear();
+        selectedShapeId = null;
+        selectedInteriorId = interiorHit;
+        draggingInteriorId = null;
       } else if (shapeHit) {
         selectedTokenId = null;
         selectedAssetId = null;
         selectedAssetIds.clear();
+        selectedInteriorId = null;
         selectedShapeId = shapeHit;
         const sh = state.shapes.get(shapeHit);
         if (canEditShapeLocal(sh)) {
@@ -2793,6 +2942,7 @@
         selectedTokenId = null;
         selectedAssetId = null;
         selectedAssetIds.clear();
+        selectedInteriorId = null;
         selectedShapeId = null;
         draggingTokenId = null;
         draggingAssetId = null;
@@ -2819,6 +2969,29 @@
         layer: "draw",
         layer_band: drawingLayerBand(),
       };
+      requestRender();
+      return;
+    }
+
+    if (t === "interior" && isGM()) {
+      const x = snap(wpos.x);
+      const y = snap(wpos.y);
+      activeInteriorPreview = {
+        id: makeId(),
+        x,
+        y,
+        w: ui.gridSize,
+        h: ui.gridSize,
+        style: "wood",
+        locked: false,
+        originX: x,
+        originY: y,
+      };
+      selectedTokenId = null;
+      selectedAssetId = null;
+      selectedAssetIds.clear();
+      selectedShapeId = null;
+      selectedInteriorId = null;
       requestRender();
       return;
     }
@@ -2972,6 +3145,23 @@
           send("TOKENS_MOVE", { moves, commit: false, move_seq: activeDragMoveSeq, move_client: localMoveClientId });
         }
       }
+      return;
+    }
+
+    if (t === "interior" && activeInteriorPreview) {
+      const startX = Number(activeInteriorPreview.originX ?? activeInteriorPreview.x);
+      const startY = Number(activeInteriorPreview.originY ?? activeInteriorPreview.y);
+      const endX = snap(wpos.x);
+      const endY = snap(wpos.y);
+      const x1 = Math.min(startX, endX);
+      const y1 = Math.min(startY, endY);
+      const x2 = Math.max(startX, endX);
+      const y2 = Math.max(startY, endY);
+      activeInteriorPreview.x = x1;
+      activeInteriorPreview.y = y1;
+      activeInteriorPreview.w = Math.max(ui.gridSize, x2 - x1);
+      activeInteriorPreview.h = Math.max(ui.gridSize, y2 - y1);
+      requestRender();
       return;
     }
 
@@ -3197,11 +3387,13 @@
     const movedAssetId = draggingAssetId;
     const movedAssetIds = draggingAssetIds.slice();
     const movedShapeId = draggingShapeId;
+    const pendingInteriorPreview = activeInteriorPreview ? { ...activeInteriorPreview } : null;
     draggingTokenId = null;
     draggingAssetId = null;
     draggingAssetIds = [];
     dragStartAssetPositions = new Map();
     draggingShapeId = null;
+    draggingInteriorId = null;
     const hadMarquee = !!marqueeSelectRect;
     const finalMarqueeRect = marqueeSelectRect
       ? normalizeWorldRect({ x: marqueeSelectRect.x1, y: marqueeSelectRect.y1 }, { x: marqueeSelectRect.x2, y: marqueeSelectRect.y2 })
@@ -3280,6 +3472,19 @@
         });
       }
       shapeDragOrigin = null;
+    }
+
+    if (t === "interior" && pendingInteriorPreview && isGM()) {
+      const room = normalizeInteriorRecord({
+        ...pendingInteriorPreview,
+        creator_id: myId(),
+      });
+      activeInteriorPreview = null;
+      selectedInteriorId = room.id;
+      send("INTERIOR_ADD", room);
+      requestRender();
+    } else if (t !== "interior") {
+      activeInteriorPreview = null;
     }
 
     if (t === "eraser") {

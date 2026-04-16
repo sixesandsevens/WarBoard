@@ -12,12 +12,13 @@ from typing import Dict, List, Optional, Set
 
 from fastapi import WebSocket
 
-from .models import AssetInstance, FogPaintState, FogStroke, Point, RoomState, Shape, Stroke, TerrainPaintState, TerrainStroke, Token, WireEvent
+from .models import AssetInstance, FogPaintState, FogStroke, InteriorEdgeOverride, InteriorRoom, Point, RoomState, Shape, Stroke, TerrainPaintState, TerrainStroke, Token, WireEvent
 from .room_events import (
     apply_asset_event,
     apply_cogm_event,
     apply_fog_event,
     apply_history_event,
+    apply_interior_event,
     apply_settings_event,
     apply_shape_event,
     apply_stroke_event,
@@ -285,12 +286,16 @@ class RoomManager:
     def _normalize_order(self, state: RoomState) -> None:
         if "assets" not in state.layer_visibility:
             state.layer_visibility["assets"] = True
+        if "interiors" not in state.layer_visibility:
+            state.layer_visibility["interiors"] = True
         strokes = state.draw_order.get("strokes", [])
         shapes = state.draw_order.get("shapes", [])
         assets = state.draw_order.get("assets", [])
+        interiors = state.draw_order.get("interiors", [])
         strokes = [sid for sid in strokes if sid in state.strokes]
         shapes = [sid for sid in shapes if sid in state.shapes]
         assets = [sid for sid in assets if sid in state.assets]
+        interiors = [sid for sid in interiors if sid in state.interiors]
         for sid in state.strokes.keys():
             if sid not in strokes:
                 strokes.append(sid)
@@ -300,9 +305,13 @@ class RoomManager:
         for sid in state.assets.keys():
             if sid not in assets:
                 assets.append(sid)
+        for sid in state.interiors.keys():
+            if sid not in interiors:
+                interiors.append(sid)
         state.draw_order["strokes"] = strokes
         state.draw_order["shapes"] = shapes
         state.draw_order["assets"] = assets
+        state.draw_order["interiors"] = interiors
 
     def _append_order(self, state: RoomState, kind: str, item_id: str) -> None:
         self._normalize_order(state)
@@ -504,6 +513,9 @@ class RoomManager:
         if t in {"ASSET_INSTANCE_CREATE", "ASSET_INSTANCE_UPDATE", "ASSET_INSTANCE_DELETE"}:
             return self._apply_asset_event(room_id, room, t, p, client_id, user_id)
 
+        if t in {"INTERIOR_ADD", "INTERIOR_UPDATE", "INTERIOR_DELETE", "INTERIOR_SET_LOCK", "INTERIOR_EDGE_SET"}:
+            return self._apply_interior_event(room_id, room, t, p, client_id, user_id)
+
         if t in {"TERRAIN_STROKE_ADD", "TERRAIN_STROKE_UNDO"}:
             return self._apply_terrain_event(room_id, room, t, p, client_id, user_id)
 
@@ -539,6 +551,10 @@ class RoomManager:
     # ------------------------------------------------------------------ assets
     def _apply_asset_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
         return apply_asset_event(self, room_id, room, t, p, client_id, user_id)
+
+    # ---------------------------------------------------------------- interiors
+    def _apply_interior_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
+        return apply_interior_event(self, room_id, room, t, p, client_id, user_id)
 
     # ------------------------------------------------------------------ terrain
     def _apply_terrain_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:

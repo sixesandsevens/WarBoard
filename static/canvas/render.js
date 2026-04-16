@@ -163,6 +163,17 @@ function hitTestAsset(wx, wy) {
   return null;
 }
 
+function hitTestInterior(wx, wy) {
+  const order = state.draw_order?.interiors || [];
+  for (let i = order.length - 1; i >= 0; i--) {
+    const id = order[i];
+    const room = state.interiors.get(id);
+    if (!room) continue;
+    if (wx >= room.x && wx <= room.x + room.w && wy >= room.y && wy <= room.y + room.h) return id;
+  }
+  return null;
+}
+
 function shapeContainsPoint(sh, wx, wy) {
   const tol = Math.max(6 / cam.z, (sh.width || 3) * 0.8);
   if (sh.type === "line" || sh.type === "arrow") {
@@ -305,6 +316,14 @@ function drawGrid() {
     ctx.stroke();
   }
   ctx.restore();
+}
+
+function drawInteriors() {
+  if (!state.layer_visibility.interiors) return;
+  const resolved = getResolvedInteriors();
+  drawInteriorFloors(resolved.rooms);
+  drawInteriorWalls(resolved.visibleWalls, resolved.doors);
+  drawInteriorSelection();
 }
 
 function drawStrokes(layerBand) {
@@ -873,6 +892,7 @@ function render() {
   drawBackground();
   if (state.background_mode === "terrain") drawTerrainOverlays();
   drawGrid();
+  drawInteriors();
   drawStrokes("below_assets");
   drawShapes("below_assets");
   drawAssets();

@@ -37,6 +37,7 @@
   const layerShapesEl = document.getElementById("layerShapes");
   const layerAssetsEl = document.getElementById("layerAssets");
   const layerTokensEl = document.getElementById("layerTokens");
+  const layerInteriorsEl = document.getElementById("layerInteriors");
 
   const gmPanel = document.getElementById("gmPanel");
   const roomsPanel = document.getElementById("roomsPanel");
@@ -148,6 +149,7 @@
   const toolBtnText = document.getElementById("toolBtnText");
   const toolBtnErase = document.getElementById("toolBtnErase");
   const toolBtnRuler = document.getElementById("toolBtnRuler");
+  const toolBtnInterior = document.getElementById("toolBtnInterior");
   const toolBtnTerrainPaint = document.getElementById("toolBtnTerrainPaint");
   const toolBtnFogPaint = document.getElementById("toolBtnFogPaint");
   const terrainPaintPanel = document.getElementById("terrainPaintPanel");
