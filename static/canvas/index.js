@@ -13,6 +13,18 @@
     if (logToggleEl) logToggleEl.textContent = collapsed ? "Maximize" : "Minimize";
   }
 
+  function parseTokenSizeInput(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (!raw) return null;
+    if (["s", "small"].includes(raw)) return 0.5;
+    if (["m", "medium", "med", "normal"].includes(raw)) return 1.0;
+    if (["l", "large"].includes(raw)) return 2.0;
+    if (["h", "huge"].includes(raw)) return 3.0;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return null;
+    return clamp(parsed, 0.25, 4);
+  }
+
   // Guardrail: if this logs during initial room connect, we've reintroduced eager library loading.
   const _nativeFetch = window.fetch.bind(window);
   function _assetNetDebugEnabled() {
@@ -1157,6 +1169,10 @@
     tokenMenuEl.style.display = "block";
   }
 
+  function tokenMenuTargetId() {
+    return tokenMenuTokenId && state.tokens.has(tokenMenuTokenId) ? tokenMenuTokenId : selectedTokenId;
+  }
+
   // openSessionModal, closeSessionModal, updateSessionPill, refreshSessionModalAuth → static/canvas/sessions.js
 
   // openMapPreview, closeMapPreview → static/canvas/assets.js
@@ -2196,6 +2212,80 @@
       setLogCollapsed(!logWrapEl.classList.contains("collapsed"));
     });
   }
+  Object.entries(sizePresetButtons).forEach(([key, btn]) => {
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      applyTokenSizePreset(parseFloat(key));
+    });
+  });
+  if (tokenMenuRenameBtn) tokenMenuRenameBtn.addEventListener("click", () => {
+    const tokenId = tokenMenuTargetId();
+    const token = tokenId ? state.tokens.get(tokenId) : null;
+    if (!token || !canEditTokenLocal(token)) return;
+    const next = prompt("Rename token:", token.name || "");
+    if (next == null) return;
+    const name = String(next).trim();
+    if (!name || name === token.name) return;
+    send("TOKEN_RENAME", { id: tokenId, name });
+    closeTokenMenu();
+  });
+  if (tokenMenuResizeBtn) tokenMenuResizeBtn.addEventListener("click", () => {
+    const tokenId = tokenMenuTargetId();
+    const token = tokenId ? state.tokens.get(tokenId) : null;
+    if (!token || !canEditTokenLocal(token)) return;
+    const next = prompt("Token size: S, M, L, Huge, or a scale from 0.25 to 4.", String(Number(token.size_scale || 1)));
+    if (next == null) return;
+    const scale = parseTokenSizeInput(next);
+    if (scale == null) {
+      log("Resize cancelled: invalid size.");
+      return;
+    }
+    selectedTokenId = tokenId;
+    applyTokenSizePreset(scale);
+    closeTokenMenu();
+  });
+  if (tokenMenuAssignBtn) tokenMenuAssignBtn.addEventListener("click", () => {
+    const tokenId = tokenMenuTargetId();
+    const token = tokenId ? state.tokens.get(tokenId) : null;
+    if (!token || !isGM()) return;
+    const options = Array.from(new Set(Array.from(players).filter(Boolean))).sort();
+    const next = prompt(
+      [
+        "Assign token to player id.",
+        "Leave blank to clear assignment.",
+        options.length ? `Online players: ${options.join(", ")}` : "No online players detected.",
+      ].join("\n"),
+      token.owner_id || "",
+    );
+    if (next == null) return;
+    send("TOKEN_ASSIGN", { id: tokenId, owner_id: String(next).trim() || null });
+    closeTokenMenu();
+  });
+  if (tokenMenuLockBtn) tokenMenuLockBtn.addEventListener("click", () => {
+    const tokenId = tokenMenuTargetId();
+    const token = tokenId ? state.tokens.get(tokenId) : null;
+    if (!token || !isGM()) return;
+    send("TOKEN_SET_LOCK", { id: tokenId, locked: !token.locked });
+    closeTokenMenu();
+  });
+  if (tokenMenuGroupBtn) tokenMenuGroupBtn.addEventListener("click", () => {
+    if (!isGM()) return;
+    groupSelectedTokens();
+    closeTokenMenu();
+  });
+  if (tokenMenuUngroupBtn) tokenMenuUngroupBtn.addEventListener("click", () => {
+    if (!isGM()) return;
+    ungroupSelectedTokens();
+    closeTokenMenu();
+  });
+  if (tokenMenuDeleteBtn) tokenMenuDeleteBtn.addEventListener("click", () => {
+    const tokenIds = selectedIdsArray().length ? selectedIdsArray() : [tokenMenuTargetId()].filter(Boolean);
+    for (const id of tokenIds) {
+      const token = state.tokens.get(id);
+      if (token && canDeleteTokenLocal(token)) send("TOKEN_DELETE", { id });
+    }
+    closeTokenMenu();
+  });
   refreshToolButtons();
   updateCanvasCursor();
   (async () => {

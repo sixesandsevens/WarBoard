@@ -31,6 +31,7 @@ let pendingRoomMoveOffer = null;
 let pendingArrivalNotice = "";
 let sharedRoomPromptShown = false;
 let sessionModalStatusOverride = "";
+let accountSessionMemberships = [];
 
 function isLocalCanvasHost() {
   const host = String(location.hostname || "").trim().toLowerCase();
@@ -89,6 +90,22 @@ async function loadAccessibleRooms() {
   }
 }
 
+async function refreshSessionMemberships() {
+  if (!me || !me.username) {
+    accountSessionMemberships = [];
+    renderSessionSummary();
+    return [];
+  }
+  try {
+    const data = await apiGet("/api/my/sessions");
+    accountSessionMemberships = Array.isArray(data?.sessions) ? data.sessions : [];
+  } catch (_) {
+    accountSessionMemberships = [];
+  }
+  renderSessionSummary();
+  return accountSessionMemberships;
+}
+
 async function finishCanvasAuthFlow(user = me, options = {}) {
   const currentUser = user && user.username ? user : me;
   if (!currentUser || !currentUser.username) {
@@ -120,7 +137,10 @@ async function finishCanvasAuthFlow(user = me, options = {}) {
   }
 
   const requestedRoomId = String(roomEl.value || "").trim();
-  const rooms = await loadAccessibleRooms();
+  const [rooms] = await Promise.all([
+    loadAccessibleRooms(),
+    refreshSessionMemberships(),
+  ]);
   const accessibleRoomIds = new Set(rooms.map((room) => String(room?.room_id || "").trim()).filter(Boolean));
 
   let targetRoomId = requestedRoomId;
@@ -320,6 +340,7 @@ function clearPlaySessionState() {
     resetAssetSessionPackState();
     if (isAssetsTabActive()) refreshAssetsPanel();
   }
+  renderSessionSummary();
 }
 
 function applyPlaySessionState(session) {
@@ -571,12 +592,77 @@ function renderSessionSummary() {
   if (!sessionSummaryTextEl || !sessionRoomsListEl || !sessionMembersListEl || !sessionActivityListEl) return;
   const hasSession = !!playSessionState.id;
   if (!hasSession) {
+    const memberships = Array.isArray(accountSessionMemberships) ? accountSessionMemberships : [];
     sessionSummaryTextEl.textContent = pendingRoomMoveOffer
       ? `Pending move offer to ${pendingRoomMoveOffer.target_room_name || pendingRoomMoveOffer.target_room_id}`
-      : "No session attached to this room yet.";
-    sessionRoomsListEl.innerHTML = `<div style="opacity:.7">(standalone room)</div>`;
-    sessionMembersListEl.innerHTML = `<div style="opacity:.7">(no session roster)</div>`;
-    sessionActivityListEl.innerHTML = `<div style="opacity:.7">(no session activity)</div>`;
+      : memberships.length
+        ? `You belong to ${memberships.length} session${memberships.length === 1 ? "" : "s"}.`
+        : "No session attached to this room yet.";
+    if (memberships.length) {
+      const roomsById = new Map();
+      const roomRows = memberships.map((session) => {
+        const role = String(session?.role || "player").replace(/_/g, " ");
+        const rooms = Array.isArray(session?.rooms) ? session.rooms : [];
+        const roomItems = rooms.map((room) => {
+          const roomId = String(room?.room_id || room?.id || "").trim();
+          if (roomId) roomsById.set(roomId, room);
+          const isCurrent = roomId && roomId === (state.room_id || roomEl.value.trim());
+          return `
+            <div style="display:flex; gap:6px; align-items:center; margin:4px 0 4px 14px; flex-wrap:wrap; ${isCurrent ? "background:rgba(91,156,246,0.14); border-radius:8px; padding:4px;" : ""}">
+              <button data-membership-open="${escapeHtml(roomId)}" style="padding:2px 6px;">Go</button>
+              <button data-membership-copy="${escapeHtml(roomId)}" style="padding:2px 6px;">Copy Link</button>
+              <span style="font-weight:${isCurrent ? 700 : 500};">${escapeHtml(room.display_name || room.name || roomId || "Room")}</span>
+              ${isCurrent ? '<span style="opacity:.75;">Current</span>' : ""}
+            </div>
+          `;
+        }).join("");
+        return `
+          <div style="margin:6px 0 10px;">
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <span style="font-weight:700;">${escapeHtml(String(session?.name || session?.id || "Session"))}</span>
+              <span style="opacity:.9; text-transform:capitalize; border:1px solid rgba(255,255,255,0.16); border-radius:999px; padding:1px 6px; font-size:11px;">${escapeHtml(role)}</span>
+            </div>
+            ${roomItems || `<div style="opacity:.7; margin-left:14px;">(no rooms attached)</div>`}
+          </div>
+        `;
+      });
+      sessionRoomsListEl.innerHTML = roomRows.join("");
+      sessionRoomsListEl.querySelectorAll("button[data-membership-open]").forEach((btn) => {
+        btn.onclick = () => switchRoom(btn.getAttribute("data-membership-open"));
+      });
+      sessionRoomsListEl.querySelectorAll("button[data-membership-copy]").forEach((btn) => {
+        btn.onclick = async () => {
+          const rid = btn.getAttribute("data-membership-copy");
+          const room = roomsById.get(rid);
+          if (!rid) return;
+          try {
+            let joinCode = String(room?.join_code || "").trim();
+            if (!joinCode) {
+              const data = await apiPost(`/api/rooms/${encodeURIComponent(rid)}/join-code`, {});
+              joinCode = String(data?.join_code || "").trim();
+              if (room) room.join_code = joinCode;
+            }
+            if (!joinCode) throw new Error("Missing join code");
+            const link = `${location.origin}/join/${joinCode}`;
+            await navigator.clipboard.writeText(link);
+            log(`JOIN LINK COPIED ${joinCode}`);
+          } catch (e) {
+            log(`JOIN LINK ERROR: ${e.message || e}`);
+          }
+        };
+      });
+      sessionMembersListEl.innerHTML = memberships.map((session) => `
+        <div style="display:flex; gap:6px; align-items:center; justify-content:space-between; margin:4px 0; flex-wrap:wrap;">
+          <span>${escapeHtml(String(session?.name || session?.id || "Session"))}</span>
+          <span style="opacity:.65;">${Math.max(0, Number((session?.rooms || []).length || 0))} room${Number((session?.rooms || []).length || 0) === 1 ? "" : "s"}</span>
+        </div>
+      `).join("");
+      sessionActivityListEl.innerHTML = `<div style="opacity:.7">Open a room to load its live roster and activity.</div>`;
+    } else {
+      sessionRoomsListEl.innerHTML = `<div style="opacity:.7">(standalone room)</div>`;
+      sessionMembersListEl.innerHTML = `<div style="opacity:.7">(no session roster)</div>`;
+      sessionActivityListEl.innerHTML = `<div style="opacity:.7">(no session activity)</div>`;
+    }
     if (createSessionBtnEl) {
       createSessionBtnEl.disabled = !isGM();
       createSessionBtnEl.textContent = "Create Session Here";
@@ -1089,6 +1175,7 @@ function initSessionBindings() {
     } catch (e) {}
     setAuthIdentity(null);
     online = false;
+    accountSessionMemberships = [];
     if (ws && ws.readyState === 1) {
       try { ws.close(); } catch {}
     }
@@ -1146,7 +1233,10 @@ function initSessionBindings() {
   const roomsPanelBtnEl = document.getElementById("roomsPanelBtn");
   if (roomsPanelBtnEl) roomsPanelBtnEl.onclick = async () => {
     activateDrawerTab("rooms", true);
-    await refreshCurrentSessionState();
+    await Promise.all([
+      refreshCurrentSessionState(),
+      refreshSessionMemberships(),
+    ]);
     await Promise.all([
       refreshRoomsPanel(),
       refreshSnapshotsPanel(),

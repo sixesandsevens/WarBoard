@@ -46,6 +46,12 @@ async def apply_as_player(rm, room, room_id, event_type, **payload):
     return await rm.apply_event(room_id, room, event, "player", 2)
 
 
+async def apply_as_co_gm(rm, room, room_id, event_type, **payload):
+    """Send an event as a co-GM (client_id='co_gm', user_id=3)."""
+    event = make_event(event_type, **payload)
+    return await rm.apply_event(room_id, room, event, "co_gm", 3)
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -385,6 +391,24 @@ class TestStrokeDelete:
         await self._seed_stroke(room, creator_id="player", locked=True)
         result = await apply_as_player(rm, room, room_id, "STROKE_DELETE", id="s1")
         assert "s1" in room.state.strokes
+
+    async def test_co_gm_can_erase_shapes_and_tokens(self, gm_room):
+        rm, room, room_id = gm_room
+        room.state.co_gm_user_ids = [3]
+        room.state.co_gm_ids = ["co_gm"]
+        room.state.shapes["sh1"] = Shape(id="sh1", type="rect", x1=0, y1=0, x2=20, y2=20, creator_id="player")
+        room.state.tokens["t1"] = Token(id="t1", x=10, y=10, creator_id="player")
+
+        result = await apply_as_co_gm(
+            rm, room, room_id, "ERASE_AT",
+            x=10, y=10, r=10, erase_shapes=True, erase_tokens=True,
+        )
+
+        assert result.type == "ERASE_AT"
+        assert result.payload["shape_ids"] == ["sh1"]
+        assert result.payload["token_ids"] == ["t1"]
+        assert "sh1" not in room.state.shapes
+        assert "t1" not in room.state.tokens
 
 
 # ---------------------------------------------------------------------------

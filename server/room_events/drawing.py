@@ -108,7 +108,6 @@ def apply_stroke_event(
     if event_type == "ERASE_AT":
         if room.state.lockdown:
             return WireEvent(type="ERROR", payload={"message": "Lockdown is enabled"})
-        is_gm = manager._is_gm(room, user_id, client_id)
 
         cx = float(payload.get("x", 0))
         cy = float(payload.get("y", 0))
@@ -118,9 +117,7 @@ def apply_stroke_event(
 
         stroke_ids = []
         for sid, stroke in list(room.state.strokes.items()):
-            if stroke.locked and not is_gm:
-                continue
-            if not is_gm and stroke.creator_id != client_id:
+            if not manager.can_delete_stroke(room, user_id, client_id, stroke):
                 continue
             if manager._stroke_hits_circle(stroke, cx, cy, radius):
                 stroke_ids.append(sid)
@@ -128,9 +125,7 @@ def apply_stroke_event(
         shape_ids = []
         if erase_shapes:
             for sid, shape in list(room.state.shapes.items()):
-                if shape.locked and not is_gm:
-                    continue
-                if not is_gm and shape.creator_id != client_id:
+                if not manager.can_delete_shape(room, user_id, client_id, shape):
                     continue
                 if manager._shape_hits_circle(shape, cx, cy, radius):
                     shape_ids.append(sid)
@@ -138,9 +133,7 @@ def apply_stroke_event(
         token_ids = []
         if erase_tokens:
             for token_id, token in list(room.state.tokens.items()):
-                if token.locked and not is_gm:
-                    continue
-                if not is_gm and token.creator_id != client_id:
+                if not manager.can_delete_token(room, user_id, client_id, token):
                     continue
                 if manager._token_hits_circle(token, cx, cy, radius):
                     token_ids.append(token_id)
