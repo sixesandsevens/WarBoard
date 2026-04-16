@@ -780,7 +780,7 @@ function activeBrushPreviewSpec() {
       y: hoverWorldPos.y,
       radius: Math.max(1, Number(terrainBrush.radius || 0)),
       stroke: terrainBrush.op === "erase" ? "rgba(255,210,120,0.95)" : "rgba(255,255,255,0.95)",
-      fill: terrainBrush.op === "erase" ? "rgba(255,190,90,0.10)" : "rgba(255,255,255,0.08)",
+      fill: terrainBrush.op === "erase" ? "rgba(255,190,90,0.14)" : "rgba(255,255,255,0.12)",
       center: terrainBrush.op === "erase" ? "rgba(255,210,120,0.78)" : "rgba(255,255,255,0.76)",
     };
   }
@@ -790,7 +790,7 @@ function activeBrushPreviewSpec() {
       y: hoverWorldPos.y,
       radius: Math.max(1, Number(fogBrush.radius || 0)),
       stroke: fogBrush.op === "cover" ? "rgba(160,210,255,0.95)" : "rgba(210,255,255,0.95)",
-      fill: fogBrush.op === "cover" ? "rgba(110,170,255,0.12)" : "rgba(180,255,255,0.08)",
+      fill: fogBrush.op === "cover" ? "rgba(110,170,255,0.15)" : "rgba(180,255,255,0.11)",
       center: fogBrush.op === "cover" ? "rgba(160,210,255,0.80)" : "rgba(210,255,255,0.72)",
     };
   }
@@ -807,8 +807,11 @@ function drawBrushPreview() {
 
   const diameterSquares = (preview.radius * 2) / Math.max(1, ui.gridSize);
   const diameterFeet = diameterSquares * Math.max(1, Number(ui.feetPerSq || 5));
-  const label = `${diameterFeet.toFixed(diameterFeet >= 10 ? 0 : 1)} ft · ${diameterSquares.toFixed(diameterSquares >= 10 ? 0 : 1)} sq`;
+  const label = `${diameterFeet.toFixed(diameterFeet >= 10 ? 0 : 1)} ft (${diameterSquares.toFixed(diameterSquares >= 10 ? 0 : 1)} sq)`;
   const view = canvas.getBoundingClientRect();
+  const anchorAngle = -Math.PI / 5;
+  const anchorX = screen.x + Math.cos(anchorAngle) * radiusPx;
+  const anchorY = screen.y + Math.sin(anchorAngle) * radiusPx;
 
   ctx.save();
   ctx.beginPath();
@@ -830,8 +833,20 @@ function drawBrushPreview() {
   const textWidth = Math.ceil(ctx.measureText(label).width);
   const boxW = textWidth + 16;
   const boxH = 22;
-  const boxX = clamp(screen.x + radiusPx + 10, 8, Math.max(8, view.width - boxW - 8));
-  const boxY = clamp(screen.y - radiusPx - boxH - 6, 8, Math.max(8, view.height - boxH - 8));
+  const desiredX = anchorX + 12;
+  const desiredY = anchorY - boxH - 6;
+  const boxX = clamp(desiredX, 8, Math.max(8, view.width - boxW - 8));
+  const boxY = clamp(desiredY, 8, Math.max(8, view.height - boxH - 8));
+  const labelAnchorX = boxX;
+  const labelAnchorY = boxY + boxH * 0.62;
+  ctx.beginPath();
+  ctx.moveTo(anchorX, anchorY);
+  ctx.lineTo(labelAnchorX - 5, labelAnchorY);
+  ctx.strokeStyle = preview.stroke;
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.8;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
   ctx.beginPath();
   ctx.roundRect(boxX, boxY, boxW, boxH, 11);
   ctx.fillStyle = "rgba(0,0,0,0.72)";
