@@ -711,6 +711,42 @@ class TestMySessionsInlineRooms:
         sess = next(s for s in r4.json()["sessions"] if s["id"] == session_id)
         assert sess.get("root_room_id") == room_id
 
+    async def test_join_link_adds_session_membership(self, app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as gm_client:
+            r = await gm_client.post("/api/auth/register",
+                                     json={"username": "joinlink_gm", "password": "password123"})
+            assert r.status_code == 200
+            r2 = await gm_client.post("/api/rooms", json={"name": "Join Link Room"})
+            assert r2.status_code == 200
+            room_id = r2.json()["room_id"]
+            r3 = await gm_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Join Link Session"})
+            assert r3.status_code == 200
+
+            r4 = await gm_client.post(f"/api/rooms/{room_id}/join-code", json={})
+            assert r4.status_code == 200
+            join_code = r4.json()["join_code"]
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as player_client:
+            r5 = await player_client.post("/api/auth/register",
+                                          json={"username": "joinlink_player", "password": "password123"})
+            assert r5.status_code == 200
+
+            r6 = await player_client.get(f"/join/{join_code.lower()}")
+            assert r6.status_code == 302
+            assert r6.headers["location"] == f"/static/canvas.html?room={room_id}"
+
+            r7 = await player_client.get("/api/my/sessions")
+            assert r7.status_code == 200
+            sessions = r7.json()["sessions"]
+            assert len(sessions) == 1
+            assert any(rm["room_id"] == room_id for rm in sessions[0]["rooms"])
+
 
 class TestSessionRoomCreate:
     """POST /api/sessions/{id}/rooms with optional parent_room_id."""

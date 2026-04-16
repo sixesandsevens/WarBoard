@@ -429,6 +429,7 @@ def app_dashboard(req: Request):
 
 @app.get("/join/{code}")
 def join_link(code: str, req: Request):
+    code = str(code or "").strip().upper()
     user = _get_user_from_request(req)
     if not user:
         return RedirectResponse(url=f"/static/canvas.html?invite={code}", status_code=302)
@@ -438,6 +439,9 @@ def join_link(code: str, req: Request):
     if not room_id:
         raise HTTPException(status_code=404, detail="Invalid join code")
     add_membership(user.user_id, room_id, role="player")
+    meta = get_room_meta(room_id)
+    if meta and meta.session_id:
+        add_game_session_member(meta.session_id, user.user_id, role="player")
     touch_membership(user.user_id, room_id)
     update_user_last_room(user.user_id, room_id)
     return RedirectResponse(url=f"/static/canvas.html?room={room_id}", status_code=302)
