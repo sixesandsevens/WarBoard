@@ -771,6 +771,81 @@ function drawSelectionCountBadge() {
   ctx.restore();
 }
 
+function activeBrushPreviewSpec() {
+  if (!hoverCanvasActive || !hoverWorldPos || !isGM()) return null;
+  const currentTool = tool();
+  if (currentTool === "terrain_paint") {
+    return {
+      x: hoverWorldPos.x,
+      y: hoverWorldPos.y,
+      radius: Math.max(1, Number(terrainBrush.radius || 0)),
+      stroke: terrainBrush.op === "erase" ? "rgba(255,210,120,0.95)" : "rgba(255,255,255,0.95)",
+      fill: terrainBrush.op === "erase" ? "rgba(255,190,90,0.10)" : "rgba(255,255,255,0.08)",
+      center: terrainBrush.op === "erase" ? "rgba(255,210,120,0.78)" : "rgba(255,255,255,0.76)",
+    };
+  }
+  if (currentTool === "fog_paint" && state.fog_paint?.enabled) {
+    return {
+      x: hoverWorldPos.x,
+      y: hoverWorldPos.y,
+      radius: Math.max(1, Number(fogBrush.radius || 0)),
+      stroke: fogBrush.op === "cover" ? "rgba(160,210,255,0.95)" : "rgba(210,255,255,0.95)",
+      fill: fogBrush.op === "cover" ? "rgba(110,170,255,0.12)" : "rgba(180,255,255,0.08)",
+      center: fogBrush.op === "cover" ? "rgba(160,210,255,0.80)" : "rgba(210,255,255,0.72)",
+    };
+  }
+  return null;
+}
+
+function drawBrushPreview() {
+  const preview = activeBrushPreviewSpec();
+  if (!preview) return;
+
+  const screen = worldToScreen(preview.x, preview.y);
+  const radiusPx = preview.radius * cam.z;
+  if (radiusPx < 2) return;
+
+  const diameterSquares = (preview.radius * 2) / Math.max(1, ui.gridSize);
+  const diameterFeet = diameterSquares * Math.max(1, Number(ui.feetPerSq || 5));
+  const label = `${diameterFeet.toFixed(diameterFeet >= 10 ? 0 : 1)} ft · ${diameterSquares.toFixed(diameterSquares >= 10 ? 0 : 1)} sq`;
+  const view = canvas.getBoundingClientRect();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(screen.x, screen.y, radiusPx, 0, Math.PI * 2);
+  ctx.fillStyle = preview.fill;
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = preview.stroke;
+  ctx.setLineDash([8, 6]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.beginPath();
+  ctx.arc(screen.x, screen.y, Math.max(1.5, Math.min(4, radiusPx * 0.06)), 0, Math.PI * 2);
+  ctx.fillStyle = preview.center;
+  ctx.fill();
+
+  ctx.font = "12px ui-monospace, monospace";
+  const textWidth = Math.ceil(ctx.measureText(label).width);
+  const boxW = textWidth + 16;
+  const boxH = 22;
+  const boxX = clamp(screen.x + radiusPx + 10, 8, Math.max(8, view.width - boxW - 8));
+  const boxY = clamp(screen.y - radiusPx - boxH - 6, 8, Math.max(8, view.height - boxH - 8));
+  ctx.beginPath();
+  ctx.roundRect(boxX, boxY, boxW, boxH, 11);
+  ctx.fillStyle = "rgba(0,0,0,0.72)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.22)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.96)";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, boxX + 8, boxY + boxH / 2);
+  ctx.restore();
+}
+
 function render() {
   const w = canvas.getBoundingClientRect().width;
   const h = canvas.getBoundingClientRect().height;
@@ -790,6 +865,7 @@ function render() {
   drawShapes("above_assets");
   drawTokens();
   drawFogOverlays();
+  drawBrushPreview();
   drawMarqueeSelection();
   drawSelectionCountBadge();
   drawDragSpawnGhost();

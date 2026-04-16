@@ -1086,7 +1086,7 @@ function refreshTerrainPaintPanel() {
     btn.style.cssText = "font-size:11px; padding:3px 8px; border-radius:12px; flex:1;" +
       (isActive ? " box-shadow:0 0 0 2px #5b9cf6; font-weight:600;" : "");
     btn.textContent = (isActive ? "● " : "") + (def.label || mid);
-    btn.onclick = () => { terrainBrush.material_id = mid; refreshTerrainPaintPanel(); };
+    btn.onclick = () => { terrainBrush.material_id = mid; refreshTerrainPaintPanel(); requestRender(); };
 
     const downBtn = document.createElement("button");
     downBtn.className = "ghost";
@@ -1110,17 +1110,24 @@ function refreshTerrainPaintPanel() {
   });
   if (terrainOpPaintBtn) terrainOpPaintBtn.classList.toggle("active", terrainBrush.op === "paint");
   if (terrainOpEraseBtn) terrainOpEraseBtn.classList.toggle("active", terrainBrush.op === "erase");
+  if (terrainRadiusSlider) terrainRadiusSlider.value = String(Math.round(terrainBrush.radius));
+  if (terrainRadiusVal) {
+    const diameterSquares = (terrainBrush.radius * 2) / Math.max(1, ui.gridSize);
+    const diameterFeet = diameterSquares * Math.max(1, Number(ui.feetPerSq || 5));
+    terrainRadiusVal.textContent = `${diameterFeet.toFixed(diameterFeet >= 10 ? 0 : 1)} ft (${diameterSquares.toFixed(diameterSquares >= 10 ? 0 : 1)} sq)`;
+  }
 }
 
 // Called from canvas.js after DOM element consts are declared.
 function initTerrainPanelBindings() {
-  if (terrainOpPaintBtn) terrainOpPaintBtn.onclick = () => { terrainBrush.op = "paint"; refreshTerrainPaintPanel(); };
-  if (terrainOpEraseBtn) terrainOpEraseBtn.onclick = () => { terrainBrush.op = "erase"; refreshTerrainPaintPanel(); };
+  if (terrainOpPaintBtn) terrainOpPaintBtn.onclick = () => { terrainBrush.op = "paint"; refreshTerrainPaintPanel(); requestRender(); };
+  if (terrainOpEraseBtn) terrainOpEraseBtn.onclick = () => { terrainBrush.op = "erase"; refreshTerrainPaintPanel(); requestRender(); };
 
   if (terrainRadiusSlider) {
     terrainRadiusSlider.oninput = () => {
       terrainBrush.radius = Number(terrainRadiusSlider.value);
-      if (terrainRadiusVal) terrainRadiusVal.textContent = String(terrainBrush.radius);
+      refreshTerrainPaintPanel();
+      requestRender();
     };
   }
   if (terrainOpacitySlider) {

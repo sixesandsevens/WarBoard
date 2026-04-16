@@ -174,12 +174,13 @@ function initFogPanelBindings() {
       send("FOG_SET_ENABLED", { enabled: !!fogEnabledToggle.checked, default_mode: state.fog_paint?.default_mode || "clear" });
     };
   }
-  if (fogOpRevealBtn) fogOpRevealBtn.onclick = () => { fogBrush.op = "reveal"; refreshFogPaintPanel(); };
-  if (fogOpCoverBtn) fogOpCoverBtn.onclick = () => { fogBrush.op = "cover"; refreshFogPaintPanel(); };
+  if (fogOpRevealBtn) fogOpRevealBtn.onclick = () => { fogBrush.op = "reveal"; refreshFogPaintPanel(); requestRender(); };
+  if (fogOpCoverBtn) fogOpCoverBtn.onclick = () => { fogBrush.op = "cover"; refreshFogPaintPanel(); requestRender(); };
   if (fogRadiusSlider) {
     fogRadiusSlider.oninput = () => {
       fogBrush.radius = Number(fogRadiusSlider.value);
       refreshFogPaintPanel();
+      requestRender();
     };
   }
   if (fogOpacitySlider) {

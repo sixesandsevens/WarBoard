@@ -2311,6 +2311,7 @@
     ui.gridSize = clamp(parseInt(gridEl.value || "50", 10), 10, 300);
     ui.showGrid = !!showGridEl.checked;
     ui.feetPerSq = clamp(parseFloat(feetPerSqEl.value || "5"), 1, 100);
+    if (typeof refreshTerrainPaintPanel === "function") refreshTerrainPaintPanel();
     requestRender();
     scheduleOfflineSave();
   }
@@ -2910,8 +2911,10 @@
     const rect = canvas.getBoundingClientRect();
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
+    hoverCanvasActive = true;
 
     if (isPanning) {
+      hoverWorldPos = screenToWorld(sx, sy);
       cam.x = panStart.camX + (e.clientX - panStart.sx);
       cam.y = panStart.camY + (e.clientY - panStart.sy);
       requestRender();
@@ -2919,6 +2922,7 @@
     }
 
     const wpos = screenToWorld(sx, sy);
+    hoverWorldPos = { x: wpos.x, y: wpos.y };
     if (dragSpawn) {
       dragSpawnWorld = { x: wpos.x, y: wpos.y };
       dragSpawnOverCanvas = true;
@@ -3100,9 +3104,13 @@
       requestRender();
       return;
     }
+
+    if (t === "terrain_paint" || t === "fog_paint") requestRender();
   });
 
   canvas.addEventListener("pointerleave", () => {
+    hoverCanvasActive = false;
+    hoverWorldPos = null;
     if (dragSpawn) {
       dragSpawnOverCanvas = false;
       requestRender();
