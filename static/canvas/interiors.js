@@ -38,6 +38,16 @@ function overlapRange(a1, a2, b1, b2) {
   return end > start ? { start, end } : null;
 }
 
+function roomOverlapRect(a, b) {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.w, b.x + b.w);
+  const bottom = Math.min(a.y + a.h, b.y + b.h);
+  const w = right - x;
+  const h = bottom - y;
+  return w > 0 && h > 0 ? { x, y, w, h } : null;
+}
+
 function roomsOverlapArea(a, b) {
   return (
     a.x < b.x + b.w &&
@@ -84,7 +94,7 @@ function classifyRoomRelationship(a, b) {
   const shared = findSharedBoundarySegments(a, b);
   if (shared.length) return { type: "adjacent", shared };
   if (roomContainsRoom(a, b) || roomContainsRoom(b, a)) return { type: "contained", shared: [] };
-  if (roomsOverlapArea(a, b)) return { type: "overlap", shared: [] };
+  if (roomsOverlapArea(a, b)) return { type: "overlap", shared: [], overlap_rect: roomOverlapRect(a, b) };
   return { type: "separate", shared: [] };
 }
 
@@ -128,105 +138,15 @@ function subtractSharedSegments(start, end, ranges) {
   return out.filter((segment) => segment.end > segment.start);
 }
 
-function drawInteriorFloors(rooms) {
-  for (const room of rooms) {
-    const topLeft = worldToScreen(room.x, room.y);
-    const widthPx = room.w * cam.z;
-    const heightPx = room.h * cam.z;
-    ctx.save();
-    ctx.fillStyle = "#b99d79";
-    ctx.fillRect(topLeft.x, topLeft.y, widthPx, heightPx);
-    ctx.strokeStyle = "rgba(90, 60, 32, 0.16)";
-    ctx.lineWidth = 1;
-    const plankStep = Math.max(8, ui.gridSize * cam.z * 0.2);
-    for (let y = topLeft.y + plankStep; y < topLeft.y + heightPx; y += plankStep) {
-      ctx.beginPath();
-      ctx.moveTo(topLeft.x, y);
-      ctx.lineTo(topLeft.x + widthPx, y);
-      ctx.stroke();
-    }
-    ctx.restore();
+function hitTestInterior(wx, wy) {
+  const order = state.draw_order?.interiors || [];
+  for (let i = order.length - 1; i >= 0; i -= 1) {
+    const id = order[i];
+    const room = state.interiors.get(id);
+    if (!room) continue;
+    if (wx >= room.x && wx <= room.x + room.w && wy >= room.y && wy <= room.y + room.h) return id;
   }
-}
-
-function drawInteriorWalls(visibleWalls, doors) {
-  ctx.save();
-  ctx.strokeStyle = "#21170f";
-  ctx.lineWidth = Math.max(3, ui.gridSize * cam.z * 0.08);
-  ctx.lineCap = "square";
-  for (const wall of visibleWalls) {
-    ctx.beginPath();
-    if (wall.orientation === "h") {
-      const a = worldToScreen(wall.start, wall.line);
-      const b = worldToScreen(wall.end, wall.line);
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-    } else {
-      const a = worldToScreen(wall.line, wall.start);
-      const b = worldToScreen(wall.line, wall.end);
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-    }
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawInteriorSelection() {
-  if (hoveredInteriorId && hoveredInteriorId !== selectedInteriorId) {
-    const room = state.interiors.get(hoveredInteriorId);
-    if (room) {
-      const topLeft = worldToScreen(room.x, room.y);
-      ctx.save();
-      ctx.strokeStyle = "rgba(214, 235, 255, 0.9)";
-      ctx.lineWidth = Math.max(2, cam.z * 2);
-      ctx.strokeRect(topLeft.x, topLeft.y, room.w * cam.z, room.h * cam.z);
-      ctx.restore();
-    }
-  }
-  if (selectedInteriorId) {
-    const room = state.interiors.get(selectedInteriorId);
-    if (room) {
-      const topLeft = worldToScreen(room.x, room.y);
-      ctx.save();
-      ctx.globalAlpha = 0.9;
-      ctx.strokeStyle = "#ffd54a";
-      ctx.lineWidth = Math.max(2, cam.z * 3);
-      ctx.strokeRect(topLeft.x, topLeft.y, room.w * cam.z, room.h * cam.z);
-      ctx.restore();
-    }
-  }
-  if (hoveredInteriorEdge?.edge_key) {
-    ctx.save();
-    ctx.strokeStyle = "rgba(124, 224, 255, 0.95)";
-    ctx.lineWidth = Math.max(2, cam.z * 2);
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    if (hoveredInteriorEdge.orientation === "h") {
-      const a = worldToScreen(hoveredInteriorEdge.start, hoveredInteriorEdge.line);
-      const b = worldToScreen(hoveredInteriorEdge.end, hoveredInteriorEdge.line);
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-    } else {
-      const a = worldToScreen(hoveredInteriorEdge.line, hoveredInteriorEdge.start);
-      const b = worldToScreen(hoveredInteriorEdge.line, hoveredInteriorEdge.end);
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
-  if (activeInteriorPreview) {
-    const topLeft = worldToScreen(activeInteriorPreview.x, activeInteriorPreview.y);
-    ctx.save();
-    ctx.globalAlpha = 0.68;
-    ctx.fillStyle = "#cbb08d";
-    ctx.strokeStyle = "#2b2017";
-    ctx.lineWidth = Math.max(2, cam.z * 2);
-    ctx.fillRect(topLeft.x, topLeft.y, activeInteriorPreview.w * cam.z, activeInteriorPreview.h * cam.z);
-    ctx.strokeRect(topLeft.x, topLeft.y, activeInteriorPreview.w * cam.z, activeInteriorPreview.h * cam.z);
-    ctx.restore();
-  }
+  return null;
 }
 
 function hitTestInteriorEdge(wx, wy, tolerance = 10 / cam.z) {
@@ -305,6 +225,30 @@ function canEditInterior(interiorId) {
 function isInteriorEdgeLocked(edge) {
   if (!edge) return false;
   return isInteriorLocked(edge.room_a_id) || isInteriorLocked(edge.room_b_id);
+}
+
+function hitTestInteriorOverlap(wx, wy) {
+  const resolved = getResolvedInteriors();
+  let best = null;
+  for (const relationship of resolved.relationships) {
+    if (relationship.type !== "overlap" || !relationship.overlap_rect) continue;
+    const rect = relationship.overlap_rect;
+    if (wx < rect.x || wx > rect.x + rect.w || wy < rect.y || wy > rect.y + rect.h) continue;
+    const area = rect.w * rect.h;
+    if (
+      !best ||
+      area < best.area ||
+      (area === best.area && String(relationship.room_a_id) < String(best.relationship.room_a_id)) ||
+      (
+        area === best.area &&
+        String(relationship.room_a_id) === String(best.relationship.room_a_id) &&
+        String(relationship.room_b_id) < String(best.relationship.room_b_id)
+      )
+    ) {
+      best = { relationship, area };
+    }
+  }
+  return best ? best.relationship : null;
 }
 
 function resolveInteriorGeometry() {

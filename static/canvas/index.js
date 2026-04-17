@@ -450,6 +450,12 @@
     return { roomId: roomId || null, edge: null, resize: null };
   }
 
+  function maybeLogInteriorOverlapHint(wx, wy, interiorTarget = null) {
+    if (!interiorTarget?.roomId || interiorTarget.edge) return;
+    if (!hitTestInteriorOverlap(wx, wy)) return;
+    log("These rooms overlap but do not share an editable seam.");
+  }
+
   function openInteriorRoomMenu(interiorId, x, y) {
     const room = state.interiors.get(interiorId || "");
     if (!interiorCtx || !room || !isGM()) return;
@@ -2798,7 +2804,7 @@
       e.preventDefault();
       return;
     }
-    if ((e.key === "Delete" || e.key === "Backspace") && selectedIdsArray().length) {
+    if (!isTyping && (e.key === "Delete" || e.key === "Backspace") && selectedIdsArray().length) {
       for (const id of selectedIdsArray()) {
         const tok = state.tokens.get(id);
         if (canDeleteTokenLocal(tok)) send("TOKEN_DELETE", { id });
@@ -2806,7 +2812,7 @@
       e.preventDefault();
       return;
     }
-    if ((e.key === "Delete" || e.key === "Backspace") && selectedAssetId) {
+    if (!isTyping && (e.key === "Delete" || e.key === "Backspace") && selectedAssetId) {
       const a = state.assets.get(selectedAssetId);
       if (canDeleteAssetLocal(a)) {
         send("ASSET_INSTANCE_DELETE", { id: selectedAssetId });
@@ -2814,7 +2820,7 @@
         return;
       }
     }
-    if ((e.key === "Delete" || e.key === "Backspace") && selectedInteriorId && canDeleteSelectedInterior()) {
+    if (!isTyping && (e.key === "Delete" || e.key === "Backspace") && selectedInteriorId && canDeleteSelectedInterior()) {
       send("INTERIOR_DELETE", { id: selectedInteriorId });
       selectedInteriorId = null;
       e.preventDefault();
@@ -2948,6 +2954,7 @@
       selectedShapeId = null;
       selectedTokenId = null;
       closeTokenMenu();
+      maybeLogInteriorOverlapHint(wpos.x, wpos.y, interiorTarget);
       openInteriorRoomMenu(interiorTarget.roomId, e.clientX, e.clientY);
       requestRender();
       return;

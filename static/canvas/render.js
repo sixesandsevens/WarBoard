@@ -163,17 +163,6 @@ function hitTestAsset(wx, wy) {
   return null;
 }
 
-function hitTestInterior(wx, wy) {
-  const order = state.draw_order?.interiors || [];
-  for (let i = order.length - 1; i >= 0; i--) {
-    const id = order[i];
-    const room = state.interiors.get(id);
-    if (!room) continue;
-    if (wx >= room.x && wx <= room.x + room.w && wy >= room.y && wy <= room.y + room.h) return id;
-  }
-  return null;
-}
-
 function shapeContainsPoint(sh, wx, wy) {
   const tol = Math.max(6 / cam.z, (sh.width || 3) * 0.8);
   if (sh.type === "line" || sh.type === "arrow") {
@@ -322,8 +311,190 @@ function drawInteriors() {
   if (!state.layer_visibility.interiors) return;
   const resolved = getResolvedInteriors();
   drawInteriorFloors(resolved.rooms);
-  drawInteriorWalls(resolved.visibleWalls, resolved.doors);
-  drawInteriorSelection();
+  drawInteriorOverlapWarnings(resolved.relationships);
+  drawInteriorWalls(resolved.visibleWalls);
+  drawInteriorSelections(resolved);
+  drawInteriorDebugOverlay(resolved);
+}
+
+function drawInteriorFloors(rooms) {
+  for (const room of rooms) {
+    const topLeft = worldToScreen(room.x, room.y);
+    const widthPx = room.w * cam.z;
+    const heightPx = room.h * cam.z;
+    ctx.save();
+    ctx.fillStyle = "#b99d79";
+    ctx.fillRect(topLeft.x, topLeft.y, widthPx, heightPx);
+    ctx.strokeStyle = "rgba(90, 60, 32, 0.16)";
+    ctx.lineWidth = 1;
+    const plankStep = Math.max(8, ui.gridSize * cam.z * 0.2);
+    for (let y = topLeft.y + plankStep; y < topLeft.y + heightPx; y += plankStep) {
+      ctx.beginPath();
+      ctx.moveTo(topLeft.x, y);
+      ctx.lineTo(topLeft.x + widthPx, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawInteriorWalls(visibleWalls) {
+  ctx.save();
+  ctx.strokeStyle = "#21170f";
+  ctx.lineWidth = Math.max(3, ui.gridSize * cam.z * 0.08);
+  ctx.lineCap = "square";
+  for (const wall of visibleWalls) {
+    ctx.beginPath();
+    if (wall.orientation === "h") {
+      const a = worldToScreen(wall.start, wall.line);
+      const b = worldToScreen(wall.end, wall.line);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    } else {
+      const a = worldToScreen(wall.line, wall.start);
+      const b = worldToScreen(wall.line, wall.end);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawInteriorOverlapWarnings(relationships) {
+  const overlaps = relationships.filter((relationship) => relationship.type === "overlap" && relationship.overlap_rect);
+  if (!overlaps.length) return;
+  ctx.save();
+  for (const relationship of overlaps) {
+    const rect = relationship.overlap_rect;
+    const topLeft = worldToScreen(rect.x, rect.y);
+    const widthPx = rect.w * cam.z;
+    const heightPx = rect.h * cam.z;
+    ctx.fillStyle = "rgba(255, 90, 190, 0.09)";
+    ctx.strokeStyle = "rgba(255, 120, 214, 0.55)";
+    ctx.lineWidth = Math.max(1.25, cam.z * 1.25);
+    ctx.setLineDash([8, 6]);
+    ctx.fillRect(topLeft.x, topLeft.y, widthPx, heightPx);
+    ctx.strokeRect(topLeft.x, topLeft.y, widthPx, heightPx);
+  }
+  ctx.restore();
+}
+
+function drawInteriorSelections(resolved) {
+  if (hoveredInteriorId && hoveredInteriorId !== selectedInteriorId) {
+    const room = state.interiors.get(hoveredInteriorId);
+    if (room) {
+      const topLeft = worldToScreen(room.x, room.y);
+      ctx.save();
+      ctx.strokeStyle = "rgba(214, 235, 255, 0.88)";
+      ctx.lineWidth = Math.max(1.5, cam.z * 1.8);
+      ctx.strokeRect(topLeft.x, topLeft.y, room.w * cam.z, room.h * cam.z);
+      ctx.restore();
+    }
+  }
+  if (selectedInteriorId) {
+    const room = state.interiors.get(selectedInteriorId);
+    if (room) {
+      const topLeft = worldToScreen(room.x, room.y);
+      ctx.save();
+      ctx.strokeStyle = "#ffd54a";
+      ctx.lineWidth = Math.max(2, cam.z * 3);
+      ctx.strokeRect(topLeft.x, topLeft.y, room.w * cam.z, room.h * cam.z);
+      ctx.restore();
+    }
+  }
+  if (hoveredInteriorResize) {
+    const room = state.interiors.get(hoveredInteriorResize.id);
+    if (room) {
+      ctx.save();
+      ctx.strokeStyle = canEditInterior(room) ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.45)";
+      ctx.lineWidth = Math.max(2, cam.z * 2.5);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      if (hoveredInteriorResize.side === "left" || hoveredInteriorResize.side === "right") {
+        const x = hoveredInteriorResize.side === "left" ? room.x : room.x + room.w;
+        const a = worldToScreen(x, room.y);
+        const b = worldToScreen(x, room.y + room.h);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      } else {
+        const y = hoveredInteriorResize.side === "top" ? room.y : room.y + room.h;
+        const a = worldToScreen(room.x, y);
+        const b = worldToScreen(room.x + room.w, y);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+  if (hoveredInteriorEdge?.edge_key) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(124, 224, 255, 0.98)";
+    ctx.lineWidth = Math.max(2.5, cam.z * 2.6);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    if (hoveredInteriorEdge.orientation === "h") {
+      const a = worldToScreen(hoveredInteriorEdge.start, hoveredInteriorEdge.line);
+      const b = worldToScreen(hoveredInteriorEdge.end, hoveredInteriorEdge.line);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    } else {
+      const a = worldToScreen(hoveredInteriorEdge.line, hoveredInteriorEdge.start);
+      const b = worldToScreen(hoveredInteriorEdge.line, hoveredInteriorEdge.end);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (activeInteriorPreview) {
+    const topLeft = worldToScreen(activeInteriorPreview.x, activeInteriorPreview.y);
+    ctx.save();
+    ctx.globalAlpha = 0.68;
+    ctx.fillStyle = "#cbb08d";
+    ctx.strokeStyle = "#2b2017";
+    ctx.lineWidth = Math.max(2, cam.z * 2);
+    ctx.fillRect(topLeft.x, topLeft.y, activeInteriorPreview.w * cam.z, activeInteriorPreview.h * cam.z);
+    ctx.strokeRect(topLeft.x, topLeft.y, activeInteriorPreview.w * cam.z, activeInteriorPreview.h * cam.z);
+    ctx.restore();
+  }
+}
+
+function interiorDebugEnabled() {
+  try {
+    return localStorage.getItem("warboard_debug_interiors") === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function drawInteriorDebugOverlay(resolved) {
+  if (!interiorDebugEnabled()) return;
+  ctx.save();
+  ctx.lineCap = "round";
+  for (const edge of resolved.sharedEdges) {
+    ctx.strokeStyle =
+      edge.mode === "wall" ? "rgba(255, 90, 90, 0.95)" :
+      edge.mode === "open" ? "rgba(255, 230, 90, 0.95)" :
+      edge.mode === "door" ? "rgba(90, 255, 120, 0.95)" :
+      "rgba(90, 235, 255, 0.9)";
+    ctx.lineWidth = hoveredInteriorEdge?.edge_key === edge.edge_key ? Math.max(3, cam.z * 3) : Math.max(1.5, cam.z * 1.8);
+    ctx.beginPath();
+    if (edge.orientation === "h") {
+      const a = worldToScreen(edge.start, edge.line);
+      const b = worldToScreen(edge.end, edge.line);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    } else {
+      const a = worldToScreen(edge.line, edge.start);
+      const b = worldToScreen(edge.line, edge.end);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawStrokes(layerBand) {
