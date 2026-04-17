@@ -428,6 +428,26 @@ function drawInteriorSelections(resolved) {
       ctx.restore();
     }
   }
+  if (activeInteriorAssist?.active) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 228, 110, 0.92)";
+    ctx.lineWidth = Math.max(2, cam.z * 2.2);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    if (activeInteriorAssist.orientation === "h") {
+      const a = worldToScreen(activeInteriorAssist.overlapStart, activeInteriorAssist.targetLine);
+      const b = worldToScreen(activeInteriorAssist.overlapEnd, activeInteriorAssist.targetLine);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    } else {
+      const a = worldToScreen(activeInteriorAssist.targetLine, activeInteriorAssist.overlapStart);
+      const b = worldToScreen(activeInteriorAssist.targetLine, activeInteriorAssist.overlapEnd);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
   if (hoveredInteriorEdge?.edge_key) {
     ctx.save();
     ctx.strokeStyle = "rgba(124, 224, 255, 0.98)";

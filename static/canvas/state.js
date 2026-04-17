@@ -171,6 +171,7 @@ let pointerCaptured = false;
 let activeStroke = null;
 let activeShapePreview = null;
 let activeInteriorPreview = null;
+let activeInteriorAssist = null;
 let activeRuler = null;
 let hoveredInteriorId = null;
 let hoveredInteriorEdge = null;

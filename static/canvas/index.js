@@ -488,6 +488,7 @@
     if (!draggingInteriorId || !interiorDragStart || !interiorDragOrigin) return null;
     const room = state.interiors.get(draggingInteriorId);
     if (!room) return null;
+    let rect = null;
     if (resizingInterior) {
       let { x, y, w, h } = interiorDragOrigin;
       if (resizingInterior.side === "right") w = snapInterior(wpos.x) - x;
@@ -504,17 +505,25 @@
       }
       w = Math.max(ui.gridSize, w);
       h = Math.max(ui.gridSize, h);
-      return { id: room.id, x, y, w, h };
+      rect = { id: room.id, x, y, w, h };
+    } else {
+      const dx = wpos.x - interiorDragStart.x;
+      const dy = wpos.y - interiorDragStart.y;
+      rect = {
+        id: room.id,
+        x: snapInterior(interiorDragOrigin.x + dx),
+        y: snapInterior(interiorDragOrigin.y + dy),
+        w: room.w,
+        h: room.h,
+      };
     }
-    const dx = wpos.x - interiorDragStart.x;
-    const dy = wpos.y - interiorDragStart.y;
-    return {
-      id: room.id,
-      x: snapInterior(interiorDragOrigin.x + dx),
-      y: snapInterior(interiorDragOrigin.y + dy),
-      w: room.w,
-      h: room.h,
-    };
+    const assisted = applyInteriorSeamAssist(rect, {
+      excludeRoomId: room.id,
+      mode: resizingInterior ? "resize" : "move",
+      resizeSide: resizingInterior?.side || null,
+      threshold: ui.gridSize * 0.35,
+    });
+    return { ...assisted.rect, assist: assisted.assist };
   }
 
   function hideAllCtx() {
@@ -1643,6 +1652,7 @@
     activeStroke = null;
     activeShapePreview = null;
     activeInteriorPreview = null;
+    activeInteriorAssist = null;
     interiorDragStart = null;
     interiorDragOrigin = null;
     hoveredInteriorId = null;
@@ -1928,6 +1938,7 @@
       if (currentInteriorContextId === id) currentInteriorContextId = null;
       if (draggingInteriorId === id) draggingInteriorId = null;
       if (resizingInterior?.id === id) resizingInterior = null;
+      if (activeInteriorAssist?.targetRoomId === id) activeInteriorAssist = null;
       if (hoveredInteriorId === id) hoveredInteriorId = null;
       if (hoveredInteriorResize?.id === id) hoveredInteriorResize = null;
       for (const [edgeId, edge] of state.interior_edges.entries()) {
@@ -2779,6 +2790,7 @@
       draggingInteriorId = null;
       resizingInterior = null;
       activeInteriorPreview = null;
+      activeInteriorAssist = null;
       interiorDragStart = null;
       interiorDragOrigin = null;
       updateCanvasCursor();
@@ -3172,6 +3184,7 @@
         selectedAssetIds.clear();
         selectedShapeId = null;
         selectedInteriorId = interiorResize.id;
+        activeInteriorAssist = null;
         if (room && canEditInterior(room)) {
           activeDragMoveSeq = ++moveSeqCounter;
           resizingInterior = interiorResize;
@@ -3186,6 +3199,7 @@
         selectedAssetIds.clear();
         selectedShapeId = null;
         selectedInteriorId = getInteriorTargetRoomId(interiorTarget);
+        activeInteriorAssist = null;
         draggingInteriorId = null;
         resizingInterior = null;
         interiorDragStart = null;
@@ -3197,6 +3211,7 @@
         selectedAssetIds.clear();
         selectedShapeId = null;
         selectedInteriorId = interiorHit;
+        activeInteriorAssist = null;
         const room = state.interiors.get(interiorHit);
         if (room && canEditInterior(room)) {
           activeDragMoveSeq = ++moveSeqCounter;
@@ -3241,6 +3256,7 @@
         selectedAssetIds.clear();
         selectedInteriorId = null;
         selectedShapeId = null;
+        activeInteriorAssist = null;
         draggingTokenId = null;
         draggingAssetId = null;
         draggingAssetIds = [];
@@ -3276,6 +3292,7 @@
     if (t === "interior" && isGM()) {
       const x = snapInterior(wpos.x);
       const y = snapInterior(wpos.y);
+      activeInteriorAssist = null;
       activeInteriorPreview = {
         id: makeId(),
         x,
@@ -3478,6 +3495,7 @@
       room.y = nextRect.y;
       room.w = nextRect.w;
       room.h = nextRect.h;
+      activeInteriorAssist = nextRect.assist || null;
       state.interiors.set(room.id, room);
       markInteriorsDirty();
       requestRender();
@@ -3510,10 +3528,22 @@
       const y1 = Math.min(startY, endY);
       const x2 = Math.max(startX, endX);
       const y2 = Math.max(startY, endY);
-      activeInteriorPreview.x = x1;
-      activeInteriorPreview.y = y1;
-      activeInteriorPreview.w = Math.max(ui.gridSize, x2 - x1);
-      activeInteriorPreview.h = Math.max(ui.gridSize, y2 - y1);
+      const previewRect = {
+        id: activeInteriorPreview.id,
+        x: x1,
+        y: y1,
+        w: Math.max(ui.gridSize, x2 - x1),
+        h: Math.max(ui.gridSize, y2 - y1),
+      };
+      const assisted = applyInteriorSeamAssist(previewRect, {
+        mode: "place",
+        threshold: ui.gridSize * 0.35,
+      });
+      activeInteriorPreview.x = assisted.rect.x;
+      activeInteriorPreview.y = assisted.rect.y;
+      activeInteriorPreview.w = assisted.rect.w;
+      activeInteriorPreview.h = assisted.rect.h;
+      activeInteriorAssist = assisted.assist || null;
       requestRender();
       return;
     }
@@ -3669,6 +3699,10 @@
       hoveredInteriorResize = null;
       requestRender();
     }
+    if (activeInteriorAssist) {
+      activeInteriorAssist = null;
+      requestRender();
+    }
     updateCanvasCursor();
   });
 
@@ -3779,6 +3813,7 @@
     assetDragOrigin = null;
     interiorDragStart = null;
     interiorDragOrigin = null;
+    activeInteriorAssist = null;
 
     if (t === "move" && hadMarquee && finalMarqueeRect) {
       const hitIds = [];

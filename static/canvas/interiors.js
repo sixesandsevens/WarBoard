@@ -23,7 +23,25 @@ function roomEdges(room) {
   ];
 }
 
+function candidateRectEdges(rect) {
+  return [
+    { side: "top", orientation: "h", line: rect.y, start: rect.x, end: rect.x + rect.w },
+    { side: "bottom", orientation: "h", line: rect.y + rect.h, start: rect.x, end: rect.x + rect.w },
+    { side: "left", orientation: "v", line: rect.x, start: rect.y, end: rect.y + rect.h },
+    { side: "right", orientation: "v", line: rect.x + rect.w, start: rect.y, end: rect.y + rect.h },
+  ];
+}
+
 function areOpposingSides(a, b) {
+  return (
+    (a.side === "left" && b.side === "right") ||
+    (a.side === "right" && b.side === "left") ||
+    (a.side === "top" && b.side === "bottom") ||
+    (a.side === "bottom" && b.side === "top")
+  );
+}
+
+function areOpposingAssistSides(a, b) {
   return (
     (a.side === "left" && b.side === "right") ||
     (a.side === "right" && b.side === "left") ||
@@ -36,6 +54,12 @@ function overlapRange(a1, a2, b1, b2) {
   const start = Math.max(a1, b1);
   const end = Math.min(a2, b2);
   return end > start ? { start, end } : null;
+}
+
+function positivePerpendicularOverlap(a, b) {
+  const overlap = overlapRange(a.start, a.end, b.start, b.end);
+  if (!overlap) return null;
+  return { start: overlap.start, end: overlap.end, length: overlap.end - overlap.start };
 }
 
 function roomOverlapRect(a, b) {
@@ -225,6 +249,113 @@ function canEditInterior(interiorId) {
 function isInteriorEdgeLocked(edge) {
   if (!edge) return false;
   return isInteriorLocked(edge.room_a_id) || isInteriorLocked(edge.room_b_id);
+}
+
+function findBestInteriorSeamAssist(candidateRect, opts = {}) {
+  if (!candidateRect) return null;
+  const threshold = Number.isFinite(opts.threshold) ? Math.max(0, opts.threshold) : ui.gridSize * 0.35;
+  const excludeRoomId = opts.excludeRoomId ? String(opts.excludeRoomId) : null;
+  const mode = String(opts.mode || "place");
+  const resizeSide = opts.resizeSide ? String(opts.resizeSide) : null;
+  const candidateEdges = candidateRectEdges(candidateRect).filter((edge) => mode !== "resize" || edge.side === resizeSide);
+  if (!candidateEdges.length) return null;
+
+  let best = null;
+  for (const room of state.interiors.values()) {
+    if (!room || (excludeRoomId && room.id === excludeRoomId)) continue;
+    for (const targetEdge of roomEdges(room)) {
+      for (const candidateEdge of candidateEdges) {
+        if (candidateEdge.orientation !== targetEdge.orientation) continue;
+        if (!areOpposingAssistSides(candidateEdge, targetEdge)) continue;
+        const overlap = positivePerpendicularOverlap(candidateEdge, targetEdge);
+        if (!overlap) continue;
+        const distance = Math.abs(candidateEdge.line - targetEdge.line);
+        if (distance > threshold) continue;
+        const assist = {
+          active: true,
+          candidateSide: candidateEdge.side,
+          targetRoomId: room.id,
+          targetSide: targetEdge.side,
+          orientation: candidateEdge.orientation,
+          targetLine: targetEdge.line,
+          overlapStart: overlap.start,
+          overlapEnd: overlap.end,
+          distance,
+        };
+        if (
+          !best ||
+          assist.distance < best.distance ||
+          (assist.distance === best.distance && (assist.overlapEnd - assist.overlapStart) > (best.overlapEnd - best.overlapStart)) ||
+          (
+            assist.distance === best.distance &&
+            (assist.overlapEnd - assist.overlapStart) === (best.overlapEnd - best.overlapStart) &&
+            (
+              String(assist.targetRoomId) < String(best.targetRoomId) ||
+              (String(assist.targetRoomId) === String(best.targetRoomId) && String(assist.candidateSide) < String(best.candidateSide))
+            )
+          )
+        ) {
+          best = assist;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+function applyInteriorSeamAssist(candidateRect, opts = {}) {
+  if (!candidateRect) return { rect: candidateRect, assist: null };
+  const rect = {
+    ...candidateRect,
+    x: Number(candidateRect.x || 0),
+    y: Number(candidateRect.y || 0),
+    w: Math.max(ui.gridSize, Number(candidateRect.w || ui.gridSize)),
+    h: Math.max(ui.gridSize, Number(candidateRect.h || ui.gridSize)),
+  };
+  const assist = findBestInteriorSeamAssist(rect, opts);
+  if (!assist) return { rect, assist: null };
+
+  const adjusted = { ...rect };
+  const mode = String(opts.mode || "place");
+  const resizeSide = opts.resizeSide ? String(opts.resizeSide) : null;
+
+  if (mode === "move" || mode === "place") {
+    if (assist.orientation === "v") {
+      adjusted.x = assist.candidateSide === "left" ? assist.targetLine : assist.targetLine - adjusted.w;
+    } else {
+      adjusted.y = assist.candidateSide === "top" ? assist.targetLine : assist.targetLine - adjusted.h;
+    }
+    return { rect: adjusted, assist };
+  }
+
+  if (mode === "resize" && resizeSide) {
+    if (assist.orientation === "v") {
+      if (resizeSide === "left") {
+        const right = adjusted.x + adjusted.w;
+        const width = right - assist.targetLine;
+        if (width < ui.gridSize) return { rect, assist: null };
+        adjusted.x = assist.targetLine;
+        adjusted.w = width;
+      } else if (resizeSide === "right") {
+        const width = assist.targetLine - adjusted.x;
+        if (width < ui.gridSize) return { rect, assist: null };
+        adjusted.w = width;
+      }
+    } else if (resizeSide === "top") {
+      const bottom = adjusted.y + adjusted.h;
+      const height = bottom - assist.targetLine;
+      if (height < ui.gridSize) return { rect, assist: null };
+      adjusted.y = assist.targetLine;
+      adjusted.h = height;
+    } else if (resizeSide === "bottom") {
+      const height = assist.targetLine - adjusted.y;
+      if (height < ui.gridSize) return { rect, assist: null };
+      adjusted.h = height;
+    }
+    return { rect: adjusted, assist };
+  }
+
+  return { rect, assist: null };
 }
 
 function hitTestInteriorOverlap(wx, wy) {
