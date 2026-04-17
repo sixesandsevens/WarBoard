@@ -145,6 +145,7 @@ let selectedTokenId = null;
 let selectedAssetId = null;
 let selectedShapeId = null;
 let selectedInteriorId = null;
+let currentInteriorContextId = null;
 let currentInteriorEdge = null;
 const selectedAssetIds = new Set();
 let draggingAssetIds = [];
@@ -171,7 +172,9 @@ let activeStroke = null;
 let activeShapePreview = null;
 let activeInteriorPreview = null;
 let activeRuler = null;
+let hoveredInteriorId = null;
 let hoveredInteriorEdge = null;
+let hoveredInteriorResize = null;
 let erasingActive = false;
 let lastEraseWorld = null;
 

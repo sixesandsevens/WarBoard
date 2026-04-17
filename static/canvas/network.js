@@ -239,12 +239,17 @@ function connectWS(force = false, options = {}) {
       state.interiors.delete(interiorId);
       state.draw_order.interiors = state.draw_order.interiors.filter((id) => id !== interiorId);
       if (selectedInteriorId === interiorId) selectedInteriorId = null;
+      if (currentInteriorContextId === interiorId) currentInteriorContextId = null;
       if (draggingInteriorId === interiorId) draggingInteriorId = null;
       if (resizingInterior?.id === interiorId) resizingInterior = null;
+      if (hoveredInteriorId === interiorId) hoveredInteriorId = null;
+      if (hoveredInteriorResize?.id === interiorId) hoveredInteriorResize = null;
       for (const [edgeId, edge] of state.interior_edges.entries()) {
         if (edge.room_a_id === interiorId || edge.room_b_id === interiorId) state.interior_edges.delete(edgeId);
       }
+      if (hoveredInteriorEdge && (hoveredInteriorEdge.room_a_id === interiorId || hoveredInteriorEdge.room_b_id === interiorId)) hoveredInteriorEdge = null;
       markInteriorsDirty();
+      updateCanvasCursor();
       requestRender();
       return;
     }
@@ -257,6 +262,7 @@ function connectWS(force = false, options = {}) {
         state.interiors.set(room.id, room);
         markInteriorsDirty();
       }
+      updateCanvasCursor();
       requestRender();
       return;
     }

@@ -123,6 +123,17 @@ function drawInteriorWalls(visibleWalls, doors) {
 }
 
 function drawInteriorSelection() {
+  if (hoveredInteriorId && hoveredInteriorId !== selectedInteriorId) {
+    const room = state.interiors.get(hoveredInteriorId);
+    if (room) {
+      const topLeft = worldToScreen(room.x, room.y);
+      ctx.save();
+      ctx.strokeStyle = "rgba(214, 235, 255, 0.9)";
+      ctx.lineWidth = Math.max(2, cam.z * 2);
+      ctx.strokeRect(topLeft.x, topLeft.y, room.w * cam.z, room.h * cam.z);
+      ctx.restore();
+    }
+  }
   if (selectedInteriorId) {
     const room = state.interiors.get(selectedInteriorId);
     if (room) {
@@ -134,6 +145,26 @@ function drawInteriorSelection() {
       ctx.strokeRect(topLeft.x, topLeft.y, room.w * cam.z, room.h * cam.z);
       ctx.restore();
     }
+  }
+  if (hoveredInteriorEdge?.edge_key) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(124, 224, 255, 0.95)";
+    ctx.lineWidth = Math.max(2, cam.z * 2);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    if (hoveredInteriorEdge.orientation === "h") {
+      const a = worldToScreen(hoveredInteriorEdge.start, hoveredInteriorEdge.line);
+      const b = worldToScreen(hoveredInteriorEdge.end, hoveredInteriorEdge.line);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    } else {
+      const a = worldToScreen(hoveredInteriorEdge.line, hoveredInteriorEdge.start);
+      const b = worldToScreen(hoveredInteriorEdge.line, hoveredInteriorEdge.end);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+    ctx.stroke();
+    ctx.restore();
   }
   if (activeInteriorPreview) {
     const topLeft = worldToScreen(activeInteriorPreview.x, activeInteriorPreview.y);
@@ -177,6 +208,21 @@ function hitTestInteriorResize(wx, wy, tolerance = 6 / cam.z) {
     }
   }
   return null;
+}
+
+function isInteriorLocked(interiorId) {
+  const room = typeof interiorId === "string" ? state.interiors.get(interiorId) : interiorId;
+  return !!room?.locked;
+}
+
+function canEditInterior(interiorId) {
+  const room = typeof interiorId === "string" ? state.interiors.get(interiorId) : interiorId;
+  return !!(room && isGM() && !room.locked);
+}
+
+function isInteriorEdgeLocked(edge) {
+  if (!edge) return false;
+  return isInteriorLocked(edge.room_a_id) || isInteriorLocked(edge.room_b_id);
 }
 
 function resolveInteriorGeometry() {

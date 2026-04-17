@@ -57,6 +57,7 @@
   const rulerCtx = document.getElementById("rulerCtx");
   const assetCtx = document.getElementById("assetCtx");
   const interiorEdgeMenu = document.getElementById("interiorEdgeMenu");
+  const interiorCtx = document.getElementById("interiorCtx");
   const assetScaleSliderEl = document.getElementById("assetScaleSlider");
   const assetScaleValueEl = document.getElementById("assetScaleValue");
   const assetRotateSliderEl = document.getElementById("assetRotateSlider");
@@ -72,7 +73,7 @@
   const toolTextInput = document.getElementById("toolTextInput");
   const toolTextApply = document.getElementById("toolTextApply");
   const uiTooltip = document.getElementById("uiTooltip");
-  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, textCtx, rulerCtx, assetCtx, interiorEdgeMenu];
+  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, textCtx, rulerCtx, assetCtx, interiorEdgeMenu, interiorCtx];
   const playerListEl = document.getElementById("playerList");
   const tokenListEl = document.getElementById("tokenList");
   const strokeListEl = document.getElementById("strokeList");

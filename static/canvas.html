@@ -354,6 +354,11 @@
       <div class="ctx-item" data-edge-mode="open">Open</div>
       <div class="ctx-item" data-edge-mode="door">Door</div>
     </div>
+    <div id="interiorCtx" class="ctx hidden" role="menu" aria-label="Interior menu">
+      <div class="ctx-title">Interior</div>
+      <div class="ctx-item" data-action="interior_lock_toggle">Lock Interior</div>
+      <div class="ctx-item danger" data-action="interior_delete">Delete Interior</div>
+    </div>
     <div id="toolColorPanel" class="ctx hidden" role="dialog" aria-label="Tool color">
       <div id="toolColorTitle" class="ctx-title">Color</div>
       <div style="padding:8px 10px;">
@@ -686,7 +691,7 @@
       <div><span class="pill">Left-drag</span> act with tool</div>
       <div><span class="pill">Right-drag</span> pan</div>
       <div><span class="pill">Wheel</span> zoom</div>
-      <div><span class="pill">Delete</span> delete selected token (if allowed)</div>
+      <div><span class="pill">Delete</span> delete selected token, asset, or interior</div>
       <div style="opacity:.85;margin-top:6px">
         Layer visibility and background are server-synced room settings.
       </div>

@@ -355,7 +355,7 @@
       <div><b>G / U</b> Group / Ungroup selected (GM)</div>
       <div><b>D</b> Toggle Downed badge (GM, selected token)</div>
       <div><b>Tab</b> Toggle drawer</div>
-      <div><b>Delete/Backspace</b> Delete selected token (GM)</div>
+      <div><b>Delete/Backspace</b> Delete selected token, asset, or interior</div>
       <div><b>Esc</b> Close menus / cancel drag spawn</div>
     `;
   }
@@ -406,7 +406,7 @@
   }
 
   function openInteriorEdgeMenu(edge, x, y) {
-    if (!interiorEdgeMenu || !edge || !isGM()) return;
+    if (!interiorEdgeMenu || !edge || !isGM() || isInteriorEdgeLocked(edge)) return;
     const currentMode = (() => {
       for (const existing of state.interior_edges.values()) {
         if (existing?.edge_key === edge.edge_key) return existing.mode || "auto";
@@ -421,12 +421,74 @@
     currentInteriorEdge = edge;
   }
 
+  function openInteriorRoomMenu(interiorId, x, y) {
+    const room = state.interiors.get(interiorId || "");
+    if (!interiorCtx || !room || !isGM()) return;
+    const lockItem = interiorCtx.querySelector('[data-action="interior_lock_toggle"]');
+    if (lockItem) lockItem.textContent = room.locked ? "Unlock Interior" : "Lock Interior";
+    currentInteriorContextId = room.id;
+    showContextMenu(interiorCtx, x, y);
+  }
+
+  function setInteriorHoverState(nextRoomId = null, nextEdge = null, nextResize = null) {
+    const edgeKey = hoveredInteriorEdge?.edge_key || "";
+    const nextEdgeKey = nextEdge?.edge_key || "";
+    const resizeId = hoveredInteriorResize?.id || "";
+    const nextResizeId = nextResize?.id || "";
+    const resizeSide = hoveredInteriorResize?.side || "";
+    const nextResizeSide = nextResize?.side || "";
+    const changed =
+      hoveredInteriorId !== nextRoomId ||
+      edgeKey !== nextEdgeKey ||
+      resizeId !== nextResizeId ||
+      resizeSide !== nextResizeSide;
+    hoveredInteriorId = nextRoomId;
+    hoveredInteriorEdge = nextEdge;
+    hoveredInteriorResize = nextResize;
+    updateCanvasCursor();
+    if (changed) requestRender();
+  }
+
+  function resolveInteriorDragRect(wpos) {
+    if (!draggingInteriorId || !interiorDragStart || !interiorDragOrigin) return null;
+    const room = state.interiors.get(draggingInteriorId);
+    if (!room) return null;
+    if (resizingInterior) {
+      let { x, y, w, h } = interiorDragOrigin;
+      if (resizingInterior.side === "right") w = snap(wpos.x) - x;
+      if (resizingInterior.side === "left") {
+        const nx = snap(wpos.x);
+        w = (x + w) - nx;
+        x = nx;
+      }
+      if (resizingInterior.side === "bottom") h = snap(wpos.y) - y;
+      if (resizingInterior.side === "top") {
+        const ny = snap(wpos.y);
+        h = (y + h) - ny;
+        y = ny;
+      }
+      w = Math.max(ui.gridSize, w);
+      h = Math.max(ui.gridSize, h);
+      return { id: room.id, x, y, w, h };
+    }
+    const dx = wpos.x - interiorDragStart.x;
+    const dy = wpos.y - interiorDragStart.y;
+    return {
+      id: room.id,
+      x: snap(interiorDragOrigin.x + dx),
+      y: snap(interiorDragOrigin.y + dy),
+      w: room.w,
+      h: room.h,
+    };
+  }
+
   function hideAllCtx() {
     if (ctxSubHideTimer) {
       clearTimeout(ctxSubHideTimer);
       ctxSubHideTimer = null;
     }
     for (const m of allCtxMenus) m.classList.add("hidden");
+    currentInteriorContextId = null;
     currentInteriorEdge = null;
   }
 
@@ -877,6 +939,19 @@
         selectedAssetId = null;
         break;
       }
+      case "interior_lock_toggle": {
+        const room = state.interiors.get(currentInteriorContextId || selectedInteriorId || "");
+        if (!room || !isGM()) break;
+        send("INTERIOR_SET_LOCK", { id: room.id, locked: !room.locked });
+        break;
+      }
+      case "interior_delete": {
+        const room = state.interiors.get(currentInteriorContextId || selectedInteriorId || "");
+        if (!room || !isGM()) break;
+        send("INTERIOR_DELETE", { id: room.id });
+        selectedInteriorId = null;
+        break;
+      }
       case "open_rooms":
         activateDrawerTab("rooms", true);
         refreshRoomsPanel();
@@ -1106,6 +1181,15 @@
     return !!(token.creator_id && token.creator_id === myId());
   }
 
+  function getSelectedInterior() {
+    return selectedInteriorId ? state.interiors.get(selectedInteriorId) : null;
+  }
+
+  function canDeleteSelectedInterior() {
+    const room = getSelectedInterior();
+    return !!(room && isGM());
+  }
+
   function canEditShapeLocal(shape) {
     if (!shape) return false;
     if (shape.locked) return false;
@@ -1287,11 +1371,31 @@
       return;
     }
     const t = tool();
+    if (t === "move" && (draggingInteriorId || resizingInterior)) {
+      if (resizingInterior) {
+        canvas.style.cursor = (resizingInterior.side === "left" || resizingInterior.side === "right") ? "ew-resize" : "ns-resize";
+      } else {
+        canvas.style.cursor = "grabbing";
+      }
+      return;
+    }
     if (isPanning || (t === "move" && (draggingTokenIds.length || !!draggingAssetId))) {
       canvas.style.cursor = "grabbing";
       return;
     }
     if (t === "move") {
+      if (hoveredInteriorResize) {
+        if (canEditInterior(hoveredInteriorResize.id)) {
+          canvas.style.cursor = (hoveredInteriorResize.side === "left" || hoveredInteriorResize.side === "right") ? "ew-resize" : "ns-resize";
+        } else {
+          canvas.style.cursor = "default";
+        }
+        return;
+      }
+      if (hoveredInteriorId) {
+        canvas.style.cursor = canEditInterior(hoveredInteriorId) ? "grab" : "default";
+        return;
+      }
       canvas.style.cursor = "grab";
       return;
     }
@@ -1501,6 +1605,10 @@
     activeInteriorPreview = null;
     interiorDragStart = null;
     interiorDragOrigin = null;
+    hoveredInteriorId = null;
+    hoveredInteriorEdge = null;
+    hoveredInteriorResize = null;
+    currentInteriorContextId = null;
     currentInteriorEdge = null;
     activeRuler = null;
     activePaintStroke = null;
@@ -1571,11 +1679,13 @@
     if (selectedInteriorId && !state.interiors.has(selectedInteriorId)) selectedInteriorId = null;
     setSelection(selectedIdsArray(), selectedTokenId);
     if (hoveredTokenId && !state.tokens.has(hoveredTokenId)) hoveredTokenId = null;
+    if (hoveredInteriorId && !state.interiors.has(hoveredInteriorId)) hoveredInteriorId = null;
     players.add(myId());
     if (state.gm_id) players.add(state.gm_id);
     refreshFogPaintPanel();
     refreshGmUI();
     pruneUnusedPackBlobUrls();
+    updateCanvasCursor();
     requestRender();
   }
 
@@ -1775,12 +1885,17 @@
       state.interiors.delete(id);
       state.draw_order.interiors = state.draw_order.interiors.filter((x) => x !== id);
       if (selectedInteriorId === id) selectedInteriorId = null;
+      if (currentInteriorContextId === id) currentInteriorContextId = null;
       if (draggingInteriorId === id) draggingInteriorId = null;
       if (resizingInterior?.id === id) resizingInterior = null;
+      if (hoveredInteriorId === id) hoveredInteriorId = null;
+      if (hoveredInteriorResize?.id === id) hoveredInteriorResize = null;
       for (const [edgeId, edge] of state.interior_edges.entries()) {
         if (edge.room_a_id === id || edge.room_b_id === id) state.interior_edges.delete(edgeId);
       }
+      if (hoveredInteriorEdge && (hoveredInteriorEdge.room_a_id === id || hoveredInteriorEdge.room_b_id === id)) hoveredInteriorEdge = null;
       markInteriorsDirty();
+      updateCanvasCursor();
       requestRender();
       scheduleOfflineSave();
       return;
@@ -1794,6 +1909,7 @@
         state.interiors.set(id, room);
         markInteriorsDirty();
       }
+      updateCanvasCursor();
       requestRender();
       scheduleOfflineSave();
       return;
@@ -2625,6 +2741,7 @@
       activeInteriorPreview = null;
       interiorDragStart = null;
       interiorDragOrigin = null;
+      updateCanvasCursor();
       requestRender();
       return;
     }
@@ -2661,7 +2778,15 @@
       if (canDeleteAssetLocal(a)) {
         send("ASSET_INSTANCE_DELETE", { id: selectedAssetId });
         e.preventDefault();
+        return;
       }
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedInteriorId && canDeleteSelectedInterior()) {
+      send("INTERIOR_DELETE", { id: selectedInteriorId });
+      selectedInteriorId = null;
+      e.preventDefault();
+      requestRender();
+      return;
     }
   });
   window.addEventListener("keyup", (e) => {
@@ -2777,7 +2902,7 @@
     if (edgeHit && isGM()) {
       selectedInteriorId = edgeHit.room_a_id || edgeHit.room_b_id || selectedInteriorId;
       closeTokenMenu();
-      openInteriorEdgeMenu(edgeHit, e.clientX, e.clientY);
+      if (!isInteriorEdgeLocked(edgeHit)) openInteriorEdgeMenu(edgeHit, e.clientX, e.clientY);
       requestRender();
       return;
     }
@@ -2787,6 +2912,7 @@
       selectedShapeId = null;
       selectedTokenId = null;
       closeTokenMenu();
+      openInteriorRoomMenu(interiorHit, e.clientX, e.clientY);
       requestRender();
       return;
     }
@@ -2990,12 +3116,13 @@
         selectedAssetIds.clear();
         selectedShapeId = null;
         selectedInteriorId = interiorResize.id;
-        if (room && isGM()) {
+        if (room && canEditInterior(room)) {
           activeDragMoveSeq = ++moveSeqCounter;
           resizingInterior = interiorResize;
           draggingInteriorId = interiorResize.id;
           interiorDragStart = { x: wpos.x, y: wpos.y };
           interiorDragOrigin = { ...room };
+          updateCanvasCursor();
         }
       } else if (interiorHit) {
         selectedTokenId = null;
@@ -3004,17 +3131,19 @@
         selectedShapeId = null;
         selectedInteriorId = interiorHit;
         const room = state.interiors.get(interiorHit);
-        if (room && isGM()) {
+        if (room && canEditInterior(room)) {
           activeDragMoveSeq = ++moveSeqCounter;
           draggingInteriorId = interiorHit;
           resizingInterior = null;
           interiorDragStart = { x: wpos.x, y: wpos.y };
           interiorDragOrigin = { ...room };
+          updateCanvasCursor();
         } else {
           draggingInteriorId = null;
           resizingInterior = null;
           interiorDragStart = null;
           interiorDragOrigin = null;
+          updateCanvasCursor();
         }
       } else if (shapeHit) {
         selectedTokenId = null;
@@ -3209,6 +3338,26 @@
     updateHoveredToken(wpos.x, wpos.y);
     const t = tool();
 
+    if (t === "move" && !draggingInteriorId && !resizingInterior && !marqueeSelectRect) {
+      const hoverToken = hitTestToken(wpos.x, wpos.y);
+      const hoverAsset = hoverToken || isAssetInteractionLocked() ? null : hitTestAsset(wpos.x, wpos.y);
+      const hoverShape = (hoverToken || hoverAsset) ? null : hitTestShape(wpos.x, wpos.y);
+      if (!hoverToken && !hoverAsset && !hoverShape) {
+        const hoverResize = hitTestInteriorResize(wpos.x, wpos.y);
+        const hoverEdge = hoverResize ? null : hitTestInteriorEdge(wpos.x, wpos.y);
+        const hoverRoomId = hitTestInterior(wpos.x, wpos.y);
+        setInteriorHoverState(hoverRoomId, hoverEdge, hoverResize && canEditInterior(hoverResize.id) ? hoverResize : null);
+      } else if (hoveredInteriorId || hoveredInteriorEdge || hoveredInteriorResize) {
+        setInteriorHoverState(null, null, null);
+      } else {
+        updateCanvasCursor();
+      }
+    } else if (hoveredInteriorId || hoveredInteriorEdge || hoveredInteriorResize) {
+      setInteriorHoverState(null, null, null);
+    } else {
+      updateCanvasCursor();
+    }
+
     if (t === "move" && marqueeSelectRect) {
       marqueeSelectRect.x2 = wpos.x;
       marqueeSelectRect.y2 = wpos.y;
@@ -3254,70 +3403,31 @@
 
     if (t === "move" && draggingInteriorId && interiorDragStart && interiorDragOrigin) {
       const room = state.interiors.get(draggingInteriorId);
-      if (!room) return;
-      if (resizingInterior) {
-        let { x, y, w, h } = interiorDragOrigin;
-        if (resizingInterior.side === "right") {
-          w = snap(wpos.x) - x;
-        }
-        if (resizingInterior.side === "left") {
-          const nx = snap(wpos.x);
-          w = (x + w) - nx;
-          x = nx;
-        }
-        if (resizingInterior.side === "bottom") {
-          h = snap(wpos.y) - y;
-        }
-        if (resizingInterior.side === "top") {
-          const ny = snap(wpos.y);
-          h = (y + h) - ny;
-          y = ny;
-        }
-        w = Math.max(ui.gridSize, w);
-        h = Math.max(ui.gridSize, h);
-        room.x = x;
-        room.y = y;
-        room.w = w;
-        room.h = h;
-        state.interiors.set(room.id, room);
-        markInteriorsDirty();
-        requestRender();
-        const now = Date.now();
-        if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
-          lastMoveSentAt = now;
-          send("INTERIOR_UPDATE", {
-            id: room.id,
-            x,
-            y,
-            w,
-            h,
-            commit: false,
-            move_seq: activeDragMoveSeq,
-            move_client: localMoveClientId,
-          });
-        }
-        return;
-      }
-      const dx = wpos.x - interiorDragStart.x;
-      const dy = wpos.y - interiorDragStart.y;
-      const nx = snap(interiorDragOrigin.x + dx);
-      const ny = snap(interiorDragOrigin.y + dy);
-      room.x = nx;
-      room.y = ny;
+      const nextRect = resolveInteriorDragRect(wpos);
+      if (!room || !nextRect) return;
+      room.x = nextRect.x;
+      room.y = nextRect.y;
+      room.w = nextRect.w;
+      room.h = nextRect.h;
       state.interiors.set(room.id, room);
       markInteriorsDirty();
       requestRender();
       const now = Date.now();
       if (now - lastMoveSentAt >= MOVE_SEND_INTERVAL_MS) {
         lastMoveSentAt = now;
-        send("INTERIOR_UPDATE", {
+        const payload = {
           id: room.id,
-          x: nx,
-          y: ny,
+          x: nextRect.x,
+          y: nextRect.y,
           commit: false,
           move_seq: activeDragMoveSeq,
           move_client: localMoveClientId,
-        });
+        };
+        if (resizingInterior) {
+          payload.w = nextRect.w;
+          payload.h = nextRect.h;
+        }
+        send("INTERIOR_UPDATE", payload);
       }
       return;
     }
@@ -3484,6 +3594,13 @@
       hoveredTokenId = null;
       requestRender();
     }
+    if (hoveredInteriorId || hoveredInteriorEdge || hoveredInteriorResize) {
+      hoveredInteriorId = null;
+      hoveredInteriorEdge = null;
+      hoveredInteriorResize = null;
+      requestRender();
+    }
+    updateCanvasCursor();
   });
 
   window.addEventListener("pointermove", (e) => {
@@ -3563,6 +3680,14 @@
     const movedShapeId = draggingShapeId;
     const movedInteriorId = draggingInteriorId;
     const movedInteriorResize = resizingInterior ? { ...resizingInterior } : null;
+    const finalInteriorPointer = (() => {
+      if (!movedInteriorId) return null;
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      return screenToWorld(sx, sy);
+    })();
+    const finalInteriorRect = finalInteriorPointer ? resolveInteriorDragRect(finalInteriorPointer) : null;
     const pendingInteriorPreview = activeInteriorPreview ? { ...activeInteriorPreview } : null;
     const finalSeq = activeDragMoveSeq;
     draggingTokenId = null;
@@ -3654,6 +3779,15 @@
     }
     if (t === "move" && movedInteriorId) {
       const room = state.interiors.get(movedInteriorId);
+      if (room && finalInteriorRect) {
+        room.x = finalInteriorRect.x;
+        room.y = finalInteriorRect.y;
+        room.w = finalInteriorRect.w;
+        room.h = finalInteriorRect.h;
+        state.interiors.set(room.id, room);
+        markInteriorsDirty();
+        requestRender();
+      }
       if (room) {
         const payload = {
           id: room.id,
@@ -3671,6 +3805,7 @@
       }
     }
     activeDragMoveSeq = null;
+    updateCanvasCursor();
 
     if (t === "interior" && pendingInteriorPreview && isGM()) {
       const room = normalizeInteriorRecord({

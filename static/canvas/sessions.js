@@ -492,9 +492,11 @@ function clearLocalRoomView() {
   selectedAssetId = null;
   selectedShapeId = null;
   selectedInteriorId = null;
+  currentInteriorContextId = null;
   selectedAssetIds.clear();
   setSelection([]);
   hoveredTokenId = null;
+  hoveredInteriorId = null;
   draggingAssetId = null;
   draggingAssetIds = [];
   dragStartAssetPositions = new Map();
@@ -507,6 +509,7 @@ function clearLocalRoomView() {
   interiorDragOrigin = null;
   activeInteriorPreview = null;
   hoveredInteriorEdge = null;
+  hoveredInteriorResize = null;
   currentInteriorEdge = null;
   markInteriorsDirty();
   dragSpawn = null;
