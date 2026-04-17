@@ -490,15 +490,15 @@
     if (!room) return null;
     if (resizingInterior) {
       let { x, y, w, h } = interiorDragOrigin;
-      if (resizingInterior.side === "right") w = snap(wpos.x) - x;
+      if (resizingInterior.side === "right") w = snapInterior(wpos.x) - x;
       if (resizingInterior.side === "left") {
-        const nx = snap(wpos.x);
+        const nx = snapInterior(wpos.x);
         w = (x + w) - nx;
         x = nx;
       }
-      if (resizingInterior.side === "bottom") h = snap(wpos.y) - y;
+      if (resizingInterior.side === "bottom") h = snapInterior(wpos.y) - y;
       if (resizingInterior.side === "top") {
-        const ny = snap(wpos.y);
+        const ny = snapInterior(wpos.y);
         h = (y + h) - ny;
         y = ny;
       }
@@ -510,8 +510,8 @@
     const dy = wpos.y - interiorDragStart.y;
     return {
       id: room.id,
-      x: snap(interiorDragOrigin.x + dx),
-      y: snap(interiorDragOrigin.y + dy),
+      x: snapInterior(interiorDragOrigin.x + dx),
+      y: snapInterior(interiorDragOrigin.y + dy),
       w: room.w,
       h: room.h,
     };
@@ -1616,6 +1616,7 @@
   // render → static/canvas/render.js
   resizeCanvas();
   function snap(v) { return ui.snap ? Math.round(v / ui.gridSize) * ui.gridSize : v; }
+  function snapInterior(v) { return Math.round(v / ui.gridSize) * ui.gridSize; }
   // clamp → static/canvas/utils.js
   // pointToSegmentDistance, parseMoveSeq → static/canvas/utils.js
 
@@ -3273,8 +3274,8 @@
     }
 
     if (t === "interior" && isGM()) {
-      const x = snap(wpos.x);
-      const y = snap(wpos.y);
+      const x = snapInterior(wpos.x);
+      const y = snapInterior(wpos.y);
       activeInteriorPreview = {
         id: makeId(),
         x,
@@ -3503,8 +3504,8 @@
     if (t === "interior" && activeInteriorPreview) {
       const startX = Number(activeInteriorPreview.originX ?? activeInteriorPreview.x);
       const startY = Number(activeInteriorPreview.originY ?? activeInteriorPreview.y);
-      const endX = snap(wpos.x);
-      const endY = snap(wpos.y);
+      const endX = snapInterior(wpos.x);
+      const endY = snapInterior(wpos.y);
       const x1 = Math.min(startX, endX);
       const y1 = Math.min(startY, endY);
       const x2 = Math.max(startX, endX);
