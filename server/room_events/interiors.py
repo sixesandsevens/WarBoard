@@ -1,11 +1,32 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Optional
 
 from ..models import InteriorEdgeOverride, InteriorRoom, WireEvent
 
 if TYPE_CHECKING:
     from ..rooms import Room, RoomManager
+
+
+def _edge_key_matches_rooms(edge_key: str, room_a_id: str, room_b_id: Optional[str]) -> bool:
+    if not edge_key or not room_a_id or not room_b_id:
+        return False
+    parts = edge_key.split("|")
+    if len(parts) != 6:
+        return False
+    left_id, right_id, orientation, line, start, end = parts
+    if sorted((room_a_id, room_b_id)) != [left_id, right_id]:
+        return False
+    if orientation not in {"h", "v"}:
+        return False
+    try:
+        line_value = float(line)
+        start_value = float(start)
+        end_value = float(end)
+    except (TypeError, ValueError):
+        return False
+    return bool(math.isfinite(line_value) and math.isfinite(start_value) and math.isfinite(end_value) and start_value < end_value)
 
 
 def apply_interior_event(
@@ -110,6 +131,16 @@ def apply_interior_event(
             mode = "auto"
         if not edge_id or not edge_key or not room_a_id:
             return WireEvent(type="ERROR", payload={"message": "Invalid edge override"})
+        if room_a_id not in room.state.interiors:
+            return WireEvent(type="ERROR", payload={"message": "Interior not found"})
+        if mode == "door":
+            if (
+                not room_b_id or
+                room_b_id == room_a_id or
+                room_b_id not in room.state.interiors or
+                not _edge_key_matches_rooms(edge_key, room_a_id, room_b_id)
+            ):
+                return WireEvent(type="ERROR", payload={"message": "Door overrides require a valid shared interior edge"})
         manager._push_history(room)
         existing_ids = [
             existing_id

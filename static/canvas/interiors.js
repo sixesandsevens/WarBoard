@@ -38,6 +38,56 @@ function overlapRange(a1, a2, b1, b2) {
   return end > start ? { start, end } : null;
 }
 
+function roomsOverlapArea(a, b) {
+  return (
+    a.x < b.x + b.w &&
+    a.x + a.w > b.x &&
+    a.y < b.y + b.h &&
+    a.y + a.h > b.y
+  );
+}
+
+function roomContainsRoom(a, b) {
+  return (
+    b.x >= a.x &&
+    b.y >= a.y &&
+    b.x + b.w <= a.x + a.w &&
+    b.y + b.h <= a.y + a.h
+  );
+}
+
+function findSharedBoundarySegments(a, b) {
+  const segments = [];
+  for (const edgeA of roomEdges(a)) {
+    for (const edgeB of roomEdges(b)) {
+      if (edgeA.orientation !== edgeB.orientation) continue;
+      if (edgeA.line !== edgeB.line) continue;
+      if (!areOpposingSides(edgeA, edgeB)) continue;
+      const overlap = overlapRange(edgeA.start, edgeA.end, edgeB.start, edgeB.end);
+      if (!overlap) continue;
+      segments.push({
+        room_a_id: edgeA.roomId,
+        room_b_id: edgeB.roomId,
+        side_a: edgeA.side,
+        side_b: edgeB.side,
+        orientation: edgeA.orientation,
+        line: edgeA.line,
+        start: overlap.start,
+        end: overlap.end,
+      });
+    }
+  }
+  return segments;
+}
+
+function classifyRoomRelationship(a, b) {
+  const shared = findSharedBoundarySegments(a, b);
+  if (shared.length) return { type: "adjacent", shared };
+  if (roomContainsRoom(a, b) || roomContainsRoom(b, a)) return { type: "contained", shared: [] };
+  if (roomsOverlapArea(a, b)) return { type: "overlap", shared: [] };
+  return { type: "separate", shared: [] };
+}
+
 function canonicalInteriorEdgeKey(roomAId, roomBId, orientation, line, start, end) {
   const ids = [roomAId, roomBId || ""].sort();
   return `${ids[0]}|${ids[1]}|${orientation}|${line}|${start}|${end}`;
@@ -179,18 +229,50 @@ function drawInteriorSelection() {
   }
 }
 
-function hitTestInteriorEdge(wx, wy, tolerance = 6 / cam.z) {
+function hitTestInteriorEdge(wx, wy, tolerance = 10 / cam.z) {
   const resolved = getResolvedInteriors();
+  let best = null;
   for (const edge of resolved.sharedEdges) {
+    let within = false;
+    let distance = Infinity;
     if (edge.orientation === "h") {
-      if (Math.abs(wy - edge.line) <= tolerance && wx >= edge.start - tolerance && wx <= edge.end + tolerance) {
-        return edge;
+      if (wx >= edge.start && wx <= edge.end) {
+        distance = Math.abs(wy - edge.line);
+        within = distance <= tolerance;
+      } else if (wx >= edge.start - tolerance && wx <= edge.end + tolerance) {
+        const dx = wx < edge.start ? edge.start - wx : wx - edge.end;
+        const dy = Math.abs(wy - edge.line);
+        distance = Math.hypot(dx, dy);
+        within = distance <= tolerance;
       }
-    } else if (Math.abs(wx - edge.line) <= tolerance && wy >= edge.start - tolerance && wy <= edge.end + tolerance) {
-      return edge;
+    } else if (wy >= edge.start && wy <= edge.end) {
+      distance = Math.abs(wx - edge.line);
+      within = distance <= tolerance;
+    } else if (wy >= edge.start - tolerance && wy <= edge.end + tolerance) {
+      const dy = wy < edge.start ? edge.start - wy : wy - edge.end;
+      const dx = Math.abs(wx - edge.line);
+      distance = Math.hypot(dx, dy);
+      within = distance <= tolerance;
+    }
+    if (!within) continue;
+    const relatedToSelection = selectedInteriorId && (edge.room_a_id === selectedInteriorId || edge.room_b_id === selectedInteriorId) ? 0 : 1;
+    const length = edge.end - edge.start;
+    if (
+      !best ||
+      distance < best.distance ||
+      (distance === best.distance && relatedToSelection < best.relatedToSelection) ||
+      (distance === best.distance && relatedToSelection === best.relatedToSelection && length < best.length) ||
+      (
+        distance === best.distance &&
+        relatedToSelection === best.relatedToSelection &&
+        length === best.length &&
+        String(edge.edge_key || "") < String(best.edge.edge_key || "")
+      )
+    ) {
+      best = { edge, distance, relatedToSelection, length };
     }
   }
-  return null;
+  return best ? best.edge : null;
 }
 
 function hitTestInteriorResize(wx, wy, tolerance = 6 / cam.z) {
@@ -234,50 +316,57 @@ function resolveInteriorGeometry() {
     h: Math.max(1, Number(room.h || 1)),
     style: "wood",
   }));
-  const allEdges = rooms.flatMap(roomEdges);
   const sharedByRoomEdge = new Map();
   const sharedEdges = [];
   const edgeModeByKey = new Map();
+  const relationships = [];
 
   for (const edge of state.interior_edges.values()) {
     if (edge && edge.edge_key) edgeModeByKey.set(edge.edge_key, edge.mode || "auto");
   }
 
-  for (let i = 0; i < allEdges.length; i += 1) {
-    const a = allEdges[i];
-    for (let j = i + 1; j < allEdges.length; j += 1) {
-      const b = allEdges[j];
-      if (a.orientation !== b.orientation) continue;
-      if (a.line !== b.line) continue;
-      if (!areOpposingSides(a, b)) continue;
-      const overlap = overlapRange(a.start, a.end, b.start, b.end);
-      if (!overlap) continue;
-      const edgeKey = canonicalInteriorEdgeKey(a.roomId, b.roomId, a.orientation, a.line, overlap.start, overlap.end);
-      const mode = edgeModeByKey.get(edgeKey) || "auto";
-      sharedEdges.push({
-        edge_key: edgeKey,
-        room_a_id: a.roomId,
-        room_b_id: b.roomId,
-        orientation: a.orientation,
-        line: a.line,
-        start: overlap.start,
-        end: overlap.end,
-        mode,
-      });
-      const keyA = `${a.roomId}:${a.side}:${a.line}`;
-      const keyB = `${b.roomId}:${b.side}:${b.line}`;
-      if (!sharedByRoomEdge.has(keyA)) sharedByRoomEdge.set(keyA, []);
-      if (!sharedByRoomEdge.has(keyB)) sharedByRoomEdge.set(keyB, []);
-      if (mode === "auto" || mode === "open") {
-        sharedByRoomEdge.get(keyA).push(overlap);
-        sharedByRoomEdge.get(keyB).push(overlap);
-      } else if (mode === "door") {
-        const carvedSegments = carveDoorSegment(overlap.start, overlap.end, ui.gridSize);
-        const gapStart = carvedSegments.length ? carvedSegments[0].end : overlap.start;
-        const gapEnd = carvedSegments.length > 1 ? carvedSegments[1].start : overlap.end;
-        if (gapEnd > gapStart) {
-          sharedByRoomEdge.get(keyA).push({ start: gapStart, end: gapEnd });
-          sharedByRoomEdge.get(keyB).push({ start: gapStart, end: gapEnd });
+  for (let i = 0; i < rooms.length; i += 1) {
+    for (let j = i + 1; j < rooms.length; j += 1) {
+      const roomA = rooms[i];
+      const roomB = rooms[j];
+      const relationship = classifyRoomRelationship(roomA, roomB);
+      relationships.push({ room_a_id: roomA.id, room_b_id: roomB.id, ...relationship });
+      if (relationship.type !== "adjacent") continue;
+      for (const shared of relationship.shared) {
+        const edgeKey = canonicalInteriorEdgeKey(
+          shared.room_a_id,
+          shared.room_b_id,
+          shared.orientation,
+          shared.line,
+          shared.start,
+          shared.end,
+        );
+        const mode = edgeModeByKey.get(edgeKey) || "auto";
+        sharedEdges.push({
+          edge_key: edgeKey,
+          room_a_id: shared.room_a_id,
+          room_b_id: shared.room_b_id,
+          orientation: shared.orientation,
+          line: shared.line,
+          start: shared.start,
+          end: shared.end,
+          mode,
+        });
+        const keyA = `${shared.room_a_id}:${shared.side_a}:${shared.line}`;
+        const keyB = `${shared.room_b_id}:${shared.side_b}:${shared.line}`;
+        if (!sharedByRoomEdge.has(keyA)) sharedByRoomEdge.set(keyA, []);
+        if (!sharedByRoomEdge.has(keyB)) sharedByRoomEdge.set(keyB, []);
+        if (mode === "auto" || mode === "open") {
+          sharedByRoomEdge.get(keyA).push({ start: shared.start, end: shared.end });
+          sharedByRoomEdge.get(keyB).push({ start: shared.start, end: shared.end });
+        } else if (mode === "door") {
+          const carvedSegments = carveDoorSegment(shared.start, shared.end, ui.gridSize);
+          const gapStart = carvedSegments.length ? carvedSegments[0].end : shared.start;
+          const gapEnd = carvedSegments.length > 1 ? carvedSegments[1].start : shared.end;
+          if (gapEnd > gapStart) {
+            sharedByRoomEdge.get(keyA).push({ start: gapStart, end: gapEnd });
+            sharedByRoomEdge.get(keyB).push({ start: gapStart, end: gapEnd });
+          }
         }
       }
     }
@@ -335,5 +424,5 @@ function resolveInteriorGeometry() {
     }
   }
 
-  return { rooms, visibleWalls: Array.from(dedupedWalls.values()), sharedEdges, doors };
+  return { rooms, visibleWalls: Array.from(dedupedWalls.values()), sharedEdges, doors, relationships };
 }

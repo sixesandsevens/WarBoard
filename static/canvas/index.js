@@ -407,6 +407,12 @@
 
   function openInteriorEdgeMenu(edge, x, y) {
     if (!interiorEdgeMenu || !edge || !isGM() || isInteriorEdgeLocked(edge)) return;
+    const hasSharedRooms = !!(
+      edge.room_a_id &&
+      edge.room_b_id &&
+      state.interiors.has(edge.room_a_id) &&
+      state.interiors.has(edge.room_b_id)
+    );
     const currentMode = (() => {
       for (const existing of state.interior_edges.values()) {
         if (existing?.edge_key === edge.edge_key) return existing.mode || "auto";
@@ -414,11 +420,34 @@
       return "auto";
     })();
     interiorEdgeMenu.querySelectorAll(".ctx-item[data-edge-mode]").forEach((item) => {
+      const edgeMode = String(item.dataset.edgeMode || "").trim();
+      item.style.display = edgeMode === "door" && !hasSharedRooms ? "none" : "flex";
       if (!item.dataset.baseLabel) item.dataset.baseLabel = item.textContent.replace(/^✓\s*/, "");
       item.textContent = `${item.dataset.edgeMode === currentMode ? "✓ " : ""}${item.dataset.baseLabel}`;
     });
     showContextMenu(interiorEdgeMenu, x, y);
     currentInteriorEdge = edge;
+  }
+
+  function getInteriorTargetRoomId(target) {
+    if (!target) return null;
+    if (target.resize?.id) return target.resize.id;
+    if (target.edge) {
+      if (selectedInteriorId && (selectedInteriorId === target.edge.room_a_id || selectedInteriorId === target.edge.room_b_id)) {
+        return selectedInteriorId;
+      }
+      return target.edge.room_a_id || target.edge.room_b_id || null;
+    }
+    return target.roomId || null;
+  }
+
+  function resolveInteriorPointerTarget(wx, wy) {
+    const resize = hitTestInteriorResize(wx, wy);
+    if (resize) return { roomId: resize.id, edge: null, resize };
+    const edge = hitTestInteriorEdge(wx, wy);
+    if (edge) return { roomId: null, edge, resize: null };
+    const roomId = hitTestInterior(wx, wy);
+    return { roomId: roomId || null, edge: null, resize: null };
   }
 
   function openInteriorRoomMenu(interiorId, x, y) {
@@ -1390,6 +1419,10 @@
         } else {
           canvas.style.cursor = "default";
         }
+        return;
+      }
+      if (hoveredInteriorEdge) {
+        canvas.style.cursor = isGM() && !isInteriorEdgeLocked(hoveredInteriorEdge) ? "pointer" : "default";
         return;
       }
       if (hoveredInteriorId) {
@@ -2881,7 +2914,7 @@
       return;
     }
     const assetHit = isAssetInteractionLocked() ? null : hitTestAsset(wpos.x, wpos.y);
-    const interiorHit = (!hit && !assetHit) ? hitTestInterior(wpos.x, wpos.y) : null;
+    const interiorTarget = (!hit && !assetHit) ? resolveInteriorPointerTarget(wpos.x, wpos.y) : null;
     if (assetHit) {
       selectedAssetId = assetHit;
       selectedShapeId = null;
@@ -2898,21 +2931,24 @@
       requestRender();
       return;
     }
-    const edgeHit = (!hit && !assetHit) ? hitTestInteriorEdge(wpos.x, wpos.y) : null;
-    if (edgeHit && isGM()) {
-      selectedInteriorId = edgeHit.room_a_id || edgeHit.room_b_id || selectedInteriorId;
+    if (interiorTarget?.edge && isGM()) {
+      selectedInteriorId = getInteriorTargetRoomId(interiorTarget);
+      selectedAssetId = null;
+      selectedAssetIds.clear();
+      selectedShapeId = null;
+      selectedTokenId = null;
       closeTokenMenu();
-      if (!isInteriorEdgeLocked(edgeHit)) openInteriorEdgeMenu(edgeHit, e.clientX, e.clientY);
+      if (!isInteriorEdgeLocked(interiorTarget.edge)) openInteriorEdgeMenu(interiorTarget.edge, e.clientX, e.clientY);
       requestRender();
       return;
     }
-    if (interiorHit) {
-      selectedInteriorId = interiorHit;
+    if (interiorTarget?.roomId) {
+      selectedInteriorId = interiorTarget.roomId;
       selectedAssetId = null;
       selectedShapeId = null;
       selectedTokenId = null;
       closeTokenMenu();
-      openInteriorRoomMenu(interiorHit, e.clientX, e.clientY);
+      openInteriorRoomMenu(interiorTarget.roomId, e.clientX, e.clientY);
       requestRender();
       return;
     }
@@ -2964,7 +3000,7 @@
         return;
       }
       const assetHit = (hit || isAssetInteractionLocked()) ? null : hitTestAsset(wpos.x, wpos.y);
-      const interiorHit = (hit || assetHit) ? null : hitTestInterior(wpos.x, wpos.y);
+      const interiorTarget = (hit || assetHit) ? null : resolveInteriorPointerTarget(wpos.x, wpos.y);
       if (assetHit) {
         // If right-clicking an asset not in the current selection, replace selection with just this one.
         if (!selectedAssetIds.has(assetHit)) {
@@ -2985,8 +3021,18 @@
         requestRender();
         return;
       }
-      if (interiorHit) {
-        selectedInteriorId = interiorHit;
+      if (interiorTarget?.edge && isGM()) {
+        selectedInteriorId = getInteriorTargetRoomId(interiorTarget);
+        selectedAssetId = null;
+        selectedAssetIds.clear();
+        selectedShapeId = null;
+        selectedTokenId = null;
+        if (!isInteriorEdgeLocked(interiorTarget.edge)) openInteriorEdgeMenu(interiorTarget.edge, e.clientX, e.clientY);
+        requestRender();
+        return;
+      }
+      if (interiorTarget?.roomId) {
+        selectedInteriorId = interiorTarget.roomId;
         selectedAssetId = null;
         selectedShapeId = null;
         selectedTokenId = null;
@@ -3017,9 +3063,11 @@
     if (t === "move") {
       const hit = hitTestToken(wpos.x, wpos.y);
       const assetHit = (hit || isAssetInteractionLocked()) ? null : hitTestAsset(wpos.x, wpos.y);
-      const interiorHit = (hit || assetHit) ? null : hitTestInterior(wpos.x, wpos.y);
-      const interiorResize = (hit || assetHit) ? null : hitTestInteriorResize(wpos.x, wpos.y);
-      const shapeHitRaw = (hit || assetHit || interiorHit) ? null : hitTestShape(wpos.x, wpos.y);
+      const interiorTarget = (hit || assetHit) ? null : resolveInteriorPointerTarget(wpos.x, wpos.y);
+      const interiorHit = interiorTarget?.roomId || null;
+      const interiorResize = interiorTarget?.resize || null;
+      const interiorEdge = interiorTarget?.edge || null;
+      const shapeHitRaw = (hit || assetHit || interiorHit || interiorEdge) ? null : hitTestShape(wpos.x, wpos.y);
       let shapeHit = shapeHitRaw;
       if (!hit && !shapeHit && selectedShapeId) {
         const selectedShape = state.shapes.get(selectedShapeId);
@@ -3124,6 +3172,17 @@
           interiorDragOrigin = { ...room };
           updateCanvasCursor();
         }
+      } else if (interiorEdge) {
+        selectedTokenId = null;
+        selectedAssetId = null;
+        selectedAssetIds.clear();
+        selectedShapeId = null;
+        selectedInteriorId = getInteriorTargetRoomId(interiorTarget);
+        draggingInteriorId = null;
+        resizingInterior = null;
+        interiorDragStart = null;
+        interiorDragOrigin = null;
+        updateCanvasCursor();
       } else if (interiorHit) {
         selectedTokenId = null;
         selectedAssetId = null;
@@ -3343,10 +3402,12 @@
       const hoverAsset = hoverToken || isAssetInteractionLocked() ? null : hitTestAsset(wpos.x, wpos.y);
       const hoverShape = (hoverToken || hoverAsset) ? null : hitTestShape(wpos.x, wpos.y);
       if (!hoverToken && !hoverAsset && !hoverShape) {
-        const hoverResize = hitTestInteriorResize(wpos.x, wpos.y);
-        const hoverEdge = hoverResize ? null : hitTestInteriorEdge(wpos.x, wpos.y);
-        const hoverRoomId = hitTestInterior(wpos.x, wpos.y);
-        setInteriorHoverState(hoverRoomId, hoverEdge, hoverResize && canEditInterior(hoverResize.id) ? hoverResize : null);
+        const interiorTarget = resolveInteriorPointerTarget(wpos.x, wpos.y);
+        setInteriorHoverState(
+          interiorTarget?.edge ? null : interiorTarget?.roomId || null,
+          interiorTarget?.edge || null,
+          interiorTarget?.resize && canEditInterior(interiorTarget.resize.id) ? interiorTarget.resize : null,
+        );
       } else if (hoveredInteriorId || hoveredInteriorEdge || hoveredInteriorResize) {
         setInteriorHoverState(null, null, null);
       } else {
