@@ -242,12 +242,22 @@ function connectWS(force = false, options = {}) {
       if (currentInteriorContextId === interiorId) currentInteriorContextId = null;
       if (draggingInteriorId === interiorId) draggingInteriorId = null;
       if (resizingInterior?.id === interiorId) resizingInterior = null;
+      if (activeInteriorWallPunch?.roomId === interiorId) activeInteriorWallPunch = null;
       if (hoveredInteriorId === interiorId) hoveredInteriorId = null;
       if (hoveredInteriorResize?.id === interiorId) hoveredInteriorResize = null;
+      if (hoveredInteriorWall?.roomId === interiorId) hoveredInteriorWall = null;
       for (const [edgeId, edge] of state.interior_edges.entries()) {
         if (edge.room_a_id === interiorId || edge.room_b_id === interiorId) state.interior_edges.delete(edgeId);
       }
+      for (const [cutId, cut] of state.interior_wall_cuts.entries()) {
+        if (cut.room_id === interiorId) state.interior_wall_cuts.delete(cutId);
+      }
       if (hoveredInteriorEdge && (hoveredInteriorEdge.room_a_id === interiorId || hoveredInteriorEdge.room_b_id === interiorId)) hoveredInteriorEdge = null;
+      if (hoveredInteriorWallCut && hoveredInteriorWallCut.roomId === interiorId) hoveredInteriorWallCut = null;
+      if (currentInteriorWallCutId) {
+        const currentCut = state.interior_wall_cuts.get(currentInteriorWallCutId);
+        if (!currentCut) currentInteriorWallCutId = null;
+      }
       markInteriorsDirty();
       updateCanvasCursor();
       requestRender();
@@ -270,6 +280,27 @@ function connectWS(force = false, options = {}) {
     if (ev.type === "INTERIOR_EDGE_SET") {
       applyInteriorEdgeOverrideToState(ev.payload);
       markInteriorsDirty();
+      requestRender();
+      return;
+    }
+
+    if (ev.type === "INTERIOR_WALL_CUT_ADD") {
+      const p = ev.payload;
+      if (p?.id) {
+        state.interior_wall_cuts.set(p.id, normalizeInteriorWallCutRecord(p));
+        markInteriorsDirty();
+      }
+      requestRender();
+      return;
+    }
+
+    if (ev.type === "INTERIOR_WALL_CUT_REMOVE") {
+      const cutId = String(ev.payload?.id || "");
+      state.interior_wall_cuts.delete(cutId);
+      if (currentInteriorWallCutId === cutId) currentInteriorWallCutId = null;
+      if (hoveredInteriorWallCut?.id === cutId) hoveredInteriorWallCut = null;
+      markInteriorsDirty();
+      updateCanvasCursor();
       requestRender();
       return;
     }

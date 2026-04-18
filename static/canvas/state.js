@@ -50,6 +50,8 @@ const STATE_CHANGE_EVENTS = new Set([
   "INTERIOR_DELETE",
   "INTERIOR_SET_LOCK",
   "INTERIOR_EDGE_SET",
+  "INTERIOR_WALL_CUT_ADD",
+  "INTERIOR_WALL_CUT_REMOVE",
 ]);
 const WATCHDOG_MUTATION_EVENTS = new Set([
   "ROOM_SETTINGS",
@@ -77,6 +79,8 @@ const WATCHDOG_MUTATION_EVENTS = new Set([
   "INTERIOR_DELETE",
   "INTERIOR_SET_LOCK",
   "INTERIOR_EDGE_SET",
+  "INTERIOR_WALL_CUT_ADD",
+  "INTERIOR_WALL_CUT_REMOVE",
 ]);
 
 const state = {
@@ -101,6 +105,7 @@ const state = {
   assets: new Map(),
   interiors: new Map(),
   interior_edges: new Map(),
+  interior_wall_cuts: new Map(),
   terrain_paint: {
     materials: {
       mud:       { id: "mud",       label: "Mud",       style: "dirt",      seedOfs: 101, mode: "mud",        scale: 1.0, zOrder: 0 },
@@ -147,6 +152,7 @@ let selectedShapeId = null;
 let selectedInteriorId = null;
 let currentInteriorContextId = null;
 let currentInteriorEdge = null;
+let currentInteriorWallCutId = null;
 const selectedAssetIds = new Set();
 let draggingAssetIds = [];
 let dragStartAssetPositions = new Map();
@@ -172,10 +178,13 @@ let activeStroke = null;
 let activeShapePreview = null;
 let activeInteriorPreview = null;
 let activeInteriorAssist = null;
+let activeInteriorWallPunch = null;
 let activeRuler = null;
 let hoveredInteriorId = null;
 let hoveredInteriorEdge = null;
 let hoveredInteriorResize = null;
+let hoveredInteriorWall = null;
+let hoveredInteriorWallCut = null;
 let erasingActive = false;
 let lastEraseWorld = null;
 
@@ -200,6 +209,8 @@ let tooltipTimer = null;
 let lastPartialRejectLogAt = 0;
 let moveSeqCounter = 0;
 let activeDragMoveSeq = null;
+let lastInteriorOverlapHintKey = "";
+let lastInteriorOverlapHintAt = 0;
 
 function getLocalMoveClientId() {
   const key = "warhamster:v1:move_client_id";
@@ -255,6 +266,8 @@ const OFFLINE_MUTATION_TYPES = new Set([
   "INTERIOR_DELETE",
   "INTERIOR_SET_LOCK",
   "INTERIOR_EDGE_SET",
+  "INTERIOR_WALL_CUT_ADD",
+  "INTERIOR_WALL_CUT_REMOVE",
   "TERRAIN_STROKE_ADD",
   "TERRAIN_STROKE_UNDO",
   "FOG_STROKE_ADD",

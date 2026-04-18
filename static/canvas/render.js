@@ -314,7 +314,10 @@ function drawInteriors() {
   drawInteriorLabels(resolved.rooms);
   drawInteriorOverlapWarnings(resolved.relationships);
   drawInteriorWalls(resolved.visibleWalls);
+  drawInteriorWallCuts(resolved.wallCuts || []);
+  drawInteriorWallPunchPreview();
   drawInteriorSelections(resolved);
+  drawInteriorLockedBadges(resolved.rooms);
   drawInteriorDebugOverlay(resolved);
 }
 
@@ -356,13 +359,43 @@ function drawInteriorLabels(rooms) {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.lineJoin = "round";
-    ctx.strokeStyle = "rgba(248, 239, 224, 0.5)";
-    ctx.lineWidth = 3;
+    const displayLabel = fitInteriorLabelText(label, maxWidth);
+    if (!displayLabel) {
+      ctx.restore();
+      continue;
+    }
+    ctx.strokeStyle = "rgba(248, 239, 224, 0.58)";
+    ctx.lineWidth = Math.max(2, fontPx * 0.18);
     ctx.fillStyle = "rgba(36, 22, 12, 0.92)";
-    ctx.strokeText(label, p.x, p.y, maxWidth);
-    ctx.fillText(label, p.x, p.y, maxWidth);
+    ctx.shadowColor = "rgba(255, 248, 232, 0.12)";
+    ctx.shadowBlur = Math.max(0, fontPx * 0.12);
+    ctx.strokeText(displayLabel, p.x, p.y, maxWidth);
+    ctx.shadowBlur = 0;
+    ctx.fillText(displayLabel, p.x, p.y, maxWidth);
     ctx.restore();
   }
+}
+
+function fitInteriorLabelText(label, maxWidth) {
+  const text = String(label || "").trim();
+  if (!text || maxWidth <= 12) return "";
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  const ellipsis = "...";
+  if (ctx.measureText(ellipsis).width > maxWidth) return "";
+  let low = 0;
+  let high = text.length;
+  let best = "";
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = `${text.slice(0, mid).trimEnd()}${ellipsis}`;
+    if (ctx.measureText(candidate).width <= maxWidth) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return best;
 }
 
 function drawInteriorWalls(visibleWalls) {
@@ -388,6 +421,73 @@ function drawInteriorWalls(visibleWalls) {
   ctx.restore();
 }
 
+function drawInteriorWallCuts(cuts) {
+  for (const cut of cuts) {
+    if (!cut || cut.kind !== "door") continue;
+    const mid = (cut.start + cut.end) * 0.5;
+    const size = Math.max(8, ui.gridSize * cam.z * 0.22);
+    ctx.save();
+    ctx.strokeStyle = hoveredInteriorWallCut?.id === cut.id ? "rgba(120, 230, 255, 0.95)" : "rgba(70, 45, 24, 0.78)";
+    ctx.lineWidth = Math.max(1.5, cam.z * 1.8);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    if (cut.orientation === "h") {
+      const a = worldToScreen(mid, cut.line);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(a.x, a.y + size);
+    } else {
+      const a = worldToScreen(cut.line, mid);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(a.x - size, a.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (hoveredInteriorWallCut) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(120, 230, 255, 0.95)";
+    ctx.lineWidth = Math.max(3, cam.z * 2.8);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    if (hoveredInteriorWallCut.orientation === "h") {
+      const a = worldToScreen(hoveredInteriorWallCut.start, hoveredInteriorWallCut.line);
+      const b = worldToScreen(hoveredInteriorWallCut.end, hoveredInteriorWallCut.line);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    } else {
+      const a = worldToScreen(hoveredInteriorWallCut.line, hoveredInteriorWallCut.start);
+      const b = worldToScreen(hoveredInteriorWallCut.line, hoveredInteriorWallCut.end);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawInteriorWallPunchPreview() {
+  if (!activeInteriorWallPunch?.segment) return;
+  const segment = activeInteriorWallPunch.segment;
+  ctx.save();
+  ctx.strokeStyle = activeInteriorWallPunch.kind === "open" ? "rgba(185, 255, 205, 0.96)" : "rgba(255, 211, 102, 0.98)";
+  ctx.lineWidth = Math.max(3, cam.z * 3);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  if (segment.orientation === "h") {
+    const a = worldToScreen(segment.start, segment.line);
+    const b = worldToScreen(segment.end, segment.line);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+  } else {
+    const a = worldToScreen(segment.line, segment.start);
+    const b = worldToScreen(segment.line, segment.end);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawInteriorOverlapWarnings(relationships) {
   const overlaps = relationships.filter((relationship) => relationship.type === "overlap" && relationship.overlap_rect);
   if (!overlaps.length) return;
@@ -408,13 +508,35 @@ function drawInteriorOverlapWarnings(relationships) {
 }
 
 function drawInteriorSelections(resolved) {
+  if (hoveredInteriorWall) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(120, 230, 255, 0.88)";
+    ctx.lineWidth = Math.max(2.5, cam.z * 2.7);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    if (hoveredInteriorWall.orientation === "h") {
+      const a = worldToScreen(hoveredInteriorWall.start, hoveredInteriorWall.line);
+      const b = worldToScreen(hoveredInteriorWall.end, hoveredInteriorWall.line);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    } else {
+      const a = worldToScreen(hoveredInteriorWall.line, hoveredInteriorWall.start);
+      const b = worldToScreen(hoveredInteriorWall.line, hoveredInteriorWall.end);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
   if (hoveredInteriorId && hoveredInteriorId !== selectedInteriorId) {
     const room = state.interiors.get(hoveredInteriorId);
     if (room) {
       const topLeft = worldToScreen(room.x, room.y);
       ctx.save();
-      ctx.strokeStyle = "rgba(214, 235, 255, 0.88)";
-      ctx.lineWidth = Math.max(1.5, cam.z * 1.8);
+      ctx.fillStyle = "rgba(214, 235, 255, 0.08)";
+      ctx.fillRect(topLeft.x, topLeft.y, room.w * cam.z, room.h * cam.z);
+      ctx.strokeStyle = "rgba(214, 235, 255, 0.94)";
+      ctx.lineWidth = Math.max(1.75, cam.z * 2.1);
       ctx.strokeRect(topLeft.x, topLeft.y, room.w * cam.z, room.h * cam.z);
       ctx.restore();
     }
@@ -426,6 +548,8 @@ function drawInteriorSelections(resolved) {
       ctx.save();
       ctx.strokeStyle = "#ffd54a";
       ctx.lineWidth = Math.max(2, cam.z * 3);
+      ctx.shadowColor = "rgba(255, 213, 74, 0.35)";
+      ctx.shadowBlur = Math.max(0, cam.z * 2.4);
       ctx.strokeRect(topLeft.x, topLeft.y, room.w * cam.z, room.h * cam.z);
       ctx.restore();
     }
@@ -434,8 +558,8 @@ function drawInteriorSelections(resolved) {
     const room = state.interiors.get(hoveredInteriorResize.id);
     if (room) {
       ctx.save();
-      ctx.strokeStyle = canEditInterior(room) ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.45)";
-      ctx.lineWidth = Math.max(2, cam.z * 2.5);
+      ctx.strokeStyle = canEditInterior(room) ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.5)";
+      ctx.lineWidth = Math.max(2.5, cam.z * 3);
       ctx.lineCap = "round";
       ctx.beginPath();
       if (hoveredInteriorResize.side === "left" || hoveredInteriorResize.side === "right") {
@@ -477,8 +601,8 @@ function drawInteriorSelections(resolved) {
   }
   if (hoveredInteriorEdge?.edge_key) {
     ctx.save();
-    ctx.strokeStyle = "rgba(124, 224, 255, 0.98)";
-    ctx.lineWidth = Math.max(2.5, cam.z * 2.6);
+    ctx.strokeStyle = isInteriorEdgeLocked(hoveredInteriorEdge) ? "rgba(180, 180, 180, 0.95)" : "rgba(124, 224, 255, 0.98)";
+    ctx.lineWidth = Math.max(3, cam.z * 2.9);
     ctx.lineCap = "round";
     ctx.beginPath();
     if (hoveredInteriorEdge.orientation === "h") {
@@ -504,6 +628,31 @@ function drawInteriorSelections(resolved) {
     ctx.lineWidth = Math.max(2, cam.z * 2);
     ctx.fillRect(topLeft.x, topLeft.y, activeInteriorPreview.w * cam.z, activeInteriorPreview.h * cam.z);
     ctx.strokeRect(topLeft.x, topLeft.y, activeInteriorPreview.w * cam.z, activeInteriorPreview.h * cam.z);
+    ctx.restore();
+  }
+}
+
+function drawInteriorLockedBadges(rooms) {
+  for (const room of rooms) {
+    if (!room?.locked) continue;
+    const topLeft = worldToScreen(room.x, room.y);
+    const widthPx = room.w * cam.z;
+    const badgePad = Math.max(4, cam.z * 3);
+    const badgeH = Math.max(14, cam.z * 16);
+    const badgeW = Math.min(Math.max(24, cam.z * 34), Math.max(24, widthPx - badgePad * 2));
+    if (badgeW <= 16) continue;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(32, 23, 16, 0.82)";
+    ctx.strokeStyle = "rgba(255, 230, 170, 0.45)";
+    ctx.lineWidth = 1;
+    ctx.fillRect(topLeft.x + badgePad, topLeft.y + badgePad, badgeW, badgeH);
+    ctx.strokeRect(topLeft.x + badgePad, topLeft.y + badgePad, badgeW, badgeH);
+    ctx.font = `${Math.max(9, Math.min(12, badgeH * 0.62))}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(255, 236, 188, 0.92)";
+    ctx.fillText("LOCKED", topLeft.x + badgePad + badgeW / 2, topLeft.y + badgePad + badgeH / 2 + 0.5, badgeW - 6);
     ctx.restore();
   }
 }

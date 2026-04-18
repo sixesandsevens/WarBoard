@@ -487,12 +487,14 @@ function clearLocalRoomView() {
   state.assets.clear();
   state.interiors.clear();
   state.interior_edges.clear();
+  state.interior_wall_cuts.clear();
   state.draw_order = { strokes: [], shapes: [], assets: [], interiors: [] };
   selectedTokenId = null;
   selectedAssetId = null;
   selectedShapeId = null;
   selectedInteriorId = null;
   currentInteriorContextId = null;
+  currentInteriorWallCutId = null;
   selectedAssetIds.clear();
   setSelection([]);
   hoveredTokenId = null;
@@ -508,8 +510,11 @@ function clearLocalRoomView() {
   interiorDragStart = null;
   interiorDragOrigin = null;
   activeInteriorPreview = null;
+  activeInteriorWallPunch = null;
   hoveredInteriorEdge = null;
   hoveredInteriorResize = null;
+  hoveredInteriorWall = null;
+  hoveredInteriorWallCut = null;
   currentInteriorEdge = null;
   markInteriorsDirty();
   dragSpawn = null;
@@ -828,6 +833,7 @@ function refreshGmUI() {
   if (toolBtnTerrainPaint) toolBtnTerrainPaint.classList.toggle("hidden", !gm);
   if (toolBtnFogPaint) toolBtnFogPaint.classList.toggle("hidden", !gm);
   if (toolBtnInterior) toolBtnInterior.classList.toggle("hidden", !gm);
+  if (toolBtnWallPunch) toolBtnWallPunch.classList.toggle("hidden", !gm);
 
   const arr = Array.from(players).sort();
   playerListEl.innerHTML = arr.map((id) => {

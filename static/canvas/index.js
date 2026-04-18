@@ -211,6 +211,23 @@
     };
   }
 
+  function normalizeInteriorWallCutRecord(record = {}) {
+    const side = ["top", "bottom", "left", "right"].includes(String(record.side || "")) ? String(record.side || "") : "top";
+    const kind = String(record.kind || "") === "open" ? "open" : "door";
+    let tStart = clamp(Number(record.t_start || 0), 0, 1);
+    let tEnd = clamp(Number(record.t_end || 0), 0, 1);
+    if (tEnd < tStart) [tStart, tEnd] = [tEnd, tStart];
+    return {
+      id: String(record.id || ""),
+      room_id: String(record.room_id || ""),
+      side,
+      t_start: tStart,
+      t_end: tEnd,
+      kind,
+      creator_id: record.creator_id || null,
+    };
+  }
+
   function applyInteriorEdgeOverrideToState(record = {}) {
     const edge = normalizeInteriorEdgeRecord(record);
     if (!edge.edge_key) return null;
@@ -229,6 +246,11 @@
     const normalized = { ...edge, id: keepId };
     state.interior_edges.set(keepId, normalized);
     return normalized;
+  }
+
+  function canEditInteriorWallCut(cut) {
+    if (!cut) return false;
+    return canEditInterior(cut.room_id || cut.roomId);
   }
 
   function activateDrawerTab(tab, openDrawer = true) {
@@ -430,6 +452,20 @@
     currentInteriorEdge = edge;
   }
 
+  function openInteriorWallCutMenu(cut, x, y) {
+    if (!interiorWallCutMenu || !cut || !isGM() || !canEditInteriorWallCut(cut)) return;
+    const currentKind = cut.kind === "open" ? "open" : "door";
+    interiorWallCutMenu.querySelectorAll(".ctx-item[data-action]").forEach((item) => {
+      const action = String(item.dataset.action || "");
+      if (action === "interior_wall_cut_remove") return;
+      const kind = action.endsWith("_open") ? "open" : "door";
+      if (!item.dataset.baseLabel) item.dataset.baseLabel = item.textContent.replace(/^✓\s*/, "");
+      item.textContent = `${kind === currentKind ? "✓ " : ""}${item.dataset.baseLabel}`;
+    });
+    showContextMenu(interiorWallCutMenu, x, y);
+    currentInteriorWallCutId = cut.id;
+  }
+
   function getInteriorTargetRoomId(target) {
     if (!target) return null;
     if (target.resize?.id) return target.resize.id;
@@ -454,6 +490,15 @@
   function maybeLogInteriorOverlapHint(wx, wy, interiorTarget = null) {
     if (!interiorTarget?.roomId || interiorTarget.edge) return;
     if (!hitTestInteriorOverlap(wx, wy)) return;
+    const key = [
+      interiorTarget.roomId,
+      Math.round(Number(wx || 0) / Math.max(1, ui.gridSize)),
+      Math.round(Number(wy || 0) / Math.max(1, ui.gridSize)),
+    ].join(":");
+    const now = Date.now();
+    if (key === lastInteriorOverlapHintKey && (now - lastInteriorOverlapHintAt) < 1200) return;
+    lastInteriorOverlapHintKey = key;
+    lastInteriorOverlapHintAt = now;
     log("These rooms overlap but do not share an editable seam.");
   }
 
@@ -469,6 +514,18 @@
     if (lockItem) lockItem.textContent = room.locked ? "Unlock Interior" : "Lock Interior";
     currentInteriorContextId = room.id;
     showContextMenu(interiorCtx, x, y);
+  }
+
+  function setInteriorWallHoverState(nextWall = null, nextCut = null) {
+    const nextWallKey = nextWall ? `${nextWall.roomId}:${nextWall.side}:${nextWall.line}:${nextWall.start}:${nextWall.end}` : "";
+    const currentWallKey = hoveredInteriorWall ? `${hoveredInteriorWall.roomId}:${hoveredInteriorWall.side}:${hoveredInteriorWall.line}:${hoveredInteriorWall.start}:${hoveredInteriorWall.end}` : "";
+    const nextCutId = nextCut?.id || "";
+    const currentCutId = hoveredInteriorWallCut?.id || "";
+    if (nextWallKey === currentWallKey && nextCutId === currentCutId) return;
+    hoveredInteriorWall = nextWall;
+    hoveredInteriorWallCut = nextCut;
+    updateCanvasCursor();
+    requestRender();
   }
 
   function setInteriorHoverState(nextRoomId = null, nextEdge = null, nextResize = null) {
@@ -540,6 +597,7 @@
     for (const m of allCtxMenus) m.classList.add("hidden");
     currentInteriorContextId = null;
     currentInteriorEdge = null;
+    currentInteriorWallCutId = null;
   }
 
   function hideToolPanels() {
@@ -807,19 +865,69 @@
     return !!(room && isGM());
   }
 
+  function nextDuplicatedInteriorLabel(label) {
+    const trimmed = String(label || "").trim();
+    if (!trimmed) return "";
+    const match = trimmed.match(/^(.*?)(?:\s+(\d+))$/);
+    if (match) {
+      const base = String(match[1] || "").trim();
+      const num = Number(match[2] || 0);
+      if (base && Number.isFinite(num)) return `${base} ${num + 1}`;
+    }
+    return `${trimmed} 2`;
+  }
+
+  function rectsOverlap(a, b) {
+    if (!a || !b) return false;
+    return a.x < (b.x + b.w) && (a.x + a.w) > b.x && a.y < (b.y + b.h) && (a.y + a.h) > b.y;
+  }
+
+  function chooseDuplicateInteriorPlacement(room) {
+    const offset = ui.gridSize;
+    const candidates = [
+      { dx: offset, dy: offset },
+      { dx: offset, dy: 0 },
+      { dx: 0, dy: offset },
+      { dx: -offset, dy: 0 },
+      { dx: 0, dy: -offset },
+    ];
+    const baseRect = {
+      x: Number(room.x || 0),
+      y: Number(room.y || 0),
+      w: Number(room.w || ui.gridSize),
+      h: Number(room.h || ui.gridSize),
+    };
+    const others = Array.from(state.interiors.values()).filter((other) => other && other.id !== room.id);
+    for (const candidate of candidates) {
+      const rect = {
+        x: baseRect.x + candidate.dx,
+        y: baseRect.y + candidate.dy,
+        w: baseRect.w,
+        h: baseRect.h,
+      };
+      if (!others.some((other) => rectsOverlap(rect, other))) return rect;
+    }
+    return {
+      x: baseRect.x + offset,
+      y: baseRect.y + offset,
+      w: baseRect.w,
+      h: baseRect.h,
+    };
+  }
+
   function duplicateInteriorRoom(interiorId) {
     const room = state.interiors.get(interiorId || "");
     if (!room || !canDuplicateInterior(room)) return;
 
-    const offset = ui.gridSize;
+    const placement = chooseDuplicateInteriorPlacement(room);
     const duplicate = normalizeInteriorRecord({
       id: makeId(),
-      x: Number(room.x || 0) + offset,
-      y: Number(room.y || 0) + offset,
-      w: room.w,
-      h: room.h,
+      x: placement.x,
+      y: placement.y,
+      w: placement.w,
+      h: placement.h,
       style: room.style,
-      label: room.label,
+      label: nextDuplicatedInteriorLabel(room.label),
       creator_id: myId(),
       locked: false,
     });
@@ -857,6 +965,18 @@
       id: room.id,
       label: "",
     });
+  }
+
+  function currentInteriorWallCut() {
+    if (currentInteriorWallCutId) {
+      const current = state.interior_wall_cuts.get(currentInteriorWallCutId);
+      if (current) return current;
+    }
+    if (hoveredInteriorWallCut?.id) {
+      const hovered = state.interior_wall_cuts.get(hoveredInteriorWallCut.id);
+      if (hovered) return hovered;
+    }
+    return null;
   }
 
   function handleCtxAction(action) {
@@ -1075,6 +1195,22 @@
         if (!room || !isGM()) break;
         send("INTERIOR_DELETE", { id: room.id });
         selectedInteriorId = null;
+        break;
+      }
+      case "interior_wall_cut_door":
+      case "interior_wall_cut_open": {
+        const cut = currentInteriorWallCut();
+        if (!cut || !canEditInteriorWallCut(cut)) break;
+        send("INTERIOR_WALL_CUT_ADD", {
+          ...cut,
+          kind: action.endsWith("_open") ? "open" : "door",
+        });
+        break;
+      }
+      case "interior_wall_cut_remove": {
+        const cut = currentInteriorWallCut();
+        if (!cut || !canEditInteriorWallCut(cut)) break;
+        send("INTERIOR_WALL_CUT_REMOVE", { id: cut.id });
         break;
       }
       case "open_rooms":
@@ -1528,6 +1664,22 @@
       canvas.style.cursor = "grab";
       return;
     }
+    if (t === "wall_punch") {
+      if (activeInteriorWallPunch) {
+        canvas.style.cursor = "crosshair";
+        return;
+      }
+      if (hoveredInteriorWallCut) {
+        canvas.style.cursor = canEditInteriorWallCut(hoveredInteriorWallCut) ? "pointer" : "default";
+        return;
+      }
+      if (hoveredInteriorWall) {
+        canvas.style.cursor = canEditInterior(hoveredInteriorWall.roomId) ? "crosshair" : "default";
+        return;
+      }
+      canvas.style.cursor = isGM() ? "crosshair" : "default";
+      return;
+    }
     if (t === "pen" || t === "rect" || t === "circle" || t === "line" || t === "arrow" || t === "text" || t === "ruler") {
       canvas.style.cursor = "crosshair";
       return;
@@ -1734,13 +1886,17 @@
     activeShapePreview = null;
     activeInteriorPreview = null;
     activeInteriorAssist = null;
+    activeInteriorWallPunch = null;
     interiorDragStart = null;
     interiorDragOrigin = null;
     hoveredInteriorId = null;
     hoveredInteriorEdge = null;
     hoveredInteriorResize = null;
+    hoveredInteriorWall = null;
+    hoveredInteriorWallCut = null;
     currentInteriorContextId = null;
     currentInteriorEdge = null;
+    currentInteriorWallCutId = null;
     activeRuler = null;
     activePaintStroke = null;
     activeFogStroke = null;
@@ -1778,6 +1934,8 @@
     for (const [id, room] of Object.entries(s.interiors || {})) state.interiors.set(id, normalizeInteriorRecord(room));
     state.interior_edges.clear();
     for (const [id, edge] of Object.entries(s.interior_edges || {})) applyInteriorEdgeOverrideToState({ id, ...edge });
+    state.interior_wall_cuts.clear();
+    for (const [id, cut] of Object.entries(s.interior_wall_cuts || {})) state.interior_wall_cuts.set(id, normalizeInteriorWallCutRecord({ id, ...cut }));
     state.draw_order = {
       strokes: Array.isArray(s.draw_order?.strokes) ? s.draw_order.strokes.filter((id) => state.strokes.has(id)) : [],
       shapes: Array.isArray(s.draw_order?.shapes) ? s.draw_order.shapes.filter((id) => state.shapes.has(id)) : [],
@@ -1842,6 +2000,7 @@
       assets: toPlainObjectMap(state.assets),
       interiors: toPlainObjectMap(state.interiors),
       interior_edges: toPlainObjectMap(state.interior_edges),
+      interior_wall_cuts: toPlainObjectMap(state.interior_wall_cuts),
       draw_order: {
         strokes: [...(state.draw_order?.strokes || [])],
         shapes: [...(state.draw_order?.shapes || [])],
@@ -2020,12 +2179,22 @@
       if (draggingInteriorId === id) draggingInteriorId = null;
       if (resizingInterior?.id === id) resizingInterior = null;
       if (activeInteriorAssist?.targetRoomId === id) activeInteriorAssist = null;
+      if (activeInteriorWallPunch?.roomId === id) activeInteriorWallPunch = null;
       if (hoveredInteriorId === id) hoveredInteriorId = null;
       if (hoveredInteriorResize?.id === id) hoveredInteriorResize = null;
+      if (hoveredInteriorWall?.roomId === id) hoveredInteriorWall = null;
       for (const [edgeId, edge] of state.interior_edges.entries()) {
         if (edge.room_a_id === id || edge.room_b_id === id) state.interior_edges.delete(edgeId);
       }
+      for (const [cutId, cut] of state.interior_wall_cuts.entries()) {
+        if (cut.room_id === id) state.interior_wall_cuts.delete(cutId);
+      }
       if (hoveredInteriorEdge && (hoveredInteriorEdge.room_a_id === id || hoveredInteriorEdge.room_b_id === id)) hoveredInteriorEdge = null;
+      if (hoveredInteriorWallCut && hoveredInteriorWallCut.roomId === id) hoveredInteriorWallCut = null;
+      if (currentInteriorWallCutId) {
+        const currentCut = state.interior_wall_cuts.get(currentInteriorWallCutId);
+        if (!currentCut) currentInteriorWallCutId = null;
+      }
       markInteriorsDirty();
       updateCanvasCursor();
       requestRender();
@@ -2050,6 +2219,29 @@
     if (type === "INTERIOR_EDGE_SET") {
       applyInteriorEdgeOverrideToState(payload);
       markInteriorsDirty();
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "INTERIOR_WALL_CUT_ADD") {
+      const cut = normalizeInteriorWallCutRecord(payload);
+      if (cut.id) {
+        state.interior_wall_cuts.set(cut.id, cut);
+        markInteriorsDirty();
+      }
+      requestRender();
+      scheduleOfflineSave();
+      return;
+    }
+
+    if (type === "INTERIOR_WALL_CUT_REMOVE") {
+      const cutId = String(payload?.id || "");
+      state.interior_wall_cuts.delete(cutId);
+      if (currentInteriorWallCutId === cutId) currentInteriorWallCutId = null;
+      if (hoveredInteriorWallCut?.id === cutId) hoveredInteriorWallCut = null;
+      markInteriorsDirty();
+      updateCanvasCursor();
       requestRender();
       scheduleOfflineSave();
       return;
@@ -2459,7 +2651,7 @@
     log(`UI INIT ERROR: ${e?.message || e}`);
     toast(`UI init error: ${e?.message || e}`);
   }
-  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnInterior, toolBtnTerrainPaint, toolBtnFogPaint].forEach((btn) => {
+  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnInterior, toolBtnWallPunch, toolBtnTerrainPaint, toolBtnFogPaint].forEach((btn) => {
     if (!btn) return;
     btn.onclick = () => setTool(btn.dataset.tool);
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
@@ -2750,6 +2942,7 @@
     toolBtnErase.classList.toggle("active", t === "eraser");
     toolBtnRuler.classList.toggle("active", t === "ruler");
     if (toolBtnInterior) toolBtnInterior.classList.toggle("active", t === "interior");
+    if (toolBtnWallPunch) toolBtnWallPunch.classList.toggle("active", t === "wall_punch");
     if (toolBtnTerrainPaint) toolBtnTerrainPaint.classList.toggle("active", t === "terrain_paint");
     if (toolBtnFogPaint) toolBtnFogPaint.classList.toggle("active", t === "fog_paint");
     if (selectModeLabelEl) selectModeLabelEl.classList.toggle("hidden", t !== "move");
@@ -2776,7 +2969,7 @@
   // positionTerrainPaintPanel → static/canvas/terrain.js
   // positionFogPaintPanel → static/canvas/fog.js
   function setTool(next) {
-    if ((next === "terrain_paint" || next === "fog_paint" || next === "interior") && !isGM()) return;
+    if ((next === "terrain_paint" || next === "fog_paint" || next === "interior" || next === "wall_punch") && !isGM()) return;
     const prev = tool();
     if (prev === "terrain_paint" && next !== "terrain_paint" && activePaintStroke && isGM()) {
       commitActiveTerrainStroke();
@@ -2807,6 +3000,7 @@
       else if (current === "eraser") flashToolActivate(toolBtnErase);
       else if (current === "ruler") flashToolActivate(toolBtnRuler);
       else if (current === "interior" && toolBtnInterior) flashToolActivate(toolBtnInterior);
+      else if (current === "wall_punch" && toolBtnWallPunch) flashToolActivate(toolBtnWallPunch);
       else if (current === "terrain_paint" && toolBtnTerrainPaint) flashToolActivate(toolBtnTerrainPaint);
       else if (current === "fog_paint" && toolBtnFogPaint) flashToolActivate(toolBtnFogPaint);
     }
@@ -2867,10 +3061,11 @@
       requestRender();
       return;
     }
-    if (e.key === "Escape" && (draggingInteriorId || resizingInterior || activeInteriorPreview)) {
+    if (e.key === "Escape" && (draggingInteriorId || resizingInterior || activeInteriorPreview || activeInteriorWallPunch)) {
       draggingInteriorId = null;
       resizingInterior = null;
       activeInteriorPreview = null;
+      activeInteriorWallPunch = null;
       activeInteriorAssist = null;
       interiorDragStart = null;
       interiorDragOrigin = null;
@@ -3014,7 +3209,8 @@
       return;
     }
     const assetHit = isAssetInteractionLocked() ? null : hitTestAsset(wpos.x, wpos.y);
-    const interiorTarget = (!hit && !assetHit) ? resolveInteriorPointerTarget(wpos.x, wpos.y) : null;
+    const wallCutHit = (!hit && !assetHit) ? hitTestInteriorWallCut(wpos.x, wpos.y) : null;
+    const interiorTarget = (!hit && !assetHit && !wallCutHit) ? resolveInteriorPointerTarget(wpos.x, wpos.y) : null;
     if (assetHit) {
       selectedAssetId = assetHit;
       selectedShapeId = null;
@@ -3028,6 +3224,17 @@
         syncAssetCtxSliders();
         showContextMenu(assetCtx, e.clientX, e.clientY);
       }
+      requestRender();
+      return;
+    }
+    if (wallCutHit && isGM()) {
+      selectedInteriorId = wallCutHit.roomId;
+      selectedAssetId = null;
+      selectedAssetIds.clear();
+      selectedShapeId = null;
+      selectedTokenId = null;
+      closeTokenMenu();
+      if (canEditInterior(wallCutHit.roomId)) openInteriorWallCutMenu(wallCutHit, e.clientX, e.clientY);
       requestRender();
       return;
     }
@@ -3101,7 +3308,8 @@
         return;
       }
       const assetHit = (hit || isAssetInteractionLocked()) ? null : hitTestAsset(wpos.x, wpos.y);
-      const interiorTarget = (hit || assetHit) ? null : resolveInteriorPointerTarget(wpos.x, wpos.y);
+      const wallCutHit = (hit || assetHit) ? null : hitTestInteriorWallCut(wpos.x, wpos.y);
+      const interiorTarget = (hit || assetHit || wallCutHit) ? null : resolveInteriorPointerTarget(wpos.x, wpos.y);
       if (assetHit) {
         // If right-clicking an asset not in the current selection, replace selection with just this one.
         if (!selectedAssetIds.has(assetHit)) {
@@ -3119,6 +3327,16 @@
           syncAssetCtxSliders();
           showContextMenu(assetCtx, e.clientX, e.clientY);
         }
+        requestRender();
+        return;
+      }
+      if (wallCutHit && isGM()) {
+        selectedInteriorId = wallCutHit.roomId;
+        selectedAssetId = null;
+        selectedAssetIds.clear();
+        selectedShapeId = null;
+        selectedTokenId = null;
+        if (canEditInterior(wallCutHit.roomId)) openInteriorWallCutMenu(wallCutHit, e.clientX, e.clientY);
         requestRender();
         return;
       }
@@ -3356,6 +3574,40 @@
       return;
     }
 
+    if (t === "wall_punch" && isGM()) {
+      const wall = hitTestInteriorWall(wpos.x, wpos.y);
+      if (wall && canEditInterior(wall.roomId)) {
+        const room = state.interiors.get(wall.roomId);
+        const tAnchor = interiorWallPointToT(wall, wpos.x, wpos.y);
+        const span = normalizedInteriorWallCutSpan(wall, tAnchor, tAnchor);
+        if (room && span) {
+          activeInteriorWallPunch = {
+            roomId: wall.roomId,
+            side: wall.side,
+            kind: "door",
+            anchorT: tAnchor,
+            currentT: tAnchor,
+            t_start: span.t_start,
+            t_end: span.t_end,
+            segment: {
+              roomId: wall.roomId,
+              side: wall.side,
+              orientation: wall.orientation,
+              line: wall.line,
+              ...interiorWallRangeToWorld(wall, span.t_start, span.t_end),
+            },
+          };
+          selectedInteriorId = wall.roomId;
+          selectedTokenId = null;
+          selectedAssetId = null;
+          selectedAssetIds.clear();
+          selectedShapeId = null;
+          requestRender();
+        }
+      }
+      return;
+    }
+
     if (t === "pen") {
       activeStroke = {
         id: makeId(),
@@ -3519,8 +3771,37 @@
       } else {
         updateCanvasCursor();
       }
+      setInteriorWallHoverState(null, null);
+    } else if (t === "wall_punch") {
+      const cutHit = hitTestInteriorWallCut(wpos.x, wpos.y);
+      if (activeInteriorWallPunch?.roomId) {
+        const room = state.interiors.get(activeInteriorWallPunch.roomId);
+        const edge = room ? getRoomSideEdge(room, activeInteriorWallPunch.side) : null;
+        const nextT = edge ? interiorWallPointToT(edge, wpos.x, wpos.y) : activeInteriorWallPunch.currentT;
+        const span = normalizedInteriorWallCutSpan(edge, activeInteriorWallPunch.anchorT, nextT);
+        if (edge && span) {
+          activeInteriorWallPunch.currentT = nextT;
+          activeInteriorWallPunch.t_start = span.t_start;
+          activeInteriorWallPunch.t_end = span.t_end;
+          activeInteriorWallPunch.segment = {
+            roomId: activeInteriorWallPunch.roomId,
+            side: activeInteriorWallPunch.side,
+            orientation: edge.orientation,
+            line: edge.line,
+            ...interiorWallRangeToWorld(edge, span.t_start, span.t_end),
+          };
+          requestRender();
+        }
+      } else {
+        const wallHit = cutHit ? null : hitTestInteriorWall(wpos.x, wpos.y);
+        setInteriorWallHoverState(wallHit, cutHit);
+      }
+      if (hoveredInteriorId || hoveredInteriorEdge || hoveredInteriorResize) setInteriorHoverState(null, null, null);
     } else if (hoveredInteriorId || hoveredInteriorEdge || hoveredInteriorResize) {
       setInteriorHoverState(null, null, null);
+      setInteriorWallHoverState(null, null);
+    } else if (hoveredInteriorWall || hoveredInteriorWallCut) {
+      setInteriorWallHoverState(null, null);
     } else {
       updateCanvasCursor();
     }
@@ -3780,6 +4061,11 @@
       hoveredInteriorResize = null;
       requestRender();
     }
+    if (hoveredInteriorWall || hoveredInteriorWallCut) {
+      hoveredInteriorWall = null;
+      hoveredInteriorWallCut = null;
+      requestRender();
+    }
     if (activeInteriorAssist) {
       activeInteriorAssist = null;
       requestRender();
@@ -3864,6 +4150,7 @@
     const movedShapeId = draggingShapeId;
     const movedInteriorId = draggingInteriorId;
     const movedInteriorResize = resizingInterior ? { ...resizingInterior } : null;
+    const finishedWallPunch = activeInteriorWallPunch ? { ...activeInteriorWallPunch } : null;
     const finalInteriorPointer = (() => {
       if (!movedInteriorId) return null;
       const rect = canvas.getBoundingClientRect();
@@ -3895,6 +4182,7 @@
     interiorDragStart = null;
     interiorDragOrigin = null;
     activeInteriorAssist = null;
+    activeInteriorWallPunch = null;
 
     if (t === "move" && hadMarquee && finalMarqueeRect) {
       const hitIds = [];
@@ -3987,6 +4275,21 @@
           payload.h = room.h;
         }
         send("INTERIOR_UPDATE", payload);
+      }
+    }
+    if (t === "wall_punch" && finishedWallPunch?.segment) {
+      const room = state.interiors.get(finishedWallPunch.roomId);
+      const edge = room ? getRoomSideEdge(room, finishedWallPunch.side) : null;
+      const span = edge ? normalizedInteriorWallCutSpan(edge, finishedWallPunch.t_start, finishedWallPunch.t_end) : null;
+      if (room && span && canEditInterior(room)) {
+        send("INTERIOR_WALL_CUT_ADD", {
+          id: makeId(),
+          room_id: room.id,
+          side: finishedWallPunch.side,
+          t_start: span.t_start,
+          t_end: span.t_end,
+          kind: finishedWallPunch.kind || "door",
+        });
       }
     }
     activeDragMoveSeq = null;

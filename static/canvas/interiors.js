@@ -23,6 +23,11 @@ function roomEdges(room) {
   ];
 }
 
+function getRoomSideEdge(room, side) {
+  if (!room) return null;
+  return roomEdges(room).find((edge) => edge.side === side) || null;
+}
+
 function candidateRectEdges(rect) {
   return [
     { side: "top", orientation: "h", line: rect.y, start: rect.x, end: rect.x + rect.w },
@@ -219,6 +224,131 @@ function hitTestInteriorEdge(wx, wy, tolerance = 10 / cam.z) {
   return best ? best.edge : null;
 }
 
+function interiorWallRangeToWorld(edge, tStart, tEnd) {
+  if (!edge) return null;
+  const length = edge.end - edge.start;
+  if (!(length > 0)) return null;
+  const startT = clamp(Math.min(tStart, tEnd), 0, 1);
+  const endT = clamp(Math.max(tStart, tEnd), 0, 1);
+  const start = edge.start + (length * startT);
+  const end = edge.start + (length * endT);
+  return end > start ? { start, end } : null;
+}
+
+function interiorWallPointToT(edge, wx, wy) {
+  if (!edge) return 0;
+  const length = edge.end - edge.start;
+  if (!(length > 0)) return 0;
+  const along = edge.orientation === "h" ? wx : wy;
+  return clamp((along - edge.start) / length, 0, 1);
+}
+
+function snapInteriorWallT(edge, t) {
+  if (!edge) return clamp(Number(t || 0), 0, 1);
+  const length = Math.max(1, edge.end - edge.start);
+  const step = clamp(ui.gridSize / length, 0.05, 1);
+  return clamp(Math.round(clamp(Number(t || 0), 0, 1) / step) * step, 0, 1);
+}
+
+function normalizedInteriorWallCutSpan(edge, a, b) {
+  if (!edge) return null;
+  const startT = snapInteriorWallT(edge, a);
+  const endT = snapInteriorWallT(edge, b);
+  let tStart = Math.min(startT, endT);
+  let tEnd = Math.max(startT, endT);
+  const minSpan = clamp(ui.gridSize / Math.max(1, edge.end - edge.start), 0.05, 1);
+  if ((tEnd - tStart) < minSpan) {
+    const center = clamp((tStart + tEnd) * 0.5, 0, 1);
+    tStart = clamp(center - (minSpan * 0.5), 0, 1);
+    tEnd = clamp(tStart + minSpan, 0, 1);
+    if (tEnd > 1) {
+      tEnd = 1;
+      tStart = clamp(1 - minSpan, 0, 1);
+    }
+  }
+  return tEnd > tStart ? { t_start: tStart, t_end: tEnd } : null;
+}
+
+function hitTestInteriorWall(wx, wy, tolerance = 10 / cam.z) {
+  const resolved = getResolvedInteriors();
+  let best = null;
+  for (const wall of resolved.punchableWalls || []) {
+    let within = false;
+    let distance = Infinity;
+    if (wall.orientation === "h") {
+      if (wx >= wall.start && wx <= wall.end) {
+        distance = Math.abs(wy - wall.line);
+        within = distance <= tolerance;
+      } else if (wx >= wall.start - tolerance && wx <= wall.end + tolerance) {
+        const dx = wx < wall.start ? wall.start - wx : wx - wall.end;
+        const dy = Math.abs(wy - wall.line);
+        distance = Math.hypot(dx, dy);
+        within = distance <= tolerance;
+      }
+    } else if (wy >= wall.start && wy <= wall.end) {
+      distance = Math.abs(wx - wall.line);
+      within = distance <= tolerance;
+    } else if (wy >= wall.start - tolerance && wy <= wall.end + tolerance) {
+      const dy = wy < wall.start ? wall.start - wy : wy - wall.end;
+      const dx = Math.abs(wx - wall.line);
+      distance = Math.hypot(dx, dy);
+      within = distance <= tolerance;
+    }
+    if (!within) continue;
+    const relatedToSelection = selectedInteriorId && wall.roomId === selectedInteriorId ? 0 : 1;
+    const length = wall.end - wall.start;
+    if (
+      !best ||
+      distance < best.distance ||
+      (distance === best.distance && relatedToSelection < best.relatedToSelection) ||
+      (distance === best.distance && relatedToSelection === best.relatedToSelection && length < best.length)
+    ) {
+      best = { wall, distance, relatedToSelection, length };
+    }
+  }
+  return best ? best.wall : null;
+}
+
+function hitTestInteriorWallCut(wx, wy, tolerance = 12 / cam.z) {
+  const resolved = getResolvedInteriors();
+  let best = null;
+  for (const cut of resolved.wallCuts || []) {
+    let within = false;
+    let distance = Infinity;
+    if (cut.orientation === "h") {
+      if (wx >= cut.start && wx <= cut.end) {
+        distance = Math.abs(wy - cut.line);
+        within = distance <= tolerance;
+      } else if (wx >= cut.start - tolerance && wx <= cut.end + tolerance) {
+        const dx = wx < cut.start ? cut.start - wx : wx - cut.end;
+        const dy = Math.abs(wy - cut.line);
+        distance = Math.hypot(dx, dy);
+        within = distance <= tolerance;
+      }
+    } else if (wy >= cut.start && wy <= cut.end) {
+      distance = Math.abs(wx - cut.line);
+      within = distance <= tolerance;
+    } else if (wy >= cut.start - tolerance && wy <= cut.end + tolerance) {
+      const dy = wy < cut.start ? cut.start - wy : wy - cut.end;
+      const dx = Math.abs(wx - cut.line);
+      distance = Math.hypot(dx, dy);
+      within = distance <= tolerance;
+    }
+    if (!within) continue;
+    const relatedToSelection = selectedInteriorId && cut.roomId === selectedInteriorId ? 0 : 1;
+    const length = cut.end - cut.start;
+    if (
+      !best ||
+      distance < best.distance ||
+      (distance === best.distance && relatedToSelection < best.relatedToSelection) ||
+      (distance === best.distance && relatedToSelection === best.relatedToSelection && length < best.length)
+    ) {
+      best = { cut, distance, relatedToSelection, length };
+    }
+  }
+  return best ? best.cut : null;
+}
+
 function hitTestInteriorResize(wx, wy, tolerance = 6 / cam.z) {
   const order = state.draw_order?.interiors || [];
   for (let i = order.length - 1; i >= 0; i -= 1) {
@@ -395,9 +525,35 @@ function resolveInteriorGeometry() {
   const sharedEdges = [];
   const edgeModeByKey = new Map();
   const relationships = [];
+  const punchableWalls = [];
+  const wallCuts = [];
+  const cutsByRoomSide = new Map();
 
   for (const edge of state.interior_edges.values()) {
     if (edge && edge.edge_key) edgeModeByKey.set(edge.edge_key, edge.mode || "auto");
+  }
+  for (const cut of state.interior_wall_cuts.values()) {
+    const room = state.interiors.get(cut?.room_id || "");
+    if (!room) continue;
+    const side = String(cut.side || "");
+    if (!["top", "bottom", "left", "right"].includes(side)) continue;
+    const edge = getRoomSideEdge(room, side);
+    const span = interiorWallRangeToWorld(edge, Number(cut.t_start || 0), Number(cut.t_end || 0));
+    if (!edge || !span) continue;
+    const key = `${cut.room_id}:${side}:${edge.line}`;
+    if (!cutsByRoomSide.has(key)) cutsByRoomSide.set(key, []);
+    cutsByRoomSide.get(key).push({
+      id: String(cut.id || ""),
+      roomId: String(cut.room_id || ""),
+      side,
+      kind: cut.kind === "open" ? "open" : "door",
+      t_start: clamp(Math.min(Number(cut.t_start || 0), Number(cut.t_end || 0)), 0, 1),
+      t_end: clamp(Math.max(Number(cut.t_start || 0), Number(cut.t_end || 0)), 0, 1),
+      start: span.start,
+      end: span.end,
+      orientation: edge.orientation,
+      line: edge.line,
+    });
   }
 
   for (let i = 0; i < rooms.length; i += 1) {
@@ -466,16 +622,47 @@ function resolveInteriorGeometry() {
     for (const edge of roomEdges(room)) {
       const edgeKey = `${edge.roomId}:${edge.side}:${edge.line}`;
       const sharedRanges = sharedByRoomEdge.get(edgeKey) || [];
-      const visibleSegments = subtractSharedSegments(edge.start, edge.end, sharedRanges);
-      for (const segment of visibleSegments) {
-        visibleWalls.push({
+      const baseSegments = subtractSharedSegments(edge.start, edge.end, sharedRanges);
+      const edgeCuts = (cutsByRoomSide.get(edgeKey) || []).filter((cut) => cut.end > cut.start);
+      for (const baseSegment of baseSegments) {
+        punchableWalls.push({
           roomId: edge.roomId,
+          side: edge.side,
           orientation: edge.orientation,
           line: edge.line,
-          start: segment.start,
-          end: segment.end,
-          mode: "wall",
+          start: baseSegment.start,
+          end: baseSegment.end,
         });
+        const activeCutRanges = [];
+        for (const cut of edgeCuts) {
+          const overlap = overlapRange(baseSegment.start, baseSegment.end, cut.start, cut.end);
+          if (!overlap) continue;
+          activeCutRanges.push({ start: overlap.start, end: overlap.end });
+          wallCuts.push({
+            id: cut.id,
+            roomId: cut.roomId,
+            side: cut.side,
+            kind: cut.kind,
+            orientation: edge.orientation,
+            line: edge.line,
+            start: overlap.start,
+            end: overlap.end,
+            t_start: cut.t_start,
+            t_end: cut.t_end,
+          });
+        }
+        const visibleSegments = subtractSharedSegments(baseSegment.start, baseSegment.end, activeCutRanges);
+        for (const segment of visibleSegments) {
+          visibleWalls.push({
+            roomId: edge.roomId,
+            side: edge.side,
+            orientation: edge.orientation,
+            line: edge.line,
+            start: segment.start,
+            end: segment.end,
+            mode: "wall",
+          });
+        }
       }
     }
   }
@@ -499,5 +686,13 @@ function resolveInteriorGeometry() {
     }
   }
 
-  return { rooms, visibleWalls: Array.from(dedupedWalls.values()), sharedEdges, doors, relationships };
+  return {
+    rooms,
+    visibleWalls: Array.from(dedupedWalls.values()),
+    sharedEdges,
+    doors,
+    relationships,
+    punchableWalls,
+    wallCuts,
+  };
 }

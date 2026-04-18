@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Optional
 
-from ..models import InteriorEdgeOverride, InteriorRoom, WireEvent
+from ..models import InteriorEdgeOverride, InteriorRoom, InteriorWallCut, WireEvent
 
 if TYPE_CHECKING:
     from ..rooms import Room, RoomManager
@@ -27,6 +27,23 @@ def _edge_key_matches_rooms(edge_key: str, room_a_id: str, room_b_id: Optional[s
     except (TypeError, ValueError):
         return False
     return bool(math.isfinite(line_value) and math.isfinite(start_value) and math.isfinite(end_value) and start_value < end_value)
+
+
+def _normalize_cut_span(raw_start: object, raw_end: object) -> Optional[tuple[float, float]]:
+    try:
+        start = float(raw_start)
+        end = float(raw_end)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(start) and math.isfinite(end)):
+        return None
+    start = max(0.0, min(1.0, start))
+    end = max(0.0, min(1.0, end))
+    if end < start:
+        start, end = end, start
+    if end - start <= 0.0001:
+        return None
+    return (start, end)
 
 
 def apply_interior_event(
@@ -116,6 +133,13 @@ def apply_interior_event(
         ]
         for edge_id in dead_edges:
             room.state.interior_edges.pop(edge_id, None)
+        dead_cuts = [
+            cut_id
+            for cut_id, cut in room.state.interior_wall_cuts.items()
+            if cut.room_id == interior_id
+        ]
+        for cut_id in dead_cuts:
+            room.state.interior_wall_cuts.pop(cut_id, None)
         manager._mark_dirty(room_id, room)
         return WireEvent(type="INTERIOR_DELETE", payload={"id": interior_id})
 
@@ -188,5 +212,40 @@ def apply_interior_event(
         room.state.interior_edges[keep_id] = edge
         manager._mark_dirty(room_id, room)
         return WireEvent(type="INTERIOR_EDGE_SET", payload=edge.model_dump())
+
+    if event_type == "INTERIOR_WALL_CUT_ADD":
+        cut_id = str(payload.get("id") or "").strip()
+        room_ref = str(payload.get("room_id") or "").strip()
+        side = str(payload.get("side") or "").strip().lower()
+        kind = str(payload.get("kind") or "door").strip().lower()
+        span = _normalize_cut_span(payload.get("t_start"), payload.get("t_end"))
+        if not cut_id or not room_ref or side not in {"top", "bottom", "left", "right"} or kind not in {"door", "open"} or not span:
+            return WireEvent(type="ERROR", payload={"message": "Invalid wall cut"})
+        if room_ref not in room.state.interiors:
+            return WireEvent(type="ERROR", payload={"message": "Interior not found"})
+        manager._push_history(room)
+        cut = InteriorWallCut(
+            id=cut_id,
+            room_id=room_ref,
+            side=side,
+            t_start=span[0],
+            t_end=span[1],
+            kind=kind,
+            creator_id=client_id,
+        )
+        room.state.interior_wall_cuts[cut.id] = cut
+        manager._mark_dirty(room_id, room)
+        return WireEvent(type="INTERIOR_WALL_CUT_ADD", payload=cut.model_dump())
+
+    if event_type == "INTERIOR_WALL_CUT_REMOVE":
+        cut_id = str(payload.get("id") or "").strip()
+        if not cut_id:
+            return WireEvent(type="ERROR", payload={"message": "Missing wall cut id"})
+        if cut_id not in room.state.interior_wall_cuts:
+            return WireEvent(type="INTERIOR_WALL_CUT_REMOVE", payload={"id": cut_id})
+        manager._push_history(room)
+        room.state.interior_wall_cuts.pop(cut_id, None)
+        manager._mark_dirty(room_id, room)
+        return WireEvent(type="INTERIOR_WALL_CUT_REMOVE", payload={"id": cut_id})
 
     return WireEvent(type="ERROR", payload={"message": f"Unhandled interior event: {event_type}"})

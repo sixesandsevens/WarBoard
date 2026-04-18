@@ -39,6 +39,8 @@ EventType = Literal[
     "INTERIOR_DELETE",
     "INTERIOR_SET_LOCK",
     "INTERIOR_EDGE_SET",
+    "INTERIOR_WALL_CUT_ADD",
+    "INTERIOR_WALL_CUT_REMOVE",
     "TERRAIN_STROKE_ADD",
     "TERRAIN_STROKE_UNDO",
     "FOG_STATE_SYNC",
@@ -155,6 +157,16 @@ class InteriorEdgeOverride(BaseModel):
     creator_id: Optional[str] = None
 
 
+class InteriorWallCut(BaseModel):
+    id: str
+    room_id: str
+    side: Literal["top", "bottom", "left", "right"]
+    t_start: float
+    t_end: float
+    kind: Literal["door", "open"] = "door"
+    creator_id: Optional[str] = None
+
+
 class TerrainStroke(BaseModel):
     id: str
     material_id: str
@@ -224,6 +236,7 @@ class RoomState(BaseModel):
     assets: Dict[str, AssetInstance] = Field(default_factory=dict)
     interiors: Dict[str, InteriorRoom] = Field(default_factory=dict)
     interior_edges: Dict[str, InteriorEdgeOverride] = Field(default_factory=dict)
+    interior_wall_cuts: Dict[str, InteriorWallCut] = Field(default_factory=dict)
     draw_order: Dict[str, List[str]] = Field(
         default_factory=lambda: {"strokes": [], "shapes": [], "assets": [], "interiors": []}
     )

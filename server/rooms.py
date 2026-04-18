@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Set
 
 from fastapi import WebSocket
 
-from .models import AssetInstance, FogPaintState, FogStroke, InteriorEdgeOverride, InteriorRoom, Point, RoomState, Shape, Stroke, TerrainPaintState, TerrainStroke, Token, WireEvent
+from .models import AssetInstance, FogPaintState, FogStroke, InteriorEdgeOverride, InteriorRoom, InteriorWallCut, Point, RoomState, Shape, Stroke, TerrainPaintState, TerrainStroke, Token, WireEvent
 from .room_events import (
     apply_asset_event,
     apply_cogm_event,
@@ -513,7 +513,7 @@ class RoomManager:
         if t in {"ASSET_INSTANCE_CREATE", "ASSET_INSTANCE_UPDATE", "ASSET_INSTANCE_DELETE"}:
             return self._apply_asset_event(room_id, room, t, p, client_id, user_id)
 
-        if t in {"INTERIOR_ADD", "INTERIOR_UPDATE", "INTERIOR_DELETE", "INTERIOR_SET_LOCK", "INTERIOR_EDGE_SET"}:
+        if t in {"INTERIOR_ADD", "INTERIOR_UPDATE", "INTERIOR_DELETE", "INTERIOR_SET_LOCK", "INTERIOR_EDGE_SET", "INTERIOR_WALL_CUT_ADD", "INTERIOR_WALL_CUT_REMOVE"}:
             return self._apply_interior_event(room_id, room, t, p, client_id, user_id)
 
         if t in {"TERRAIN_STROKE_ADD", "TERRAIN_STROKE_UNDO"}:

@@ -58,6 +58,8 @@
   const assetCtx = document.getElementById("assetCtx");
   const interiorEdgeMenu = document.getElementById("interiorEdgeMenu");
   const interiorCtx = document.getElementById("interiorCtx");
+  const interiorWallCutMenu = document.getElementById("interiorWallCutMenu");
+  const toolBtnWallPunch = document.getElementById("toolBtnWallPunch");
   const assetScaleSliderEl = document.getElementById("assetScaleSlider");
   const assetScaleValueEl = document.getElementById("assetScaleValue");
   const assetRotateSliderEl = document.getElementById("assetRotateSlider");
@@ -73,7 +75,7 @@
   const toolTextInput = document.getElementById("toolTextInput");
   const toolTextApply = document.getElementById("toolTextApply");
   const uiTooltip = document.getElementById("uiTooltip");
-  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, textCtx, rulerCtx, assetCtx, interiorEdgeMenu, interiorCtx];
+  const allCtxMenus = [mapCtx, mapCtxBg, mapCtxLayers, mapCtxClear, penCtx, shapeCtx, textCtx, rulerCtx, assetCtx, interiorEdgeMenu, interiorCtx, interiorWallCutMenu];
   const playerListEl = document.getElementById("playerList");
   const tokenListEl = document.getElementById("tokenList");
   const strokeListEl = document.getElementById("strokeList");
