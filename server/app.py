@@ -138,6 +138,9 @@ from .storage import (
 
 app = FastAPI(title="WarHamster")
 logger = logging.getLogger("warhamster")
+
+# Governance websocket registry: user_id → set of connected app.html WebSocket clients
+_gov_clients: dict[int, set] = {}
 BASE_DIR = Path(__file__).resolve().parent.parent
 PACKS_DIR = BASE_DIR / "packs"
 STATIC_DIR = BASE_DIR / "static"
@@ -444,6 +447,43 @@ async def _broadcast_session_notice(session_id: str, message: str) -> None:
         message=message,
         broadcast_session_event_fn=_broadcast_session_event,
     )
+
+
+async def _send_ws_safe(ws: WebSocket, event: WireEvent) -> None:
+    try:
+        await asyncio.wait_for(ws.send_text(event.model_dump_json()), timeout=5.0)
+    except Exception:
+        pass
+
+
+async def _broadcast_governance(user_ids: "set[int]", event: WireEvent) -> None:
+    """Push an event to app.html governance websocket connections for the given user IDs."""
+    tasks = [
+        _send_ws_safe(ws, event)
+        for uid in user_ids
+        for ws in list(_gov_clients.get(uid, set()))
+    ]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _broadcast_to_session_rooms(session_id: str, event: WireEvent) -> None:
+    """Broadcast to ALL sockets in session rooms regardless of current membership."""
+    tasks = [
+        rm.broadcast(rm._rooms[r["room_id"]], event)
+        for r in list_game_session_rooms(session_id)
+        if r["room_id"] in rm._rooms
+    ]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _session_member_user_ids(session_id: str) -> set[int]:
+    return {int(m["user_id"]) for m in list_game_session_members(session_id) if m.get("user_id") is not None}
+
+
+def _room_member_user_ids(room_id: str) -> set[int]:
+    return {int(m["user_id"]) for m in list_room_members(room_id) if m.get("user_id") is not None}
 
 
 def _room_display_name(room_id: str) -> str:
@@ -1845,7 +1885,7 @@ def get_session_shared_packs_api(session_id: str, req: Request):
 
 
 @app.post("/api/sessions/{session_id}/shared-packs/{pack_id}")
-def share_session_pack_api(session_id: str, pack_id: int, req: Request):
+async def share_session_pack_api(session_id: str, pack_id: int, req: Request):
     actor = _require_user(req)
     if actor.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
@@ -1869,11 +1909,18 @@ def share_session_pack_api(session_id: str, pack_id: int, req: Request):
         before={"session_id": session_id, "packs": before_packs},
         after={"session_id": session_id, "packs": after_packs},
     )
+    member_ids = _session_member_user_ids(session_id)
+    gov_event = WireEvent(type="SESSION_GOVERNANCE_UPDATED", payload={"session_id": session_id})
+    pack_event = WireEvent(type="PACK_ACCESS_UPDATED", payload={"session_id": session_id, "pack_id": pack_id, "action": "shared"})
+    await asyncio.gather(
+        _broadcast_governance(member_ids, gov_event),
+        _broadcast_to_session_rooms(session_id, pack_event),
+    )
     return {"ok": True, "session": _session_governance_payload(session, actor), "packs": after_packs}
 
 
 @app.delete("/api/sessions/{session_id}/shared-packs/{pack_id}")
-def unshare_session_pack_api(session_id: str, pack_id: int, req: Request):
+async def unshare_session_pack_api(session_id: str, pack_id: int, req: Request):
     actor = _require_user(req)
     if actor.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
@@ -1895,13 +1942,20 @@ def unshare_session_pack_api(session_id: str, pack_id: int, req: Request):
         before={"session_id": session_id, "packs": before_packs},
         after={"session_id": session_id, "packs": after_packs},
     )
+    member_ids = _session_member_user_ids(session_id)
+    gov_event = WireEvent(type="SESSION_GOVERNANCE_UPDATED", payload={"session_id": session_id})
+    pack_event = WireEvent(type="PACK_ACCESS_UPDATED", payload={"session_id": session_id, "pack_id": pack_id, "action": "unshared"})
+    await asyncio.gather(
+        _broadcast_governance(member_ids, gov_event),
+        _broadcast_to_session_rooms(session_id, pack_event),
+    )
     return {"ok": True, "session": _session_governance_payload(session, actor), "packs": after_packs}
 
 
 @app.post("/api/sessions/{session_id}/shared-packs/{pack_id}/remove")
-def unshare_session_pack_post_api(session_id: str, pack_id: int, req: Request):
+async def unshare_session_pack_post_api(session_id: str, pack_id: int, req: Request):
     """POST-method alias for DELETE /api/sessions/{session_id}/shared-packs/{pack_id}."""
-    return unshare_session_pack_api(session_id, pack_id, req)
+    return await unshare_session_pack_api(session_id, pack_id, req)
 
 
 @app.post("/api/sessions/{session_id}/members/{user_id}/role")
@@ -1940,11 +1994,22 @@ async def set_session_member_role_api(session_id: str, user_id: int, req: Reques
         before={"session_id": session_id, "members": before_members},
         after={"session_id": session_id, "members": after_members},
     )
+    member_ids = _session_member_user_ids(session_id)
+    gov_event = WireEvent(type="SESSION_GOVERNANCE_UPDATED", payload={"session_id": session_id})
+    notice_event = WireEvent(type="GOVERNANCE_NOTICE", payload={
+        "session_id": session_id,
+        "affected_username": target.username,
+        "personal_message": f"Your role in session '{session.name}' has been changed to {new_role}.",
+    })
+    await asyncio.gather(
+        _broadcast_governance(member_ids, gov_event),
+        _broadcast_governance({user_id}, notice_event),
+    )
     return {"ok": True, "session": _session_governance_payload(session, actor), "members": after_members}
 
 
 @app.post("/api/sessions/{session_id}/members/{user_id}/remove")
-def remove_session_member_api(session_id: str, user_id: int, req: Request):
+async def remove_session_member_api(session_id: str, user_id: int, req: Request):
     actor = _require_user(req)
     session = get_game_session(session_id)
     if not session or session.archived:
@@ -1959,6 +2024,7 @@ def remove_session_member_api(session_id: str, user_id: int, req: Request):
         raise HTTPException(status_code=404, detail="User is not a session member")
     if current_role == "gm" and count_session_gms(session_id) <= 1:
         raise HTTPException(status_code=400, detail="Cannot remove the only GM; use transfer-gm first")
+    remaining_member_ids = _session_member_user_ids(session_id) - {user_id}
     before_members = list_game_session_members(session_id)
     if not remove_game_session_member(session_id, user_id):
         raise HTTPException(status_code=404, detail="Member not found")
@@ -1971,6 +2037,18 @@ def remove_session_member_api(session_id: str, user_id: int, req: Request):
         summary=f"{actor.username} removed {target.username} from session '{session.name}'",
         before={"session_id": session_id, "members": before_members},
         after={"session_id": session_id, "members": after_members},
+    )
+    gov_event = WireEvent(type="SESSION_GOVERNANCE_UPDATED", payload={"session_id": session_id})
+    notice_event = WireEvent(type="GOVERNANCE_NOTICE", payload={
+        "session_id": session_id,
+        "affected_username": target.username,
+        "personal_message": f"You have been removed from session '{session.name}'.",
+        "access_lost": True,
+    })
+    await asyncio.gather(
+        _broadcast_governance(remaining_member_ids, gov_event),
+        _broadcast_governance({user_id}, notice_event),
+        _broadcast_to_session_rooms(session_id, notice_event),
     )
     return {"ok": True, "session": _session_governance_payload(session, actor), "members": after_members}
 
@@ -2015,6 +2093,17 @@ async def transfer_session_gm_api(session_id: str, req: Request):
         after={"session_id": session_id, "members": after_members},
     )
     updated_session = get_game_session(session_id)
+    member_ids = _session_member_user_ids(session_id)
+    gov_event = WireEvent(type="SESSION_GOVERNANCE_UPDATED", payload={"session_id": session_id})
+    notice_event = WireEvent(type="GOVERNANCE_NOTICE", payload={
+        "session_id": session_id,
+        "affected_username": target.username,
+        "personal_message": f"You are now the GM of session '{session.name}'.",
+    })
+    await asyncio.gather(
+        _broadcast_governance(member_ids, gov_event),
+        _broadcast_governance({new_gm_user_id}, notice_event),
+    )
     return {"ok": True, "session": _session_governance_payload(updated_session, actor), "members": after_members}
 
 
@@ -2103,7 +2192,7 @@ def get_room_members_api(room_id: str, req: Request):
 
 
 @app.post("/api/rooms/{room_id}/members/{user_id}/remove")
-def remove_room_member_api(room_id: str, user_id: int, req: Request):
+async def remove_room_member_api(room_id: str, user_id: int, req: Request):
     actor = _require_user(req)
     meta = get_room_meta(room_id)
     if not meta:
@@ -2117,6 +2206,7 @@ def remove_room_member_api(room_id: str, user_id: int, req: Request):
     target = get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+    remaining_member_ids = _room_member_user_ids(room_id) - {user_id}
     before_members = list_room_members(room_id)
     if not remove_room_membership(user_id, room_id):
         raise HTTPException(status_code=404, detail="Member not found")
@@ -2129,6 +2219,19 @@ def remove_room_member_api(room_id: str, user_id: int, req: Request):
         summary=f"{actor.username} removed {target.username} from room {meta.display_name or meta.name or room_id}",
         before={"room_id": room_id, "members": before_members},
         after={"room_id": room_id, "members": after_members},
+    )
+    room_name = meta.display_name or meta.name or room_id
+    gov_event = WireEvent(type="ROOM_GOVERNANCE_UPDATED", payload={"room_id": room_id})
+    notice_event = WireEvent(type="GOVERNANCE_NOTICE", payload={
+        "room_id": room_id,
+        "affected_username": target.username,
+        "personal_message": f"You have been removed from room '{room_name}'.",
+        "access_lost": True,
+    })
+    await asyncio.gather(
+        _broadcast_governance(remaining_member_ids, gov_event),
+        _broadcast_governance({user_id}, notice_event),
+        rm.broadcast(rm._rooms[room_id], notice_event) if room_id in rm._rooms else asyncio.sleep(0),
     )
     return {"ok": True, "room": _room_governance_payload(meta, actor), "members": after_members}
 
@@ -2164,6 +2267,18 @@ async def transfer_room_ownership_api(room_id: str, req: Request):
         summary=f"{actor.username} transferred room {updated_meta.display_name or updated_meta.name or room_id} ownership to {target.username}",
         before={"room": before_room, "members": before_members},
         after={"room": _room_governance_payload(updated_meta, actor), "members": after_members},
+    )
+    room_name = updated_meta.display_name or updated_meta.name or room_id
+    member_ids = _room_member_user_ids(room_id)
+    gov_event = WireEvent(type="ROOM_GOVERNANCE_UPDATED", payload={"room_id": room_id})
+    notice_event = WireEvent(type="GOVERNANCE_NOTICE", payload={
+        "room_id": room_id,
+        "affected_username": target.username,
+        "personal_message": f"You are now the owner of room '{room_name}'.",
+    })
+    await asyncio.gather(
+        _broadcast_governance(member_ids, gov_event),
+        _broadcast_governance({new_owner_user_id}, notice_event),
     )
     return {"ok": True, "room": _room_governance_payload(updated_meta, actor), "members": after_members}
 
@@ -2310,6 +2425,36 @@ else:
 
 
 # ----------------------------- WebSocket --------------------------------------
+
+@app.websocket("/ws/app")
+async def ws_app(ws: WebSocket):
+    user = _ws_user(ws)
+    if not user or user.user_id is None or bool(getattr(user, "must_change_password", False)):
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    uid = int(user.user_id)
+    if uid not in _gov_clients:
+        _gov_clients[uid] = set()
+    _gov_clients[uid].add(ws)
+    try:
+        while True:
+            try:
+                await asyncio.wait_for(ws.receive_text(), timeout=30.0)
+            except asyncio.TimeoutError:
+                try:
+                    await ws.send_text(WireEvent(type="HEARTBEAT", payload={}).model_dump_json())
+                except Exception:
+                    break
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                break
+    finally:
+        _gov_clients.get(uid, set()).discard(ws)
+        if uid in _gov_clients and not _gov_clients[uid]:
+            del _gov_clients[uid]
+
 
 @app.websocket("/ws/{room_id}")
 async def ws_room(ws: WebSocket, room_id: str):
