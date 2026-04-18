@@ -167,6 +167,39 @@ function connectWS(force = false, options = {}) {
       return;
     }
 
+    if (ev.type === "SESSION_GOVERNANCE_UPDATED") {
+      const sessId = ev.payload?.session_id;
+      if (sessId && String(playSessionState?.id || "") === String(sessId)) {
+        if (typeof refreshCurrentSessionState === "function") refreshCurrentSessionState().catch(() => {});
+      }
+      return;
+    }
+
+    if (ev.type === "ROOM_GOVERNANCE_UPDATED") {
+      return;
+    }
+
+    if (ev.type === "PACK_ACCESS_UPDATED") {
+      const sessId = ev.payload?.session_id;
+      if (sessId && String(playSessionState?.id || "") === String(sessId)) {
+        if (typeof refreshAssetSessionPackData === "function") refreshAssetSessionPackData().catch(() => {});
+        toast("Pack access updated.");
+      }
+      return;
+    }
+
+    if (ev.type === "GOVERNANCE_NOTICE") {
+      const personal = ev.payload?.personal_message;
+      const affectedUser = ev.payload?.affected_username;
+      if (affectedUser && affectedUser === (me?.username || "")) {
+        if (personal) toast(personal);
+        if (ev.payload?.access_lost) {
+          setTimeout(() => { try { if (ws) ws.close(); } catch {} location.href = "/"; }, 2500);
+        }
+      }
+      return;
+    }
+
     if (ev.type === "HEARTBEAT") {
       return;
     }

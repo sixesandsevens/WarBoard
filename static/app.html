@@ -1920,6 +1920,66 @@
   viewSessionBtn.onclick = () => { void switchView('session'); };
   viewAdminBtn.onclick = () => { void switchView('admin'); };
 
+  // --- Toast notifications ---
+  const _toastEl = (() => {
+    const el = document.createElement('div');
+    el.id = 'appToastContainer';
+    el.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:.5rem;align-items:center;pointer-events:none;';
+    document.body.appendChild(el);
+    return el;
+  })();
+  function toast(msg, durationMs = 3000) {
+    const t = document.createElement('div');
+    t.textContent = msg;
+    t.style.cssText = 'background:rgba(0,0,0,.82);color:#fff;padding:.55rem 1.1rem;border-radius:.5rem;font-size:.9rem;max-width:32rem;text-align:center;opacity:1;transition:opacity .4s;';
+    _toastEl.appendChild(t);
+    setTimeout(() => {
+      t.style.opacity = '0';
+      setTimeout(() => t.remove(), 420);
+    }, durationMs);
+  }
+
+  // --- Governance websocket (/ws/app) ---
+  let appWs = null;
+  let _appWsReconnectTimeout = null;
+  function connectAppWs() {
+    if (appWs && appWs.readyState <= 1) return;
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    appWs = new WebSocket(`${proto}//${location.host}/ws/app`);
+    appWs.onmessage = (e) => {
+      let ev;
+      try { ev = JSON.parse(e.data); } catch { return; }
+      if (!ev || !ev.type) return;
+      if (ev.type === 'SESSION_GOVERNANCE_UPDATED') {
+        const sessId = ev.payload && ev.payload.session_id;
+        if (sessId && sessId === currentGovernanceSessionId) {
+          refreshSessionGovernance().catch(() => {});
+        }
+        return;
+      }
+      if (ev.type === 'ROOM_GOVERNANCE_UPDATED') {
+        const roomId = ev.payload && ev.payload.room_id;
+        if (roomId && roomId === currentGovernanceRoomId) {
+          refreshRoomGovernance(roomId).catch(() => {});
+        }
+        return;
+      }
+      if (ev.type === 'GOVERNANCE_NOTICE') {
+        if (ev.payload && ev.payload.personal_message) toast(ev.payload.personal_message);
+        if (ev.payload && ev.payload.access_lost) {
+          setTimeout(() => location.reload(), 2500);
+        }
+        return;
+      }
+    };
+    appWs.onclose = () => {
+      clearTimeout(_appWsReconnectTimeout);
+      _appWsReconnectTimeout = setTimeout(() => connectAppWs(), 5000);
+    };
+    appWs.onerror = () => { try { appWs.close(); } catch {} };
+  }
+  connectAppWs();
+
   await refreshShell();
   const initialView = ['account', 'admin', 'room'].includes(location.hash.replace(/^#/, '')) ? location.hash.replace(/^#/, '') : 'lobby';
   await switchView(initialView);
