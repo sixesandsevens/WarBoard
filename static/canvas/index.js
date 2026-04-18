@@ -192,7 +192,7 @@
       y: Number(record.y || 0),
       w: Math.max(1, Number(record.w || 1)),
       h: Math.max(1, Number(record.h || 1)),
-      style: "wood",
+      style: String(record.style || "wood"),
       creator_id: record.creator_id || null,
       locked: !!record.locked,
     };
@@ -796,6 +796,39 @@
     for (const id of ids) send("TOKEN_DELETE", { id });
   }
 
+  function canDuplicateInterior(interiorId) {
+    const room = typeof interiorId === "string" ? state.interiors.get(interiorId) : interiorId;
+    return !!(room && isGM());
+  }
+
+  function duplicateInteriorRoom(interiorId) {
+    const room = state.interiors.get(interiorId || "");
+    if (!room || !canDuplicateInterior(room)) return;
+
+    const offset = ui.gridSize;
+    const duplicate = normalizeInteriorRecord({
+      id: makeId(),
+      x: Number(room.x || 0) + offset,
+      y: Number(room.y || 0) + offset,
+      w: room.w,
+      h: room.h,
+      style: room.style,
+      creator_id: myId(),
+      locked: false,
+    });
+
+    send("INTERIOR_ADD", duplicate);
+
+    selectedInteriorId = duplicate.id;
+    currentInteriorContextId = duplicate.id;
+    draggingInteriorId = null;
+    resizingInterior = null;
+    activeInteriorAssist = null;
+    interiorDragStart = null;
+    interiorDragOrigin = null;
+    requestRender();
+  }
+
   function handleCtxAction(action) {
     switch (action) {
       case "spawn_default": {
@@ -987,6 +1020,12 @@
         const room = state.interiors.get(currentInteriorContextId || selectedInteriorId || "");
         if (!room || !isGM()) break;
         send("INTERIOR_SET_LOCK", { id: room.id, locked: !room.locked });
+        break;
+      }
+      case "interior_duplicate": {
+        const room = state.interiors.get(currentInteriorContextId || selectedInteriorId || "");
+        if (!room) break;
+        duplicateInteriorRoom(room.id);
         break;
       }
       case "interior_delete": {

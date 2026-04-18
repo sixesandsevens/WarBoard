@@ -52,7 +52,7 @@ def apply_interior_event(
             y=float(payload.get("y", 0)),
             w=max(1.0, float(payload.get("w", 1))),
             h=max(1.0, float(payload.get("h", 1))),
-            style="wood",
+            style=str(payload.get("style") or "wood"),
             creator_id=client_id,
             locked=bool(payload.get("locked", False)),
         )

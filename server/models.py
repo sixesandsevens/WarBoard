@@ -140,7 +140,7 @@ class InteriorRoom(BaseModel):
     y: float
     w: float
     h: float
-    style: Literal["wood"] = "wood"
+    style: str = "wood"
     creator_id: Optional[str] = None
     locked: bool = False
 
