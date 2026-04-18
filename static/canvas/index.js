@@ -464,6 +464,7 @@
     });
     showContextMenu(interiorWallCutMenu, x, y);
     currentInteriorWallCutId = cut.id;
+    hoveredInteriorWallCut = cut;
   }
 
   function getInteriorTargetRoomId(target) {
@@ -590,6 +591,7 @@
   }
 
   function hideAllCtx() {
+    const hadActiveWallCut = !!currentInteriorWallCutId;
     if (ctxSubHideTimer) {
       clearTimeout(ctxSubHideTimer);
       ctxSubHideTimer = null;
@@ -598,6 +600,7 @@
     currentInteriorContextId = null;
     currentInteriorEdge = null;
     currentInteriorWallCutId = null;
+    if (hadActiveWallCut) requestRender();
   }
 
   function hideToolPanels() {

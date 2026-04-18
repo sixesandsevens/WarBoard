@@ -1189,7 +1189,7 @@ function initSessionBindings() {
     }
   });
   if (sessionOpenLobbyBtn) sessionOpenLobbyBtn.addEventListener("click", () => {
-    location.href = "/static/app.html";
+    location.href = "/app#account";
   });
   if (sessionLogoutBtn) sessionLogoutBtn.addEventListener("click", async () => {
     try {

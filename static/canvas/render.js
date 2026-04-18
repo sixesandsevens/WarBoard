@@ -422,43 +422,71 @@ function drawInteriorWalls(visibleWalls) {
 }
 
 function drawInteriorWallCuts(cuts) {
+  const hoveredCutId = hoveredInteriorWallCut?.id || "";
+  const activeCutId = currentInteriorWallCutId || "";
   for (const cut of cuts) {
-    if (!cut || cut.kind !== "door") continue;
+    if (!cut) continue;
+    const isHovered = hoveredCutId && hoveredCutId === cut.id;
+    const isActive = activeCutId && activeCutId === cut.id;
+    const isEmphasized = !!(isHovered || isActive);
     const mid = (cut.start + cut.end) * 0.5;
+    const accentColor = isActive ? "rgba(255, 213, 74, 0.98)" : "rgba(120, 230, 255, 0.95)";
+    const baseColor = cut.kind === "open" ? "rgba(146, 195, 124, 0.78)" : "rgba(70, 45, 24, 0.78)";
     const size = Math.max(8, ui.gridSize * cam.z * 0.22);
+    const endCap = Math.max(6, ui.gridSize * cam.z * 0.14);
+    if (cut.kind === "open" || isEmphasized) {
+      ctx.save();
+      if (cut.kind === "open") ctx.setLineDash([Math.max(6, cam.z * 6), Math.max(4, cam.z * 4)]);
+      ctx.strokeStyle = isEmphasized ? accentColor : baseColor;
+      ctx.lineWidth = isEmphasized ? Math.max(3, cam.z * 2.8) : Math.max(1.5, cam.z * 1.6);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      if (cut.orientation === "h") {
+        const a = worldToScreen(cut.start, cut.line);
+        const b = worldToScreen(cut.end, cut.line);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      } else {
+        const a = worldToScreen(cut.line, cut.start);
+        const b = worldToScreen(cut.line, cut.end);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
     ctx.save();
-    ctx.strokeStyle = hoveredInteriorWallCut?.id === cut.id ? "rgba(120, 230, 255, 0.95)" : "rgba(70, 45, 24, 0.78)";
-    ctx.lineWidth = Math.max(1.5, cam.z * 1.8);
+    ctx.strokeStyle = isEmphasized ? accentColor : baseColor;
+    ctx.lineWidth = isEmphasized ? Math.max(2.25, cam.z * 2.2) : Math.max(1.2, cam.z * 1.4);
     ctx.lineCap = "round";
     ctx.beginPath();
     if (cut.orientation === "h") {
-      const a = worldToScreen(mid, cut.line);
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(a.x, a.y + size);
+      if (cut.kind === "door") {
+        const a = worldToScreen(mid, cut.line);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(a.x, a.y + size);
+      } else {
+        const a = worldToScreen(cut.start, cut.line);
+        const b = worldToScreen(cut.end, cut.line);
+        ctx.moveTo(a.x, a.y - endCap);
+        ctx.lineTo(a.x, a.y + endCap);
+        ctx.moveTo(b.x, b.y - endCap);
+        ctx.lineTo(b.x, b.y + endCap);
+      }
     } else {
-      const a = worldToScreen(cut.line, mid);
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(a.x - size, a.y);
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
-  if (hoveredInteriorWallCut) {
-    ctx.save();
-    ctx.strokeStyle = "rgba(120, 230, 255, 0.95)";
-    ctx.lineWidth = Math.max(3, cam.z * 2.8);
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    if (hoveredInteriorWallCut.orientation === "h") {
-      const a = worldToScreen(hoveredInteriorWallCut.start, hoveredInteriorWallCut.line);
-      const b = worldToScreen(hoveredInteriorWallCut.end, hoveredInteriorWallCut.line);
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-    } else {
-      const a = worldToScreen(hoveredInteriorWallCut.line, hoveredInteriorWallCut.start);
-      const b = worldToScreen(hoveredInteriorWallCut.line, hoveredInteriorWallCut.end);
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
+      if (cut.kind === "door") {
+        const a = worldToScreen(cut.line, mid);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(a.x - size, a.y);
+      } else {
+        const a = worldToScreen(cut.line, cut.start);
+        const b = worldToScreen(cut.line, cut.end);
+        ctx.moveTo(a.x - endCap, a.y);
+        ctx.lineTo(a.x + endCap, a.y);
+        ctx.moveTo(b.x - endCap, b.y);
+        ctx.lineTo(b.x + endCap, b.y);
+      }
     }
     ctx.stroke();
     ctx.restore();

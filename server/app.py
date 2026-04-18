@@ -56,6 +56,7 @@ from .storage import (
     add_game_session_member,
     add_membership,
     archive_game_session,
+    append_audit_log,
     assign_room_to_game_session,
     can_manage_game_session,
     create_asset_record,
@@ -66,7 +67,9 @@ from .storage import (
     create_snapshot,
     create_user,
     delete_asset_record,
+    delete_all_sessions_for_user,
     delete_room_record,
+    delete_session_for_user,
     delete_session,
     ensure_room_join_code,
     ensure_room_membership_for_user,
@@ -77,7 +80,9 @@ from .storage import (
     get_private_pack_by_id,
     get_asset_by_id,
     get_asset_for_user,
+    get_user_detail,
     get_user_by_sid,
+    get_user_by_id,
     get_user_by_username,
     init_db,
     is_member,
@@ -85,6 +90,8 @@ from .storage import (
     list_asset_folders_for_user,
     list_all_assets_for_user,
     list_assets_for_user_page,
+    list_audit_logs,
+    list_all_private_packs,
     list_private_pack_assets,
     list_game_session_members,
     list_game_session_rooms,
@@ -93,15 +100,22 @@ from .storage import (
     list_private_packs_for_user,
     list_room_member_user_ids,
     list_assets_for_user,
+    list_owned_assets,
+    list_owned_packs,
     list_rooms_for_user,
+    list_sessions_for_user,
     list_snapshots,
+    list_user_pack_entitlements,
+    list_users,
     load_room_state_json,
     load_snapshot_state_json,
     room_id_from_join_code,
     save_room_state_json,
     touch_membership,
+    update_user_must_change_password,
     update_user_last_room,
     update_user_password_hash,
+    update_user_status,
     update_room_name,
     user_has_pack_access,
     set_game_session_shared_pack,
@@ -216,6 +230,76 @@ def _require_user(req: Request):
 
 def _ws_user(ws: WebSocket):
     return ws_user(ws, get_user_by_sid)
+
+
+SITE_ADMIN_ROLES = {"admin", "owner"}
+ROLE_LABELS = {
+    "user": "User",
+    "gm": "GM",
+    "moderator": "Moderator",
+    "admin": "Admin",
+    "owner": "Owner",
+}
+
+
+def _role_name(user) -> str:
+    return str(getattr(user, "role", "") or "user").strip() or "user"
+
+
+def _status_name(user) -> str:
+    return str(getattr(user, "status", "") or "active").strip() or "active"
+
+
+def _is_site_admin(user) -> bool:
+    return _role_name(user) in SITE_ADMIN_ROLES
+
+
+def _require_site_admin(req: Request):
+    user = _require_user(req)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def _current_sid(req: Request) -> str:
+    return req.cookies.get(SESSION_COOKIE, "") or req.cookies.get(LEGACY_SESSION_COOKIE, "")
+
+
+def _user_public_payload(user) -> dict:
+    return {
+        "user_id": user.user_id,
+        "username": user.username,
+        "created_at": user.created_at,
+        "role": _role_name(user),
+        "role_label": ROLE_LABELS.get(_role_name(user), _role_name(user).replace("_", " ").title()),
+        "status": _status_name(user),
+        "must_change_password": bool(getattr(user, "must_change_password", False)),
+        "last_room_id": getattr(user, "last_room_id", None),
+        "disabled_at": getattr(user, "disabled_at", None),
+        "disabled_reason": getattr(user, "disabled_reason", None),
+        "deleted_at": getattr(user, "deleted_at", None),
+    }
+
+
+def _audit(
+    *,
+    actor_user_id: Optional[int],
+    action: str,
+    target_type: str,
+    target_id: str,
+    summary: str,
+    before: Optional[dict] = None,
+    after: Optional[dict] = None,
+) -> None:
+    append_audit_log(
+        actor_user_id=actor_user_id,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        summary=summary,
+        before=before,
+        after=after,
+    )
 
 
 def _cookie_secure(req: Request) -> bool:
@@ -452,7 +536,13 @@ def join_link(code: str, req: Request):
 @app.get("/api/me")
 def me(req: Request):
     user = _require_user(req)
-    return {"user_id": user.user_id, "username": user.username, "last_room_id": user.last_room_id}
+    return _user_public_payload(user)
+
+
+@app.get("/api/account/me")
+def account_me(req: Request):
+    user = _require_user(req)
+    return _user_public_payload(user)
 
 
 @app.post("/api/auth/register")
@@ -494,6 +584,10 @@ async def login(req: Request):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if u.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
+    if _status_name(u) == "disabled":
+        raise HTTPException(status_code=403, detail="Account disabled")
+    if _status_name(u) == "deleted":
+        raise HTTPException(status_code=403, detail="Account deleted")
     if replacement_hash:
         update_user_password_hash(u.user_id, replacement_hash)
     sid = create_session(u.user_id)
@@ -504,6 +598,275 @@ async def login(req: Request):
 def logout(req: Request):
     sid = req.cookies.get(SESSION_COOKIE, "") or req.cookies.get(LEGACY_SESSION_COOKIE, "")
     return auth_logout_response(sid=sid, delete_session_fn=delete_session)
+
+
+# ----------------------------- Account API ------------------------------------
+
+@app.post("/api/account/change-password")
+async def account_change_password(req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    body = await req.json()
+    current_password = str(body.get("current_password") or "")
+    new_password = str(body.get("new_password") or "")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be >= 8 chars")
+    try:
+        verified, replacement_hash = PASSWORD_CONTEXT.verify_and_update(current_password, user.password_hash)
+    except (ValueError, TypeError):
+        verified, replacement_hash = False, None
+    if not verified:
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    next_hash = PASSWORD_CONTEXT.hash(new_password)
+    update_user_password_hash(user.user_id, next_hash)
+    update_user_must_change_password(user.user_id, False)
+    _audit(
+        actor_user_id=user.user_id,
+        action="account.change_password",
+        target_type="user",
+        target_id=str(user.user_id),
+        summary=f"{user.username} changed their password",
+    )
+    return {"ok": True}
+
+
+@app.get("/api/account/sessions")
+def account_sessions(req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    current_sid = _current_sid(req)
+    sessions = []
+    for row in list_sessions_for_user(user.user_id):
+        sid = str(row.get("sid") or "")
+        sessions.append(
+            {
+                "sid": sid,
+                "sid_suffix": sid[-8:] if sid else "",
+                "created_at": row.get("created_at"),
+                "expires_at": row.get("expires_at"),
+                "current": bool(current_sid and sid == current_sid),
+            }
+        )
+    return {"sessions": sessions}
+
+
+@app.post("/api/account/sessions/revoke-others")
+def account_revoke_other_sessions(req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    current_sid = _current_sid(req)
+    removed = delete_all_sessions_for_user(user.user_id, except_sid=current_sid or None)
+    _audit(
+        actor_user_id=user.user_id,
+        action="account.revoke_other_sessions",
+        target_type="user",
+        target_id=str(user.user_id),
+        summary=f"{user.username} revoked {removed} other session(s)",
+        after={"revoked_count": removed},
+    )
+    return {"ok": True, "revoked_count": removed}
+
+
+@app.post("/api/account/sessions/{sid}/revoke")
+def account_revoke_session(sid: str, req: Request):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    target_sid = str(sid or "").strip()
+    if not target_sid:
+        raise HTTPException(status_code=400, detail="Session id required")
+    removed = delete_session_for_user(user.user_id, target_sid)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Session not found")
+    current_sid = _current_sid(req)
+    _audit(
+        actor_user_id=user.user_id,
+        action="account.revoke_session",
+        target_type="session",
+        target_id=target_sid,
+        summary=f"{user.username} revoked a session",
+    )
+    return {"ok": True, "revoked_current": bool(current_sid and current_sid == target_sid)}
+
+
+# ----------------------------- Admin API --------------------------------------
+
+@app.get("/api/admin/users")
+def admin_list_users(req: Request, q: str = "", limit: int = 100):
+    _require_site_admin(req)
+    return {"users": list_users(q=q, limit=limit)}
+
+
+@app.get("/api/admin/users/{user_id}")
+def admin_get_user(req: Request, user_id: int):
+    _require_site_admin(req)
+    detail = get_user_detail(user_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "user": detail,
+        "uploads": list_owned_assets(user_id, limit=12),
+        "packs_owned": list_owned_packs(user_id, limit=20),
+        "pack_entitlements": list_user_pack_entitlements(user_id),
+    }
+
+
+@app.post("/api/admin/users/{user_id}/disable")
+async def admin_disable_user(req: Request, user_id: int):
+    admin_user = _require_site_admin(req)
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if _role_name(target) == "owner" and _role_name(admin_user) != "owner":
+        raise HTTPException(status_code=403, detail="Owner account required")
+    body = await req.json()
+    reason = str(body.get("reason") or "").strip()
+    before = _user_public_payload(target)
+    update_user_status(user_id, "disabled", reason or None)
+    delete_all_sessions_for_user(user_id)
+    after = _user_public_payload(get_user_by_id(user_id))
+    _audit(
+        actor_user_id=admin_user.user_id,
+        action="admin.disable_user",
+        target_type="user",
+        target_id=str(user_id),
+        summary=f"{admin_user.username} disabled {target.username}",
+        before=before,
+        after=after,
+    )
+    return {"ok": True, "user": after}
+
+
+@app.post("/api/admin/users/{user_id}/enable")
+def admin_enable_user(req: Request, user_id: int):
+    admin_user = _require_site_admin(req)
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if _role_name(target) == "owner" and _role_name(admin_user) != "owner":
+        raise HTTPException(status_code=403, detail="Owner account required")
+    before = _user_public_payload(target)
+    update_user_status(user_id, "active")
+    after = _user_public_payload(get_user_by_id(user_id))
+    _audit(
+        actor_user_id=admin_user.user_id,
+        action="admin.enable_user",
+        target_type="user",
+        target_id=str(user_id),
+        summary=f"{admin_user.username} enabled {target.username}",
+        before=before,
+        after=after,
+    )
+    return {"ok": True, "user": after}
+
+
+@app.post("/api/admin/users/{user_id}/force-password-reset")
+def admin_force_password_reset(req: Request, user_id: int):
+    admin_user = _require_site_admin(req)
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    before = _user_public_payload(target)
+    update_user_must_change_password(user_id, True)
+    delete_all_sessions_for_user(user_id)
+    after = _user_public_payload(get_user_by_id(user_id))
+    _audit(
+        actor_user_id=admin_user.user_id,
+        action="admin.force_password_reset",
+        target_type="user",
+        target_id=str(user_id),
+        summary=f"{admin_user.username} flagged {target.username} for password reset",
+        before=before,
+        after=after,
+    )
+    return {"ok": True, "user": after}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_soft_delete_user(req: Request, user_id: int):
+    admin_user = _require_site_admin(req)
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if _role_name(target) == "owner" and _role_name(admin_user) != "owner":
+        raise HTTPException(status_code=403, detail="Owner account required")
+    body = await req.json() if req.headers.get("content-type", "").startswith("application/json") else {}
+    reason = str((body or {}).get("reason") or "").strip()
+    before = _user_public_payload(target)
+    update_user_status(user_id, "deleted", reason or "Soft-deleted by admin")
+    delete_all_sessions_for_user(user_id)
+    after = _user_public_payload(get_user_by_id(user_id))
+    _audit(
+        actor_user_id=admin_user.user_id,
+        action="admin.soft_delete_user",
+        target_type="user",
+        target_id=str(user_id),
+        summary=f"{admin_user.username} soft-deleted {target.username}",
+        before=before,
+        after=after,
+    )
+    return {"ok": True, "user": after}
+
+
+@app.get("/api/admin/packs")
+def admin_list_packs(req: Request, limit: int = 200):
+    _require_site_admin(req)
+    return {"packs": list_all_private_packs(limit=limit)}
+
+
+@app.post("/api/admin/packs/{pack_id}/grant")
+async def admin_grant_pack(req: Request, pack_id: int):
+    admin_user = _require_site_admin(req)
+    body = await req.json()
+    user_id = int(body.get("user_id") or 0)
+    target = get_user_by_id(user_id)
+    pack = get_private_pack_by_id(pack_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not pack:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    grant_private_pack_access(pack_id, user_id)
+    _audit(
+        actor_user_id=admin_user.user_id,
+        action="admin.grant_pack_access",
+        target_type="entitlement",
+        target_id=f"{pack_id}:{user_id}",
+        summary=f"{admin_user.username} granted pack {pack.slug} to {target.username}",
+        after={"pack_id": pack_id, "user_id": user_id},
+    )
+    return {"ok": True}
+
+
+@app.post("/api/admin/packs/{pack_id}/revoke")
+async def admin_revoke_pack(req: Request, pack_id: int):
+    admin_user = _require_site_admin(req)
+    body = await req.json()
+    user_id = int(body.get("user_id") or 0)
+    target = get_user_by_id(user_id)
+    pack = get_private_pack_by_id(pack_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not pack:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    revoke_private_pack_access(pack_id, user_id)
+    _audit(
+        actor_user_id=admin_user.user_id,
+        action="admin.revoke_pack_access",
+        target_type="entitlement",
+        target_id=f"{pack_id}:{user_id}",
+        summary=f"{admin_user.username} revoked pack {pack.slug} from {target.username}",
+        after={"pack_id": pack_id, "user_id": user_id},
+    )
+    return {"ok": True}
+
+
+@app.get("/api/admin/audit")
+def admin_list_audit(req: Request, limit: int = 100):
+    _require_site_admin(req)
+    return {"entries": list_audit_logs(limit=limit)}
 
 
 # ----------------------------- Packs API --------------------------------------

@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from . import storage_assets, storage_auth, storage_db, storage_rooms, storage_sessions
+from . import storage_admin, storage_assets, storage_audit, storage_auth, storage_db, storage_rooms, storage_sessions
 from .storage_models import (
     AssetRow,
+    AuditLogRow,
     GameSessionRow,
     PrivatePackAssetRow,
     PrivatePackRow,
@@ -44,6 +45,14 @@ def _sync_auth_engine() -> None:
 
 def _sync_assets_engine() -> None:
     storage_assets.set_engine(engine)
+
+
+def _sync_admin_engine() -> None:
+    storage_admin.set_engine(engine)
+
+
+def _sync_audit_engine() -> None:
+    storage_audit.set_engine(engine)
 
 
 def load_room_state_json(room_id: str) -> Optional[str]:
@@ -256,6 +265,16 @@ def update_user_last_room(user_id: int, room_id: Optional[str]) -> bool:
     return storage_auth.update_user_last_room(user_id, room_id)
 
 
+def update_user_status(user_id: int, status: str, reason: Optional[str] = None) -> bool:
+    _sync_auth_engine()
+    return storage_auth.update_user_status(user_id, status, utc_now_iso(), reason)
+
+
+def update_user_must_change_password(user_id: int, must_change_password: bool) -> bool:
+    _sync_auth_engine()
+    return storage_auth.update_user_must_change_password(user_id, must_change_password)
+
+
 def create_session(user_id: int, ttl_days: int = 30) -> str:
     _sync_auth_engine()
     return storage_auth.create_session(user_id, ttl_days)
@@ -264,6 +283,21 @@ def create_session(user_id: int, ttl_days: int = 30) -> str:
 def delete_session(sid: str) -> None:
     _sync_auth_engine()
     storage_auth.delete_session(sid)
+
+
+def delete_session_for_user(user_id: int, sid: str) -> bool:
+    _sync_auth_engine()
+    return storage_auth.delete_session_for_user(user_id, sid)
+
+
+def delete_all_sessions_for_user(user_id: int, except_sid: Optional[str] = None) -> int:
+    _sync_auth_engine()
+    return storage_auth.delete_all_sessions_for_user(user_id, except_sid)
+
+
+def list_sessions_for_user(user_id: int) -> List[Dict[str, object]]:
+    _sync_auth_engine()
+    return storage_auth.list_sessions_for_user(user_id)
 
 
 def get_user_by_sid(sid: str) -> Optional[UserRow]:
@@ -582,3 +616,74 @@ def get_asset_for_user(asset_id: str, user_id: int) -> Optional[AssetRow]:
 def delete_asset_record(asset_id: str, user_id: int) -> bool:
     _sync_assets_engine()
     return storage_assets.delete_asset_record(asset_id, user_id)
+
+
+# --- Admin + audit -----------------------------------------------------------
+
+def list_users(q: str = "", limit: int = 100) -> List[Dict[str, object]]:
+    _sync_admin_engine()
+    return storage_admin.list_users(q=q, limit=limit)
+
+
+def get_user_detail(user_id: int) -> Optional[Dict[str, object]]:
+    _sync_admin_engine()
+    return storage_admin.get_user_detail(user_id)
+
+
+def list_owned_assets(user_id: int, limit: int = 12) -> List[Dict[str, object]]:
+    _sync_admin_engine()
+    return storage_admin.list_owned_assets(user_id, limit=limit)
+
+
+def list_owned_packs(user_id: int, limit: int = 20) -> List[Dict[str, object]]:
+    _sync_admin_engine()
+    return storage_admin.list_owned_packs(user_id, limit=limit)
+
+
+def list_user_pack_entitlements(user_id: int) -> List[Dict[str, object]]:
+    _sync_admin_engine()
+    return storage_admin.list_user_pack_entitlements(user_id)
+
+
+def list_all_private_packs(limit: int = 200) -> List[Dict[str, object]]:
+    _sync_admin_engine()
+    return storage_admin.list_all_private_packs(limit=limit)
+
+
+def append_audit_log(
+    *,
+    actor_user_id: Optional[int],
+    action: str,
+    target_type: str,
+    target_id: str,
+    summary: str,
+    before: Optional[Dict[str, object]] = None,
+    after: Optional[Dict[str, object]] = None,
+) -> AuditLogRow:
+    _sync_audit_engine()
+    return storage_audit.append_audit_log(
+        actor_user_id=actor_user_id,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        summary=summary,
+        before=before,
+        after=after,
+        now_iso=utc_now_iso(),
+    )
+
+
+def list_audit_logs(
+    *,
+    limit: int = 100,
+    actor_user_id: Optional[int] = None,
+    target_type: str = "",
+    target_id: str = "",
+) -> List[Dict[str, object]]:
+    _sync_audit_engine()
+    return storage_audit.list_audit_logs(
+        limit=limit,
+        actor_user_id=actor_user_id,
+        target_type=target_type,
+        target_id=target_id,
+    )

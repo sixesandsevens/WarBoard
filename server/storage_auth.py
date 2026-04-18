@@ -22,7 +22,15 @@ def create_user(username: str, password_hash: str, now_iso: str) -> UserRow:
         existing = s.exec(select(UserRow).where(UserRow.username == username)).first()
         if existing:
             raise ValueError("Username already exists")
-        user = UserRow(username=username, password_hash=password_hash, created_at=now_iso)
+        existing_count = len(s.exec(select(UserRow.user_id)).all())
+        user = UserRow(
+            username=username,
+            password_hash=password_hash,
+            created_at=now_iso,
+            role="owner" if existing_count == 0 else "user",
+            status="active",
+            must_change_password=False,
+        )
         s.add(user)
         s.commit()
         s.refresh(user)
@@ -61,6 +69,41 @@ def update_user_last_room(user_id: int, room_id: Optional[str]) -> bool:
         return True
 
 
+def update_user_status(user_id: int, status: str, now_iso: str, reason: Optional[str] = None) -> bool:
+    next_status = str(status or "").strip() or "active"
+    with Session(engine) as s:
+        user = s.get(UserRow, user_id)
+        if not user:
+            return False
+        user.status = next_status
+        if next_status == "disabled":
+            user.disabled_at = now_iso
+            user.disabled_reason = str(reason or "").strip() or None
+        elif next_status == "deleted":
+            user.deleted_at = now_iso
+            user.disabled_at = user.disabled_at or now_iso
+            user.disabled_reason = str(reason or "").strip() or user.disabled_reason
+        else:
+            user.disabled_at = None
+            user.disabled_reason = None
+            if next_status != "deleted":
+                user.deleted_at = None
+        s.add(user)
+        s.commit()
+        return True
+
+
+def update_user_must_change_password(user_id: int, must_change_password: bool) -> bool:
+    with Session(engine) as s:
+        user = s.get(UserRow, user_id)
+        if not user:
+            return False
+        user.must_change_password = bool(must_change_password)
+        s.add(user)
+        s.commit()
+        return True
+
+
 def create_session(user_id: int, ttl_days: int = 30) -> str:
     sid = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
@@ -72,12 +115,67 @@ def create_session(user_id: int, ttl_days: int = 30) -> str:
         return sid
 
 
+def list_sessions_for_user(user_id: int) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    with Session(engine) as s:
+        rows = s.exec(select(SessionRow).where(SessionRow.user_id == user_id)).all()
+        active_rows = []
+        removed = False
+        for row in rows:
+            try:
+                expires = datetime.fromisoformat(row.expires_at)
+            except Exception:
+                s.delete(row)
+                removed = True
+                continue
+            if expires < now:
+                s.delete(row)
+                removed = True
+                continue
+            active_rows.append(row)
+        if removed:
+            s.commit()
+    active_rows.sort(key=lambda row: str(row.created_at or ""), reverse=True)
+    return [
+        {
+            "sid": row.sid,
+            "created_at": row.created_at,
+            "expires_at": row.expires_at,
+        }
+        for row in active_rows
+    ]
+
+
 def delete_session(sid: str) -> None:
     with Session(engine) as s:
         row = s.get(SessionRow, sid)
         if row:
             s.delete(row)
             s.commit()
+
+
+def delete_session_for_user(user_id: int, sid: str) -> bool:
+    with Session(engine) as s:
+        row = s.get(SessionRow, sid)
+        if not row or int(row.user_id) != int(user_id):
+            return False
+        s.delete(row)
+        s.commit()
+        return True
+
+
+def delete_all_sessions_for_user(user_id: int, except_sid: Optional[str] = None) -> int:
+    removed = 0
+    with Session(engine) as s:
+        rows = s.exec(select(SessionRow).where(SessionRow.user_id == user_id)).all()
+        for row in rows:
+            if except_sid and row.sid == except_sid:
+                continue
+            s.delete(row)
+            removed += 1
+        if removed:
+            s.commit()
+    return removed
 
 
 def get_user_by_sid(sid: str) -> Optional[UserRow]:
@@ -97,4 +195,13 @@ def get_user_by_sid(sid: str) -> Optional[UserRow]:
             s.delete(sess)
             s.commit()
             return None
-        return s.get(UserRow, sess.user_id)
+        user = s.get(UserRow, sess.user_id)
+        if not user:
+            s.delete(sess)
+            s.commit()
+            return None
+        if str(user.status or "active") != "active":
+            s.delete(sess)
+            s.commit()
+            return None
+        return user

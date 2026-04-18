@@ -220,11 +220,180 @@
     .hint { font-size: 12px; color: rgba(238,238,236,0.38); margin-top: 8px; }
     .err { font-size: 12px; color: #d47070; margin-top: 7px; min-height: 1em; }
 
+    .view-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .hidden { display: none !important; }
+    .view-tab {
+      background: #2b2b2b;
+      border: 1px solid #3b3b3b;
+      color: rgba(238,238,236,0.82);
+      padding: 7px 12px;
+    }
+    .view-tab.active {
+      background: #3584e4;
+      border-color: #1a6fc4;
+      color: #fff;
+    }
+    .view-panel.hidden { display: none; }
+    .stack { display: flex; flex-direction: column; gap: 14px; }
+    .split {
+      display: grid;
+      grid-template-columns: 1.1fr 1.4fr;
+      gap: 14px;
+    }
+    .panel-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .mini-stat {
+      border: 1px solid #383838;
+      border-radius: 5px;
+      padding: 10px;
+      background: #252525;
+    }
+    .mini-stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: rgba(238,238,236,0.45);
+      margin-bottom: 4px;
+    }
+    .mini-stat-value {
+      font-size: 16px;
+      font-weight: 700;
+      color: #eeeeec;
+    }
+    .list-card {
+      border: 1px solid #383838;
+      border-radius: 5px;
+      background: #252525;
+      overflow: hidden;
+    }
+    .list-head {
+      padding: 10px 12px;
+      border-bottom: 1px solid #353535;
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.03em;
+    }
+    .list-body {
+      display: flex;
+      flex-direction: column;
+    }
+    .list-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 12px;
+      border-top: 1px solid #313131;
+    }
+    .list-row:first-child { border-top: none; }
+    .list-row-main { min-width: 0; flex: 1; }
+    .list-row-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: rgba(238,238,236,0.88);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .list-row-meta {
+      font-size: 12px;
+      color: rgba(238,238,236,0.48);
+      margin-top: 2px;
+    }
+    .banner {
+      padding: 10px 12px;
+      border-radius: 5px;
+      border: 1px solid rgba(200,160,48,0.45);
+      background: rgba(72,56,18,0.45);
+      color: #e8d18a;
+      font-size: 13px;
+    }
+    .admin-layout {
+      display: grid;
+      grid-template-columns: 290px minmax(0, 1fr);
+      gap: 14px;
+    }
+    .search-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .user-list-item {
+      padding: 10px 12px;
+      border-top: 1px solid #313131;
+      cursor: pointer;
+    }
+    .user-list-item:first-child { border-top: none; }
+    .user-list-item.active {
+      background: rgba(53,132,228,0.15);
+      box-shadow: inset 2px 0 0 #3584e4;
+    }
+    .badge-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .inline-badge {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #333;
+      border: 1px solid #474747;
+      color: rgba(238,238,236,0.72);
+    }
+    .inline-badge.good {
+      color: #8dd0a6;
+      border-color: rgba(80,170,110,0.45);
+      background: rgba(34,68,44,0.55);
+    }
+    .inline-badge.warn {
+      color: #e8d18a;
+      border-color: rgba(200,160,48,0.45);
+      background: rgba(72,56,18,0.45);
+    }
+    .inline-badge.bad {
+      color: #ef9a9a;
+      border-color: rgba(196,84,84,0.45);
+      background: rgba(76,28,28,0.5);
+    }
+    .detail-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .empty-state {
+      padding: 12px;
+      color: rgba(238,238,236,0.48);
+      font-size: 13px;
+    }
+
     @media (max-width: 640px) {
       .intro { align-items: flex-start; }
       .intro-mascot { width: 60px; max-width: none; }
       .intro-copy h1 { font-size: 15px; }
       .session-meta { display: none; }
+      .panel-grid,
+      .split,
+      .admin-layout,
+      .info-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -247,47 +416,63 @@
            onerror="this.classList.add('missing');"/>
       <div class="intro-copy">
         <h1>Welcome to WarBoard</h1>
-        <p>Create a table, join a session, or pick up where you left off.</p>
+        <p>Manage your tables, account, and platform controls from one place.</p>
       </div>
     </div>
 
-    <div class="action-grid">
-      <div class="card">
-        <div class="card-label">New campaign session</div>
-        <div class="form-stack">
-          <input id="sessName" placeholder="Session name (e.g., Sewer Crawl)"/>
-          <input id="sessRoomName" placeholder="First room (e.g., The Tavern)"/>
-          <button class="btn-primary" id="createSessBtn">Create Session</button>
-        </div>
-        <div class="err" id="sessMsg"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-label">New table</div>
-        <div class="input-row">
-          <input id="newName" placeholder="Room name (e.g., The Tavern)"/>
-          <button class="btn-primary" id="createBtn">Create</button>
-        </div>
-        <div class="hint">You'll get a join code to share with players.</div>
-      </div>
-
-      <div class="card">
-        <div class="card-label">Join with a code</div>
-        <div class="input-row">
-          <input id="joinCode" placeholder="WHAM-XXXXXX"/>
-          <button class="btn-primary" id="joinBtn">Join</button>
-        </div>
-        <div class="err" id="joinMsg"></div>
-      </div>
+    <div class="view-tabs">
+      <button id="viewLobbyBtn" class="view-tab active" type="button">Lobby</button>
+      <button id="viewAccountBtn" class="view-tab" type="button">Account</button>
+      <button id="viewAdminBtn" class="view-tab hidden" type="button">Admin</button>
     </div>
 
-    <div class="card">
-      <div class="card-label">Your recent tables</div>
-      <div id="lobbyContent"></div>
-      <div class="hint" style="margin-top:14px;">
-        Share a join link like <span class="pill">warboard.app/join/WHAM-ABC123</span>
+    <section id="viewLobby" class="view-panel">
+      <div class="action-grid">
+        <div class="card">
+          <div class="card-label">New campaign session</div>
+          <div class="form-stack">
+            <input id="sessName" placeholder="Session name (e.g., Sewer Crawl)"/>
+            <input id="sessRoomName" placeholder="First room (e.g., The Tavern)"/>
+            <button class="btn-primary" id="createSessBtn">Create Session</button>
+          </div>
+          <div class="err" id="sessMsg"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-label">New table</div>
+          <div class="input-row">
+            <input id="newName" placeholder="Room name (e.g., The Tavern)"/>
+            <button class="btn-primary" id="createBtn">Create</button>
+          </div>
+          <div class="hint">You'll get a join code to share with players.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-label">Join with a code</div>
+          <div class="input-row">
+            <input id="joinCode" placeholder="WHAM-XXXXXX"/>
+            <button class="btn-primary" id="joinBtn">Join</button>
+          </div>
+          <div class="err" id="joinMsg"></div>
+        </div>
       </div>
-    </div>
+
+      <div class="card">
+        <div class="card-label">Your recent tables</div>
+        <div id="lobbyContent"></div>
+        <div class="hint" style="margin-top:14px;">
+          Share a join link like <span class="pill">warboard.app/join/WHAM-ABC123</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="viewAccount" class="view-panel hidden">
+      <div id="accountPanel" class="stack"></div>
+    </section>
+
+    <section id="viewAdmin" class="view-panel hidden">
+      <div id="adminPanel" class="stack"></div>
+    </section>
   </div>
 
 <script>
@@ -295,6 +480,22 @@
   const meEl = document.getElementById('me');
   const lobbyEl = document.getElementById('lobbyContent');
   const joinMsg = document.getElementById('joinMsg');
+  const accountPanel = document.getElementById('accountPanel');
+  const adminPanel = document.getElementById('adminPanel');
+  const viewLobby = document.getElementById('viewLobby');
+  const viewAccount = document.getElementById('viewAccount');
+  const viewAdmin = document.getElementById('viewAdmin');
+  const viewLobbyBtn = document.getElementById('viewLobbyBtn');
+  const viewAccountBtn = document.getElementById('viewAccountBtn');
+  const viewAdminBtn = document.getElementById('viewAdminBtn');
+
+  let currentMe = null;
+  let currentView = 'lobby';
+  let currentAdminUserId = null;
+  let adminSearchQuery = '';
+  let adminUsers = [];
+  let adminPacks = [];
+  let adminAuditEntries = [];
 
   async function api(url, opts){
     const res = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
@@ -303,10 +504,46 @@
     return data;
   }
 
+  function escapeHtml(value){
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   function fmtDate(iso){
     if(!iso) return '';
     try{ return new Date(iso).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
     catch(e){ return iso.slice(0,10); }
+  }
+
+  function fmtDateTime(iso){
+    if(!iso) return '';
+    try{ return new Date(iso).toLocaleString(); }
+    catch(e){ return iso; }
+  }
+
+  function statusBadge(status){
+    const normalized = String(status || 'active').trim() || 'active';
+    const cls = normalized === 'active' ? 'good' : (normalized === 'disabled' ? 'warn' : 'bad');
+    return `<span class="inline-badge ${cls}">${escapeHtml(normalized)}</span>`;
+  }
+
+  function roleBadge(role){
+    const normalized = String(role || 'user').trim() || 'user';
+    const cls = normalized === 'owner' || normalized === 'admin' ? 'good' : (normalized === 'moderator' ? 'warn' : '');
+    return `<span class="inline-badge ${cls}">${escapeHtml(normalized.replace(/_/g, ' '))}</span>`;
+  }
+
+  function canViewAdmin(){
+    return !!currentMe && ['admin', 'owner'].includes(String(currentMe.role || ''));
+  }
+
+  function setHashView(next){
+    const hash = next === 'lobby' ? '' : `#${next}`;
+    history.replaceState(null, '', location.pathname + location.search + hash);
   }
 
   function flattenTree(rooms, rootRoomId){
@@ -380,7 +617,7 @@
         renameBtn.disabled = true; renameBtn.textContent = 'Saving…';
         try{
           await api(`/api/rooms/${encodeURIComponent(r.room_id)}`, {method:'PATCH', body: JSON.stringify({name})});
-          await refresh();
+          await refreshLobby();
         }catch(e){
           alert('Rename failed: ' + e.message);
           renameBtn.disabled = false;
@@ -399,7 +636,7 @@
         delBtn.disabled = true; delBtn.textContent = 'Deleting…';
         try{
           await api(`/api/rooms/${encodeURIComponent(r.room_id)}`, {method:'DELETE'});
-          await refresh();
+          await refreshLobby();
         }catch(e){ alert('Delete failed: ' + e.message); delBtn.disabled=false; delBtn.textContent='Delete'; }
       };
       actions.appendChild(delBtn);
@@ -489,7 +726,7 @@
             delBtn.disabled = true; delBtn.textContent = 'Deleting…';
             try{
               await api(`/api/sessions/${encodeURIComponent(sess.id)}`, {method:'DELETE'});
-              await refresh();
+              await refreshLobby();
             }catch(err){ alert('Delete failed: ' + err.message); delBtn.disabled=false; delBtn.textContent='Delete'; }
           };
           actionsDiv.appendChild(delBtn);
@@ -600,7 +837,7 @@
           renameBtn.disabled = true; renameBtn.textContent = 'Saving…';
           try{
             await api(`/api/rooms/${encodeURIComponent(r.room_id)}`, {method:'PATCH', body: JSON.stringify({name})});
-            await refresh();
+            await refreshLobby();
           }catch(e){
             alert('Rename failed: ' + e.message);
             renameBtn.disabled = false;
@@ -619,7 +856,7 @@
           delBtn.disabled = true; delBtn.textContent = 'Deleting…';
           try{
             await api(`/api/rooms/${encodeURIComponent(r.room_id)}`, {method:'DELETE'});
-            await refresh();
+            await refreshLobby();
           }catch(e){ alert('Delete failed: ' + e.message); delBtn.disabled=false; delBtn.textContent='Delete'; }
         };
         right.appendChild(delBtn);
@@ -632,17 +869,23 @@
     return frag;
   }
 
-  async function refresh(){
-    const [me, sessData, roomsData] = await Promise.all([
-      api('/api/me'),
+  async function refreshShell(){
+    currentMe = await api('/api/account/me');
+    meEl.textContent = `${currentMe.username} · ${currentMe.role_label || currentMe.role || 'User'}`;
+    viewAdminBtn.classList.toggle('hidden', !canViewAdmin());
+    if (!canViewAdmin() && currentView === 'admin') {
+      await switchView('account');
+    }
+    return currentMe;
+  }
+
+  async function refreshLobby(){
+    const [sessData, roomsData] = await Promise.all([
       api('/api/my/sessions'),
       api('/api/my/rooms'),
     ]);
-    meEl.textContent = me.username;
 
     const sessions = sessData.sessions || [];
-    const sessionRoomIds = new Set();
-    for(const s of sessions) for(const r of (s.rooms||[])) sessionRoomIds.add(r.room_id);
     const allRooms = roomsData.rooms || [];
     const standaloneRooms = allRooms.filter(r => !r.session_id);
 
@@ -654,6 +897,454 @@
 
     if(sessions.length) lobbyEl.appendChild(renderSessions(sessions));
     if(standaloneRooms.length || sessions.length) lobbyEl.appendChild(renderStandaloneRooms(standaloneRooms));
+  }
+
+  function bindAccountPanel(){
+    const passwordBtn = document.getElementById('changePasswordBtn');
+    const revokeOthersBtn = document.getElementById('revokeOtherSessionsBtn');
+    const accountMsg = document.getElementById('accountMsg');
+    if(passwordBtn){
+      passwordBtn.onclick = async () => {
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const confirmPassword = document.getElementById('confirmPassword').value;
+        accountMsg.textContent = '';
+        if(!newPassword || newPassword !== confirmPassword){
+          accountMsg.textContent = 'New password confirmation does not match.';
+          return;
+        }
+        passwordBtn.disabled = true;
+        passwordBtn.textContent = 'Saving…';
+        try{
+          await api('/api/account/change-password', {
+            method: 'POST',
+            body: JSON.stringify({current_password: currentPassword, new_password: newPassword}),
+          });
+          document.getElementById('currentPassword').value = '';
+          document.getElementById('newPassword').value = '';
+          document.getElementById('confirmPassword').value = '';
+          accountMsg.style.color = '#8dd0a6';
+          accountMsg.textContent = 'Password updated.';
+          await refreshAccount();
+        }catch(e){
+          accountMsg.style.color = '#d47070';
+          accountMsg.textContent = e.message;
+        }finally{
+          passwordBtn.disabled = false;
+          passwordBtn.textContent = 'Change Password';
+        }
+      };
+    }
+    if(revokeOthersBtn){
+      revokeOthersBtn.onclick = async () => {
+        revokeOthersBtn.disabled = true;
+        try{
+          await api('/api/account/sessions/revoke-others', {method:'POST'});
+          await refreshAccount();
+        }catch(e){
+          accountMsg.style.color = '#d47070';
+          accountMsg.textContent = e.message;
+        }finally{
+          revokeOthersBtn.disabled = false;
+        }
+      };
+    }
+    accountPanel.querySelectorAll('[data-revoke-sid]').forEach((btn) => {
+      btn.onclick = async () => {
+        const sid = btn.getAttribute('data-revoke-sid');
+        btn.disabled = true;
+        try{
+          const data = await api(`/api/account/sessions/${encodeURIComponent(sid)}/revoke`, {method:'POST'});
+          if(data.revoked_current){
+            location.href = '/static/login.html';
+            return;
+          }
+          await refreshAccount();
+        }catch(e){
+          accountMsg.style.color = '#d47070';
+          accountMsg.textContent = e.message;
+          btn.disabled = false;
+        }
+      };
+    });
+  }
+
+  async function refreshAccount(){
+    const [me, sessionData, uploadData, packData] = await Promise.all([
+      api('/api/account/me'),
+      api('/api/account/sessions'),
+      api('/api/assets?pack=upload&lite=1&limit=8'),
+      api('/api/private-packs'),
+    ]);
+    currentMe = me;
+    const sessions = Array.isArray(sessionData.sessions) ? sessionData.sessions : [];
+    const uploads = Array.isArray(uploadData.assets) ? uploadData.assets : [];
+    const packs = Array.isArray(packData.packs) ? packData.packs : [];
+    const ownedPacks = packs.filter((pack) => Number(pack.owner_user_id || 0) === Number(me.user_id || 0));
+    const sharedPacks = packs.filter((pack) => Number(pack.owner_user_id || 0) !== Number(me.user_id || 0));
+
+    accountPanel.innerHTML = `
+      ${me.must_change_password ? `<div class="banner">An admin flagged this account for password reset. Change your password before continuing long sessions.</div>` : ''}
+      <div class="panel-grid">
+        <div class="card">
+          <div class="card-label">Profile</div>
+          <div class="info-grid">
+            <div class="mini-stat"><div class="mini-stat-label">Username</div><div class="mini-stat-value">${escapeHtml(me.username)}</div></div>
+            <div class="mini-stat"><div class="mini-stat-label">Role</div><div class="mini-stat-value">${escapeHtml(me.role_label || me.role || 'User')}</div></div>
+            <div class="mini-stat"><div class="mini-stat-label">Status</div><div class="mini-stat-value">${escapeHtml(me.status || 'active')}</div></div>
+            <div class="mini-stat"><div class="mini-stat-label">Joined</div><div class="mini-stat-value">${escapeHtml(fmtDate(me.created_at))}</div></div>
+          </div>
+          <div class="hint" style="margin-top:10px;">Personal uploads and pack access are attached to this account.</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Password</div>
+          <div class="form-stack">
+            <input id="currentPassword" type="password" autocomplete="current-password" placeholder="Current password"/>
+            <input id="newPassword" type="password" autocomplete="new-password" placeholder="New password (8+ chars)"/>
+            <input id="confirmPassword" type="password" autocomplete="new-password" placeholder="Confirm new password"/>
+            <button id="changePasswordBtn" class="btn-primary" type="button">Change Password</button>
+          </div>
+          <div id="accountMsg" class="err"></div>
+        </div>
+      </div>
+      <div class="split">
+        <div class="list-card">
+          <div class="list-head" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>Active Sessions</span>
+            <button id="revokeOtherSessionsBtn" class="btn-ghost btn-sm" type="button">Revoke Others</button>
+          </div>
+          <div class="list-body">
+            ${sessions.length ? sessions.map((session) => `
+              <div class="list-row">
+                <div class="list-row-main">
+                  <div class="list-row-title">${session.current ? 'Current session' : 'Session'} <span class="pill">${escapeHtml(session.sid_suffix || '')}</span></div>
+                  <div class="list-row-meta">Started ${escapeHtml(fmtDateTime(session.created_at))} · Expires ${escapeHtml(fmtDateTime(session.expires_at))}</div>
+                </div>
+                ${session.current
+                  ? `<span class="inline-badge good">Current</span>`
+                  : `<button class="btn-ghost btn-sm" type="button" data-revoke-sid="${escapeHtml(session.sid)}">Revoke</button>`}
+              </div>
+            `).join('') : `<div class="empty-state">No active sessions found.</div>`}
+          </div>
+        </div>
+        <div class="stack">
+          <div class="list-card">
+            <div class="list-head">My Uploads</div>
+            <div class="list-body">
+              ${uploads.length ? uploads.map((asset) => `
+                <div class="list-row">
+                  <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(asset.name || asset.asset_id || 'Asset')}</div>
+                    <div class="list-row-meta">${escapeHtml(asset.folder_path || 'root')} · ${escapeHtml(fmtDate(asset.created_at))}</div>
+                  </div>
+                </div>
+              `).join('') : `<div class="empty-state">No uploaded assets yet.</div>`}
+            </div>
+          </div>
+          <div class="list-card">
+            <div class="list-head">My Packs</div>
+            <div class="list-body">
+              ${ownedPacks.length ? ownedPacks.map((pack) => `
+                <div class="list-row">
+                  <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
+                    <div class="list-row-meta">${escapeHtml(pack.slug || '')} · Created ${escapeHtml(fmtDate(pack.created_at))}</div>
+                  </div>
+                  <span class="inline-badge good">Owner</span>
+                </div>
+              `).join('') : `<div class="empty-state">No owned private packs yet.</div>`}
+            </div>
+          </div>
+          <div class="list-card">
+            <div class="list-head">Granted Pack Access</div>
+            <div class="list-body">
+              ${sharedPacks.length ? sharedPacks.map((pack) => `
+                <div class="list-row">
+                  <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
+                    <div class="list-row-meta">${escapeHtml(pack.slug || '')}</div>
+                  </div>
+                  <span class="inline-badge warn">Granted</span>
+                </div>
+              `).join('') : `<div class="empty-state">No granted private pack access yet.</div>`}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    bindAccountPanel();
+  }
+
+  function bindAdminPanel(){
+    const adminSearchBtn = document.getElementById('adminSearchBtn');
+    const adminSearchInput = document.getElementById('adminSearchInput');
+    if(adminSearchBtn && adminSearchInput){
+      adminSearchBtn.onclick = async () => {
+        adminSearchQuery = adminSearchInput.value.trim();
+        await refreshAdmin();
+      };
+      adminSearchInput.onkeydown = async (e) => {
+        if(e.key === 'Enter'){
+          e.preventDefault();
+          adminSearchQuery = adminSearchInput.value.trim();
+          await refreshAdmin();
+        }
+      };
+    }
+    adminPanel.querySelectorAll('[data-admin-user-id]').forEach((el) => {
+      el.onclick = async () => {
+        currentAdminUserId = Number(el.getAttribute('data-admin-user-id') || '0') || null;
+        await refreshAdmin();
+      };
+    });
+    adminPanel.querySelectorAll('[data-admin-action]').forEach((btn) => {
+      btn.onclick = async () => {
+        const action = btn.getAttribute('data-admin-action');
+        if(!currentAdminUserId || !action) return;
+        btn.disabled = true;
+        try{
+          if(action === 'disable'){
+            const reason = prompt('Disable reason (optional):', '') || '';
+            await api(`/api/admin/users/${encodeURIComponent(currentAdminUserId)}/disable`, {
+              method: 'POST',
+              body: JSON.stringify({reason}),
+            });
+          } else if(action === 'enable'){
+            await api(`/api/admin/users/${encodeURIComponent(currentAdminUserId)}/enable`, {method:'POST'});
+          } else if(action === 'force-reset'){
+            await api(`/api/admin/users/${encodeURIComponent(currentAdminUserId)}/force-password-reset`, {method:'POST'});
+          } else if(action === 'soft-delete'){
+            const reason = prompt('Soft-delete reason:', '') || '';
+            if(!confirm('Soft-delete this user account? Login will be blocked but references will be preserved.')) return;
+            await api(`/api/admin/users/${encodeURIComponent(currentAdminUserId)}`, {
+              method: 'DELETE',
+              body: JSON.stringify({reason}),
+            });
+          }
+          await refreshAdmin();
+        }catch(e){
+          alert(e.message);
+        }finally{
+          btn.disabled = false;
+        }
+      };
+    });
+    const grantBtn = document.getElementById('grantPackBtn');
+    const grantSelect = document.getElementById('grantPackSelect');
+    if(grantBtn && grantSelect){
+      grantBtn.onclick = async () => {
+        const packId = Number(grantSelect.value || '0');
+        if(!currentAdminUserId || !packId) return;
+        grantBtn.disabled = true;
+        try{
+          await api(`/api/admin/packs/${encodeURIComponent(packId)}/grant`, {
+            method: 'POST',
+            body: JSON.stringify({user_id: currentAdminUserId}),
+          });
+          await refreshAdmin();
+        }catch(e){
+          alert(e.message);
+        }finally{
+          grantBtn.disabled = false;
+        }
+      };
+    }
+    adminPanel.querySelectorAll('[data-revoke-pack-id]').forEach((btn) => {
+      btn.onclick = async () => {
+        const packId = Number(btn.getAttribute('data-revoke-pack-id') || '0');
+        if(!currentAdminUserId || !packId) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/admin/packs/${encodeURIComponent(packId)}/revoke`, {
+            method: 'POST',
+            body: JSON.stringify({user_id: currentAdminUserId}),
+          });
+          await refreshAdmin();
+        }catch(e){
+          alert(e.message);
+          btn.disabled = false;
+        }
+      };
+    });
+  }
+
+  async function refreshAdmin(){
+    if(!canViewAdmin()){
+      adminPanel.innerHTML = '<div class="card"><div class="empty-state">Admin access required.</div></div>';
+      return;
+    }
+    const [usersData, packsData, auditData] = await Promise.all([
+      api(`/api/admin/users?q=${encodeURIComponent(adminSearchQuery)}&limit=120`),
+      api('/api/admin/packs?limit=250'),
+      api('/api/admin/audit?limit=30'),
+    ]);
+    adminUsers = Array.isArray(usersData.users) ? usersData.users : [];
+    adminPacks = Array.isArray(packsData.packs) ? packsData.packs : [];
+    adminAuditEntries = Array.isArray(auditData.entries) ? auditData.entries : [];
+    if(!currentAdminUserId && adminUsers.length){
+      currentAdminUserId = Number(adminUsers[0].user_id || 0) || null;
+    }
+    if(currentAdminUserId && !adminUsers.some((user) => Number(user.user_id || 0) === Number(currentAdminUserId))){
+      currentAdminUserId = adminUsers.length ? Number(adminUsers[0].user_id || 0) : null;
+    }
+
+    let detailData = null;
+    if(currentAdminUserId){
+      detailData = await api(`/api/admin/users/${encodeURIComponent(currentAdminUserId)}`);
+    }
+
+    const selectedUser = detailData?.user || null;
+    const entitlements = Array.isArray(detailData?.pack_entitlements) ? detailData.pack_entitlements : [];
+    const uploads = Array.isArray(detailData?.uploads) ? detailData.uploads : [];
+    const ownedPacks = Array.isArray(detailData?.packs_owned) ? detailData.packs_owned : [];
+    const entitledPackIds = new Set(entitlements.map((entry) => Number(entry.pack_id || 0)));
+    const grantablePacks = adminPacks.filter((pack) => {
+      const packId = Number(pack.pack_id || 0);
+      const ownerId = Number(pack.owner_user_id || 0);
+      return !entitledPackIds.has(packId) && ownerId !== Number(currentAdminUserId || 0);
+    });
+
+    adminPanel.innerHTML = `
+      <div class="admin-layout">
+        <div class="list-card">
+          <div class="list-head">
+            <div class="search-row">
+              <input id="adminSearchInput" type="text" placeholder="Search users..." value="${escapeHtml(adminSearchQuery)}"/>
+              <button id="adminSearchBtn" class="btn-primary btn-sm" type="button">Search</button>
+            </div>
+          </div>
+          <div class="list-body">
+            ${adminUsers.length ? adminUsers.map((user) => `
+              <div class="user-list-item ${Number(user.user_id || 0) === Number(currentAdminUserId) ? 'active' : ''}" data-admin-user-id="${escapeHtml(user.user_id)}">
+                <div class="list-row-title">${escapeHtml(user.username)}</div>
+                <div class="badge-row">
+                  ${roleBadge(user.role)}
+                  ${statusBadge(user.status)}
+                  ${user.must_change_password ? `<span class="inline-badge warn">reset required</span>` : ''}
+                </div>
+              </div>
+            `).join('') : `<div class="empty-state">No matching users found.</div>`}
+          </div>
+        </div>
+        <div class="stack">
+          ${selectedUser ? `
+            <div class="card">
+              <div class="card-label">User Detail</div>
+              <div class="info-grid">
+                <div class="mini-stat"><div class="mini-stat-label">Username</div><div class="mini-stat-value">${escapeHtml(selectedUser.username)}</div></div>
+                <div class="mini-stat"><div class="mini-stat-label">Role</div><div class="mini-stat-value">${escapeHtml(selectedUser.role)}</div></div>
+                <div class="mini-stat"><div class="mini-stat-label">Status</div><div class="mini-stat-value">${escapeHtml(selectedUser.status)}</div></div>
+                <div class="mini-stat"><div class="mini-stat-label">Joined</div><div class="mini-stat-value">${escapeHtml(fmtDate(selectedUser.created_at))}</div></div>
+                <div class="mini-stat"><div class="mini-stat-label">Owned Rooms</div><div class="mini-stat-value">${escapeHtml(selectedUser.owned_room_count)}</div></div>
+                <div class="mini-stat"><div class="mini-stat-label">Active Sessions</div><div class="mini-stat-value">${escapeHtml(selectedUser.session_count)}</div></div>
+                <div class="mini-stat"><div class="mini-stat-label">Owned Uploads</div><div class="mini-stat-value">${escapeHtml(selectedUser.owned_asset_count)}</div></div>
+                <div class="mini-stat"><div class="mini-stat-label">Owned Packs</div><div class="mini-stat-value">${escapeHtml(selectedUser.owned_pack_count)}</div></div>
+              </div>
+              <div class="badge-row">
+                ${roleBadge(selectedUser.role)}
+                ${statusBadge(selectedUser.status)}
+                ${selectedUser.must_change_password ? `<span class="inline-badge warn">reset required</span>` : ''}
+              </div>
+              <div class="detail-actions">
+                ${selectedUser.status === 'active'
+                  ? `<button class="btn-ghost btn-sm" type="button" data-admin-action="disable">Disable</button>`
+                  : `<button class="btn-primary btn-sm" type="button" data-admin-action="enable">Enable</button>`}
+                <button class="btn-ghost btn-sm" type="button" data-admin-action="force-reset">Force Password Reset</button>
+                <button class="btn-danger btn-sm" type="button" data-admin-action="soft-delete">Soft Delete</button>
+              </div>
+            </div>
+            <div class="panel-grid">
+              <div class="list-card">
+                <div class="list-head">Owned Uploads</div>
+                <div class="list-body">
+                  ${uploads.length ? uploads.map((asset) => `
+                    <div class="list-row">
+                      <div class="list-row-main">
+                        <div class="list-row-title">${escapeHtml(asset.name || asset.asset_id || 'Asset')}</div>
+                        <div class="list-row-meta">${escapeHtml(asset.folder_path || 'root')} · ${escapeHtml(fmtDate(asset.created_at))}</div>
+                      </div>
+                    </div>
+                  `).join('') : `<div class="empty-state">No owned uploads found.</div>`}
+                </div>
+              </div>
+              <div class="list-card">
+                <div class="list-head">Owned Packs</div>
+                <div class="list-body">
+                  ${ownedPacks.length ? ownedPacks.map((pack) => `
+                    <div class="list-row">
+                      <div class="list-row-main">
+                        <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
+                        <div class="list-row-meta">${escapeHtml(pack.slug || '')} · ${escapeHtml(fmtDate(pack.created_at))}</div>
+                      </div>
+                    </div>
+                  `).join('') : `<div class="empty-state">No owned packs found.</div>`}
+                </div>
+              </div>
+            </div>
+            <div class="split">
+              <div class="list-card">
+                <div class="list-head">Pack Entitlements</div>
+                <div class="list-body">
+                  ${entitlements.length ? entitlements.map((entry) => `
+                    <div class="list-row">
+                      <div class="list-row-main">
+                        <div class="list-row-title">${escapeHtml(entry.pack_name || entry.pack_slug || 'Pack')}</div>
+                        <div class="list-row-meta">${escapeHtml(entry.pack_slug || '')} · Granted ${escapeHtml(fmtDate(entry.granted_at))}</div>
+                      </div>
+                      <button class="btn-ghost btn-sm" type="button" data-revoke-pack-id="${escapeHtml(entry.pack_id)}">Revoke</button>
+                    </div>
+                  `).join('') : `<div class="empty-state">No direct pack entitlements.</div>`}
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-label">Grant Pack Access</div>
+                <div class="form-stack">
+                  <select id="grantPackSelect" style="padding:7px 10px; background:#1a1a1a; color:#eeeeec; border:1px solid #3d3d3d; border-radius:4px;">
+                    <option value="">Select a private pack</option>
+                    ${grantablePacks.map((pack) => `<option value="${escapeHtml(pack.pack_id)}">${escapeHtml(pack.name || pack.slug || 'Pack')} · ${escapeHtml(pack.owner_username || 'unknown owner')}</option>`).join('')}
+                  </select>
+                  <button id="grantPackBtn" class="btn-primary" type="button" ${grantablePacks.length ? '' : 'disabled'}>Grant Access</button>
+                </div>
+                <div class="hint">Granting and revoking access is audit logged.</div>
+              </div>
+            </div>
+          ` : `<div class="card"><div class="empty-state">Select a user to inspect their account and entitlements.</div></div>`}
+          <div class="list-card">
+            <div class="list-head">Recent Audit</div>
+            <div class="list-body">
+              ${adminAuditEntries.length ? adminAuditEntries.map((entry) => `
+                <div class="list-row">
+                  <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(entry.action || 'action')}</div>
+                    <div class="list-row-meta">${escapeHtml(entry.summary || '')} · ${escapeHtml(fmtDateTime(entry.created_at))}</div>
+                  </div>
+                  <span class="pill">${escapeHtml(entry.target_type || '')}</span>
+                </div>
+              `).join('') : `<div class="empty-state">No audit entries yet.</div>`}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    bindAdminPanel();
+  }
+
+  async function switchView(next){
+    const target = next === 'account' ? 'account' : (next === 'admin' ? 'admin' : 'lobby');
+    if(target === 'admin' && !canViewAdmin()){
+      return switchView('account');
+    }
+    currentView = target;
+    viewLobby.classList.toggle('hidden', target !== 'lobby');
+    viewAccount.classList.toggle('hidden', target !== 'account');
+    viewAdmin.classList.toggle('hidden', target !== 'admin');
+    viewLobbyBtn.classList.toggle('active', target === 'lobby');
+    viewAccountBtn.classList.toggle('active', target === 'account');
+    viewAdminBtn.classList.toggle('active', target === 'admin');
+    setHashView(target);
+    if(target === 'lobby') await refreshLobby();
+    else if(target === 'account') await refreshAccount();
+    else if(target === 'admin') await refreshAdmin();
   }
 
   document.getElementById('createBtn').onclick = async () => {
@@ -695,7 +1386,13 @@
     location.href = '/static/login.html';
   };
 
-  await refresh();
+  viewLobbyBtn.onclick = () => { void switchView('lobby'); };
+  viewAccountBtn.onclick = () => { void switchView('account'); };
+  viewAdminBtn.onclick = () => { void switchView('admin'); };
+
+  await refreshShell();
+  const initialView = ['account', 'admin'].includes(location.hash.replace(/^#/, '')) ? location.hash.replace(/^#/, '') : 'lobby';
+  await switchView(initialView);
 })();
 </script>
 </body>

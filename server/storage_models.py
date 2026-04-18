@@ -37,6 +37,12 @@ class UserRow(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     password_hash: str
     created_at: str
+    role: str = Field(default="user", index=True)
+    status: str = Field(default="active", index=True)
+    must_change_password: bool = False
+    disabled_at: Optional[str] = None
+    disabled_reason: Optional[str] = None
+    deleted_at: Optional[str] = None
     last_room_id: Optional[str] = Field(default=None, index=True)
 
 
@@ -122,3 +128,15 @@ class GameSessionSharedPackRow(SQLModel, table=True):
     pack_id: int = Field(index=True)
     shared_by_user_id: Optional[int] = Field(default=None, index=True)
     shared_at: str
+
+
+class AuditLogRow(SQLModel, table=True):
+    audit_id: Optional[int] = Field(default=None, primary_key=True)
+    actor_user_id: Optional[int] = Field(default=None, index=True)
+    action: str = Field(index=True)
+    target_type: str = Field(index=True)
+    target_id: str = Field(index=True)
+    summary: str = ""
+    before_json: str = "{}"
+    after_json: str = "{}"
+    created_at: str = Field(index=True)

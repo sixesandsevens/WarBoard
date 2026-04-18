@@ -2,6 +2,8 @@
 
 let _interiorsResolvedDirty = true;
 let _interiorsResolvedCache = null;
+const INTERIOR_WALL_EPS = 0.001;
+const INTERIOR_MIN_SEG_LEN = 0.5;
 
 function markInteriorsDirty() {
   _interiorsResolvedDirty = true;
@@ -138,19 +140,20 @@ function carveDoorSegment(start, end, gridSize) {
   return [
     { start, end: mid - width / 2 },
     { start: mid + width / 2, end },
-  ].filter((segment) => segment.end > segment.start);
+  ].filter((segment) => (segment.end - segment.start) > INTERIOR_MIN_SEG_LEN);
 }
 
 function subtractSharedSegments(start, end, ranges) {
+  if ((end - start) <= INTERIOR_MIN_SEG_LEN) return [];
   if (!Array.isArray(ranges) || !ranges.length) return [{ start, end }];
   const sorted = [...ranges]
-    .filter((range) => range && Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start)
+    .filter((range) => range && Number.isFinite(range.start) && Number.isFinite(range.end) && (range.end - range.start) > INTERIOR_WALL_EPS)
     .sort((a, b) => a.start - b.start);
   if (!sorted.length) return [{ start, end }];
 
   const merged = [];
   for (const range of sorted) {
-    if (!merged.length || range.start > merged[merged.length - 1].end) {
+    if (!merged.length || range.start > (merged[merged.length - 1].end + INTERIOR_WALL_EPS)) {
       merged.push({ start: range.start, end: range.end });
     } else {
       merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, range.end);
@@ -160,11 +163,12 @@ function subtractSharedSegments(start, end, ranges) {
   const out = [];
   let cursor = start;
   for (const range of merged) {
-    if (range.start > cursor) out.push({ start: cursor, end: range.start });
+    const leftEnd = Math.min(end, range.start);
+    if ((leftEnd - cursor) > INTERIOR_MIN_SEG_LEN) out.push({ start: cursor, end: leftEnd });
     cursor = Math.max(cursor, range.end);
   }
-  if (cursor < end) out.push({ start: cursor, end });
-  return out.filter((segment) => segment.end > segment.start);
+  if ((end - cursor) > INTERIOR_MIN_SEG_LEN) out.push({ start: cursor, end });
+  return out.filter((segment) => (segment.end - segment.start) > INTERIOR_MIN_SEG_LEN);
 }
 
 function hitTestInterior(wx, wy) {
@@ -230,9 +234,15 @@ function interiorWallRangeToWorld(edge, tStart, tEnd) {
   if (!(length > 0)) return null;
   const startT = clamp(Math.min(tStart, tEnd), 0, 1);
   const endT = clamp(Math.max(tStart, tEnd), 0, 1);
-  const start = edge.start + (length * startT);
-  const end = edge.start + (length * endT);
-  return end > start ? { start, end } : null;
+  const snapCoord = (value) => {
+    const snapped = edge.start + (Math.round((value - edge.start) / ui.gridSize) * ui.gridSize);
+    const withinSnap = Math.abs(snapped - value) <= (INTERIOR_WALL_EPS * 8);
+    const next = withinSnap ? snapped : value;
+    return clamp(next, Math.min(edge.start, edge.end), Math.max(edge.start, edge.end));
+  };
+  const start = snapCoord(edge.start + (length * startT));
+  const end = snapCoord(edge.start + (length * endT));
+  return (end - start) > INTERIOR_MIN_SEG_LEN ? { start, end } : null;
 }
 
 function interiorWallPointToT(edge, wx, wy) {

@@ -81,6 +81,20 @@ def init_db() -> None:
                 conn.execute(f"CREATE INDEX IF NOT EXISTS ix_gamesessionrow_root_room_id ON {session_table}(root_room_id);")
         user_table = "userrow"
         if _table_exists(conn, user_table):
+            if not _column_exists(conn, user_table, "role"):
+                conn.execute(f"ALTER TABLE {user_table} ADD COLUMN role TEXT DEFAULT 'user';")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS ix_userrow_role ON {user_table}(role);")
+            if not _column_exists(conn, user_table, "status"):
+                conn.execute(f"ALTER TABLE {user_table} ADD COLUMN status TEXT DEFAULT 'active';")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS ix_userrow_status ON {user_table}(status);")
+            if not _column_exists(conn, user_table, "must_change_password"):
+                conn.execute(f"ALTER TABLE {user_table} ADD COLUMN must_change_password BOOLEAN DEFAULT 0;")
+            if not _column_exists(conn, user_table, "disabled_at"):
+                conn.execute(f"ALTER TABLE {user_table} ADD COLUMN disabled_at TEXT;")
+            if not _column_exists(conn, user_table, "disabled_reason"):
+                conn.execute(f"ALTER TABLE {user_table} ADD COLUMN disabled_reason TEXT;")
+            if not _column_exists(conn, user_table, "deleted_at"):
+                conn.execute(f"ALTER TABLE {user_table} ADD COLUMN deleted_at TEXT;")
             if not _column_exists(conn, user_table, "last_room_id"):
                 conn.execute(f"ALTER TABLE {user_table} ADD COLUMN last_room_id TEXT;")
                 conn.execute(f"CREATE INDEX IF NOT EXISTS ix_userrow_last_room_id ON {user_table}(last_room_id);")
