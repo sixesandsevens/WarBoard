@@ -60,6 +60,9 @@ from .storage import (
     assign_room_to_game_session,
     bootstrap_owner_if_missing,
     can_manage_game_session,
+    count_session_gms,
+    remove_game_session_member,
+    set_game_session_member_role,
     create_asset_record,
     create_game_session,
     create_room_in_game_session,
@@ -477,6 +480,40 @@ def _can_manage_room_members(actor, room_id: str, meta=None) -> bool:
 def _can_transfer_room_ownership(actor, room_id: str, meta=None) -> bool:
     actor_role = _get_room_actor_role(actor, room_id, meta)
     return actor_role in {"platform_admin", "owner"}
+
+
+def _get_session_actor_role(actor, session_id: str) -> str:
+    """Return the actor's effective role in the session: platform_admin | gm | co_gm | player | ''."""
+    if not actor or actor.user_id is None:
+        return ""
+    if _is_site_admin(actor):
+        return "platform_admin"
+    return get_game_session_role(session_id, actor.user_id) or ""
+
+
+def _can_view_session_members(actor, session_id: str) -> bool:
+    return _get_session_actor_role(actor, session_id) in {"platform_admin", "gm", "co_gm"}
+
+
+def _can_manage_session_members(actor, session_id: str) -> bool:
+    return _get_session_actor_role(actor, session_id) in {"platform_admin", "gm"}
+
+
+def _can_assign_session_roles(actor, session_id: str) -> bool:
+    return _get_session_actor_role(actor, session_id) in {"platform_admin", "gm"}
+
+
+def _session_governance_payload(session, actor) -> dict:
+    session_id = session.session_id
+    actor_role = _get_session_actor_role(actor, session_id)
+    return {
+        "session_id": session.session_id,
+        "name": session.name,
+        "actor_session_role": actor_role or "viewer",
+        "can_view_members": _can_view_session_members(actor, session_id),
+        "can_manage_members": _can_manage_session_members(actor, session_id),
+        "can_assign_roles": _can_assign_session_roles(actor, session_id),
+    }
 
 
 def _room_access_still_valid(user_id: int, room_id: str) -> bool:
@@ -1773,12 +1810,18 @@ def get_session_tree_api(session_id: str, req: Request):
 
 @app.get("/api/sessions/{session_id}/members")
 def get_session_members_api(session_id: str, req: Request):
-    user = _require_user(req)
-    if user.user_id is None:
+    actor = _require_user(req)
+    if actor.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
-    if not get_game_session_role(session_id, user.user_id):
-        raise HTTPException(status_code=403, detail="Not a member of this session")
-    return {"members": list_game_session_members(session_id)}
+    session = get_game_session(session_id)
+    if not session or session.archived:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not _can_view_session_members(actor, session_id):
+        raise HTTPException(status_code=403, detail="Session member access required")
+    return {
+        "session": _session_governance_payload(session, actor),
+        "members": list_game_session_members(session_id),
+    }
 
 
 @app.get("/api/sessions/{session_id}/shared-packs")
@@ -1815,6 +1858,120 @@ def unshare_session_pack_api(session_id: str, pack_id: int, req: Request):
     if not set_game_session_shared_pack(session_id, pack_id, False, shared_by_user_id=user.user_id):
         raise HTTPException(status_code=404, detail="Session or pack not found")
     return {"ok": True, "packs": list_game_session_shared_packs(session_id)}
+
+
+@app.post("/api/sessions/{session_id}/members/{user_id}/role")
+async def set_session_member_role_api(session_id: str, user_id: int, req: Request):
+    actor = _require_user(req)
+    session = get_game_session(session_id)
+    if not session or session.archived:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not _can_assign_session_roles(actor, session_id):
+        raise HTTPException(status_code=403, detail="GM or admin required")
+    body = await req.json()
+    new_role = str(body.get("role") or "").strip()
+    if new_role not in {"co_gm", "player"}:
+        raise HTTPException(status_code=400, detail="Role must be co_gm or player")
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    current_role = get_game_session_role(session_id, user_id)
+    if not current_role:
+        raise HTTPException(status_code=404, detail="User is not a session member")
+    if current_role == "gm":
+        if not _is_site_admin(actor):
+            raise HTTPException(status_code=400, detail="Cannot change another GM's role; use transfer-gm")
+        if count_session_gms(session_id) <= 1:
+            raise HTTPException(status_code=400, detail="Cannot demote the only GM; use transfer-gm")
+    before_members = list_game_session_members(session_id)
+    if not set_game_session_member_role(session_id, user_id, new_role):
+        raise HTTPException(status_code=404, detail="Member not found")
+    after_members = list_game_session_members(session_id)
+    _audit(
+        actor_user_id=actor.user_id,
+        action="session.change_member_role",
+        target_type="session_member",
+        target_id=f"{session_id}:{user_id}",
+        summary=f"{actor.username} changed {target.username}'s role in session '{session.name}' from {current_role} to {new_role}",
+        before={"session_id": session_id, "members": before_members},
+        after={"session_id": session_id, "members": after_members},
+    )
+    return {"ok": True, "session": _session_governance_payload(session, actor), "members": after_members}
+
+
+@app.post("/api/sessions/{session_id}/members/{user_id}/remove")
+def remove_session_member_api(session_id: str, user_id: int, req: Request):
+    actor = _require_user(req)
+    session = get_game_session(session_id)
+    if not session or session.archived:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not _can_manage_session_members(actor, session_id):
+        raise HTTPException(status_code=403, detail="GM or admin required")
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    current_role = get_game_session_role(session_id, user_id)
+    if not current_role:
+        raise HTTPException(status_code=404, detail="User is not a session member")
+    if current_role == "gm" and count_session_gms(session_id) <= 1:
+        raise HTTPException(status_code=400, detail="Cannot remove the only GM; use transfer-gm first")
+    before_members = list_game_session_members(session_id)
+    if not remove_game_session_member(session_id, user_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    after_members = list_game_session_members(session_id)
+    _audit(
+        actor_user_id=actor.user_id,
+        action="session.remove_member",
+        target_type="session_member",
+        target_id=f"{session_id}:{user_id}",
+        summary=f"{actor.username} removed {target.username} from session '{session.name}'",
+        before={"session_id": session_id, "members": before_members},
+        after={"session_id": session_id, "members": after_members},
+    )
+    return {"ok": True, "session": _session_governance_payload(session, actor), "members": after_members}
+
+
+@app.post("/api/sessions/{session_id}/transfer-gm")
+async def transfer_session_gm_api(session_id: str, req: Request):
+    actor = _require_user(req)
+    session = get_game_session(session_id)
+    if not session or session.archived:
+        raise HTTPException(status_code=404, detail="Session not found")
+    actor_role = _get_session_actor_role(actor, session_id)
+    if actor_role not in {"platform_admin", "gm"}:
+        raise HTTPException(status_code=403, detail="GM or admin required")
+    body = await req.json()
+    new_gm_user_id = int(body.get("user_id") or 0)
+    if new_gm_user_id <= 0:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    if actor.user_id is not None and new_gm_user_id == actor.user_id:
+        raise HTTPException(status_code=400, detail="Cannot transfer GM to yourself")
+    target = get_user_by_id(new_gm_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    current_role = get_game_session_role(session_id, new_gm_user_id)
+    if not current_role:
+        raise HTTPException(status_code=400, detail="Target must already be a session member")
+    if current_role == "gm":
+        raise HTTPException(status_code=400, detail="Target is already a GM")
+    before_members = list_game_session_members(session_id)
+    set_game_session_member_role(session_id, new_gm_user_id, "gm")
+    if actor_role == "gm":
+        actor_current_role = get_game_session_role(session_id, actor.user_id)
+        if actor_current_role == "gm":
+            set_game_session_member_role(session_id, actor.user_id, "co_gm")
+    after_members = list_game_session_members(session_id)
+    _audit(
+        actor_user_id=actor.user_id,
+        action="session.transfer_gm",
+        target_type="session",
+        target_id=session_id,
+        summary=f"{actor.username} transferred GM of session '{session.name}' to {target.username}",
+        before={"session_id": session_id, "members": before_members},
+        after={"session_id": session_id, "members": after_members},
+    )
+    updated_session = get_game_session(session_id)
+    return {"ok": True, "session": _session_governance_payload(updated_session, actor), "members": after_members}
 
 
 @app.post("/api/rooms")

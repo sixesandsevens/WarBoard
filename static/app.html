@@ -441,6 +441,7 @@
       <button id="viewLobbyBtn" class="view-tab active" type="button">Lobby</button>
       <button id="viewAccountBtn" class="view-tab" type="button">Account</button>
       <button id="viewRoomBtn" class="view-tab hidden" type="button">Room</button>
+      <button id="viewSessionBtn" class="view-tab hidden" type="button">Session</button>
       <button id="viewAdminBtn" class="view-tab hidden" type="button">Admin</button>
     </div>
 
@@ -500,6 +501,10 @@
       <div id="roomPanel" class="stack"></div>
     </section>
 
+    <section id="viewSession" class="view-panel hidden">
+      <div id="sessionPanel" class="stack"></div>
+    </section>
+
     <section id="viewAdmin" class="view-panel hidden">
       <div id="adminPanel" class="stack"></div>
     </section>
@@ -520,11 +525,15 @@
   const viewLobbyBtn = document.getElementById('viewLobbyBtn');
   const viewAccountBtn = document.getElementById('viewAccountBtn');
   const viewRoomBtn = document.getElementById('viewRoomBtn');
+  const viewSessionBtn = document.getElementById('viewSessionBtn');
   const viewAdminBtn = document.getElementById('viewAdminBtn');
+  const viewSession = document.getElementById('viewSession');
+  const sessionPanel = document.getElementById('sessionPanel');
 
   let currentMe = null;
   let currentView = 'lobby';
   let currentGovernanceRoomId = '';
+  let currentGovernanceSessionId = '';
   let currentAdminUserId = null;
   let adminSearchQuery = '';
   let adminRoomLookupId = '';
@@ -584,17 +593,22 @@
   function syncViewAccessControls(){
     const locked = isPasswordLocked();
     const hasRoomTarget = !!currentGovernanceRoomId;
+    const hasSessionTarget = !!currentGovernanceSessionId;
     viewLobbyBtn.disabled = locked;
     viewRoomBtn.disabled = locked || !hasRoomTarget;
+    viewSessionBtn.disabled = locked || !hasSessionTarget;
     viewAdminBtn.disabled = locked || !canViewAdmin();
     viewRoomBtn.classList.toggle('hidden', !hasRoomTarget);
+    viewSessionBtn.classList.toggle('hidden', !hasSessionTarget);
     if(locked){
       viewLobbyBtn.title = 'Password change required';
       viewRoomBtn.title = 'Password change required';
+      viewSessionBtn.title = 'Password change required';
       viewAdminBtn.title = 'Password change required';
     } else {
       viewLobbyBtn.title = '';
       viewRoomBtn.title = hasRoomTarget ? '' : 'Select a room to manage';
+      viewSessionBtn.title = hasSessionTarget ? '' : 'Select a session to manage';
       viewAdminBtn.title = canViewAdmin() ? '' : 'Admin access required';
     }
   }
@@ -608,6 +622,12 @@
     currentGovernanceRoomId = String(roomId || '').trim();
     syncViewAccessControls();
     await switchView('room');
+  }
+
+  async function openSessionGovernance(sessId){
+    currentGovernanceSessionId = String(sessId || '').trim();
+    syncViewAccessControls();
+    await switchView('session');
   }
 
   function flattenTree(rooms, rootRoomId){
@@ -791,6 +811,14 @@
           actionsDiv.appendChild(copyBtn);
         }
 
+        if(sess.role === 'gm' || sess.role === 'co_gm'){
+          const membersBtn = document.createElement('button');
+          membersBtn.className = 'btn-ghost btn-sm';
+          membersBtn.textContent = 'Members';
+          membersBtn.onclick = (e) => { e.stopPropagation(); void openSessionGovernance(sess.id); };
+          actionsDiv.appendChild(membersBtn);
+        }
+
         if(sess.role === 'gm'){
           const delBtn = document.createElement('button');
           delBtn.className = 'btn-danger btn-sm';
@@ -959,7 +987,7 @@
     const hasAdminRole = !!currentMe && ['admin', 'owner'].includes(String(currentMe.role || ''));
     viewAdminBtn.classList.toggle('hidden', !hasAdminRole);
     syncViewAccessControls();
-    if ((isPasswordLocked() && currentView !== 'account') || (!canViewAdmin() && currentView === 'admin') || (!currentGovernanceRoomId && currentView === 'room')) {
+    if ((isPasswordLocked() && currentView !== 'account') || (!canViewAdmin() && currentView === 'admin') || (!currentGovernanceRoomId && currentView === 'room') || (!currentGovernanceSessionId && currentView === 'session')) {
       await switchView('account');
     }
     return currentMe;
@@ -1276,6 +1304,129 @@
         </div>
       `;
       bindRoomPanel(null);
+    }
+  }
+
+  function bindSessionPanel(sess, members){
+    const backBtn = document.getElementById('closeSessionGovernanceBtn');
+    if(backBtn) backBtn.onclick = async () => { await switchView('lobby'); };
+
+    sessionPanel.querySelectorAll('[data-sess-remove-user]').forEach((btn) => {
+      btn.onclick = async () => {
+        const userId = btn.getAttribute('data-sess-remove-user');
+        const username = btn.getAttribute('data-sess-remove-username') || 'this user';
+        if(!sess || !userId) return;
+        if(!confirm(`Remove ${username} from the session?\n\nThis also removes them from all session rooms.`)) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/sessions/${encodeURIComponent(sess.session_id)}/members/${encodeURIComponent(userId)}/remove`, {method:'POST'});
+          await refreshSessionGovernance();
+        }catch(e){ alert(e.message); btn.disabled = false; }
+      };
+    });
+
+    sessionPanel.querySelectorAll('[data-sess-set-role]').forEach((btn) => {
+      btn.onclick = async () => {
+        const userId = btn.getAttribute('data-sess-set-role');
+        const newRole = btn.getAttribute('data-sess-role');
+        const username = btn.getAttribute('data-sess-role-username') || 'this user';
+        if(!sess || !userId || !newRole) return;
+        const label = newRole === 'co_gm' ? 'Promote' : 'Demote';
+        if(!confirm(`${label} ${username} to ${newRole === 'co_gm' ? 'Co-GM' : 'Player'}?`)) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/sessions/${encodeURIComponent(sess.session_id)}/members/${encodeURIComponent(userId)}/role`, {
+            method:'POST', body: JSON.stringify({role: newRole}),
+          });
+          await refreshSessionGovernance();
+        }catch(e){ alert(e.message); btn.disabled = false; }
+      };
+    });
+
+    sessionPanel.querySelectorAll('[data-sess-transfer-gm]').forEach((btn) => {
+      btn.onclick = async () => {
+        const userId = btn.getAttribute('data-sess-transfer-gm');
+        const username = btn.getAttribute('data-sess-transfer-username') || 'this user';
+        if(!sess || !userId) return;
+        if(!confirm(`Transfer GM to ${username}?\n\nYou will become Co-GM.`)) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/sessions/${encodeURIComponent(sess.session_id)}/transfer-gm`, {
+            method:'POST', body: JSON.stringify({user_id: Number(userId)}),
+          });
+          await refreshSessionGovernance();
+          await refreshLobby();
+        }catch(e){ alert(e.message); btn.disabled = false; }
+      };
+    });
+  }
+
+  async function refreshSessionGovernance(){
+    syncViewAccessControls();
+    if(!currentGovernanceSessionId){
+      sessionPanel.innerHTML = '<div class="card"><div class="empty-state">Select a session to manage from the lobby.</div></div>';
+      return;
+    }
+    try{
+      const data = await api(`/api/sessions/${encodeURIComponent(currentGovernanceSessionId)}/members`);
+      const sess = data.session || {};
+      const members = Array.isArray(data.members) ? data.members : [];
+      const sessionRoleLabel = (r) => r === 'gm' ? 'GM' : r === 'co_gm' ? 'Co-GM' : 'Player';
+      sessionPanel.innerHTML = `
+        <div class="card">
+          <div class="card-label">Session Governance</div>
+          <div class="info-grid">
+            <div class="mini-stat"><div class="mini-stat-label">Session</div><div class="mini-stat-value">${escapeHtml(sess.name || sess.session_id || '')}</div></div>
+            <div class="mini-stat"><div class="mini-stat-label">Session ID</div><div class="mini-stat-value">${escapeHtml(sess.session_id || '')}</div></div>
+            <div class="mini-stat"><div class="mini-stat-label">Your Session Role</div><div class="mini-stat-value">${escapeHtml(sessionRoleLabel(sess.actor_session_role || 'viewer'))}</div></div>
+          </div>
+          <div class="badge-row">
+            ${roleBadge(sess.actor_session_role || 'viewer')}
+          </div>
+          <div class="detail-actions">
+            <button id="closeSessionGovernanceBtn" class="btn-ghost btn-sm" type="button">Back to Lobby</button>
+          </div>
+        </div>
+        <div class="list-card">
+          <div class="list-head">Session Members</div>
+          <div class="list-body">
+            ${members.length ? members.map((m) => {
+              const sessionRole = m.role || 'player';
+              const isGm = sessionRole === 'gm';
+              const isCoGm = sessionRole === 'co_gm';
+              const canManage = !!sess.can_manage_members;
+              const canAssign = !!sess.can_assign_roles;
+              return `
+              <div class="list-row">
+                <div class="list-row-main">
+                  <div class="list-row-title">${escapeHtml(m.username || 'user-' + m.user_id)}</div>
+                  <div class="list-row-meta">User #${escapeHtml(String(m.user_id))}${m.joined_at ? ' · Joined ' + escapeHtml(fmtDateTime(m.joined_at)) : ''}${m.current_room_name ? ' · In ' + escapeHtml(m.current_room_name) : ''}</div>
+                </div>
+                <div class="detail-actions" style="margin-top:0;">
+                  <span class="inline-badge ${isGm ? 'good' : isCoGm ? 'warn' : ''}">${escapeHtml(sessionRoleLabel(sessionRole))}</span>
+                  ${statusBadge(m.status || 'active')}
+                  ${canAssign && isCoGm ? `<button class="btn-ghost btn-sm" type="button" data-sess-set-role="${escapeHtml(String(m.user_id))}" data-sess-role="player" data-sess-role-username="${escapeHtml(m.username || '')}">Demote</button>` : ''}
+                  ${canAssign && !isGm && !isCoGm ? `<button class="btn-primary btn-sm" type="button" data-sess-set-role="${escapeHtml(String(m.user_id))}" data-sess-role="co_gm" data-sess-role-username="${escapeHtml(m.username || '')}">Make Co-GM</button>` : ''}
+                  ${canAssign && !isGm ? `<button class="btn-primary btn-sm" type="button" data-sess-transfer-gm="${escapeHtml(String(m.user_id))}" data-sess-transfer-username="${escapeHtml(m.username || '')}">Make GM</button>` : ''}
+                  ${canManage && !isGm ? `<button class="btn-danger btn-sm" type="button" data-sess-remove-user="${escapeHtml(String(m.user_id))}" data-sess-remove-username="${escapeHtml(m.username || '')}">Remove</button>` : ''}
+                </div>
+              </div>`;
+            }).join('') : `<div class="empty-state">No session members found.</div>`}
+          </div>
+        </div>
+      `;
+      bindSessionPanel(sess, members);
+    }catch(e){
+      sessionPanel.innerHTML = `
+        <div class="card">
+          <div class="card-label">Session Governance</div>
+          <div class="empty-state">${escapeHtml(e.message || 'Unable to load session governance.')}</div>
+          <div class="detail-actions">
+            <button id="closeSessionGovernanceBtn" class="btn-ghost btn-sm" type="button">Back to Lobby</button>
+          </div>
+        </div>
+      `;
+      bindSessionPanel(null, []);
     }
   }
 
@@ -1621,11 +1772,14 @@
   }
 
   async function switchView(next){
-    const target = next === 'account' ? 'account' : (next === 'admin' ? 'admin' : (next === 'room' ? 'room' : 'lobby'));
+    const target = next === 'account' ? 'account' : (next === 'admin' ? 'admin' : (next === 'room' ? 'room' : (next === 'session' ? 'session' : 'lobby')));
     if(isPasswordLocked() && target !== 'account'){
       return switchView('account');
     }
     if(target === 'room' && !currentGovernanceRoomId){
+      return switchView('lobby');
+    }
+    if(target === 'session' && !currentGovernanceSessionId){
       return switchView('lobby');
     }
     if(target === 'admin' && !canViewAdmin()){
@@ -1635,15 +1789,18 @@
     viewLobby.classList.toggle('hidden', target !== 'lobby');
     viewAccount.classList.toggle('hidden', target !== 'account');
     viewRoom.classList.toggle('hidden', target !== 'room');
+    viewSession.classList.toggle('hidden', target !== 'session');
     viewAdmin.classList.toggle('hidden', target !== 'admin');
     viewLobbyBtn.classList.toggle('active', target === 'lobby');
     viewAccountBtn.classList.toggle('active', target === 'account');
     viewRoomBtn.classList.toggle('active', target === 'room');
+    viewSessionBtn.classList.toggle('active', target === 'session');
     viewAdminBtn.classList.toggle('active', target === 'admin');
     setHashView(target);
     if(target === 'lobby') await refreshLobby();
     else if(target === 'account') await refreshAccount();
     else if(target === 'room') await refreshRoomGovernance();
+    else if(target === 'session') await refreshSessionGovernance();
     else if(target === 'admin') await refreshAdmin();
   }
 
@@ -1689,6 +1846,7 @@
   viewLobbyBtn.onclick = () => { void switchView('lobby'); };
   viewAccountBtn.onclick = () => { void switchView('account'); };
   viewRoomBtn.onclick = () => { void switchView('room'); };
+  viewSessionBtn.onclick = () => { void switchView('session'); };
   viewAdminBtn.onclick = () => { void switchView('admin'); };
 
   await refreshShell();

@@ -12,6 +12,7 @@ from .storage_models import (
     GameSessionRow,
     GameSessionSharedPackRow,
     PrivatePackRow,
+    RoomMemberRow,
     RoomMetaRow,
     SnapshotRow,
     UserRow,
@@ -114,6 +115,67 @@ def is_game_session_member(session_id: str, user_id: int) -> bool:
 
 def can_manage_game_session(session_id: str, user_id: int) -> bool:
     return (get_game_session_role(session_id, user_id) or "") in {"gm", "co_gm"}
+
+
+def count_session_gms(session_id: str) -> int:
+    with Session(engine) as s:
+        rows = s.exec(
+            select(GameSessionMemberRow).where(
+                GameSessionMemberRow.session_id == session_id,
+                GameSessionMemberRow.role == "gm",
+            )
+        ).all()
+    return len(rows)
+
+
+def set_game_session_member_role(session_id: str, user_id: int, role: str, now_iso: str) -> bool:
+    with Session(engine) as s:
+        row = s.exec(
+            select(GameSessionMemberRow).where(
+                GameSessionMemberRow.session_id == session_id,
+                GameSessionMemberRow.user_id == user_id,
+            )
+        ).first()
+        if not row:
+            return False
+        row.role = role
+        s.add(row)
+        sess_row = s.get(GameSessionRow, session_id)
+        if sess_row:
+            sess_row.updated_at = now_iso
+            s.add(sess_row)
+        s.commit()
+    return True
+
+
+def remove_game_session_member(session_id: str, user_id: int, now_iso: str) -> bool:
+    """Remove a user from the session and cascade-remove them from all session-backed rooms."""
+    with Session(engine) as s:
+        row = s.exec(
+            select(GameSessionMemberRow).where(
+                GameSessionMemberRow.session_id == session_id,
+                GameSessionMemberRow.user_id == user_id,
+            )
+        ).first()
+        if not row:
+            return False
+        s.delete(row)
+        room_metas = s.exec(select(RoomMetaRow).where(RoomMetaRow.session_id == session_id)).all()
+        for meta in room_metas:
+            room_row = s.exec(
+                select(RoomMemberRow).where(
+                    RoomMemberRow.room_id == meta.room_id,
+                    RoomMemberRow.user_id == user_id,
+                )
+            ).first()
+            if room_row:
+                s.delete(room_row)
+        sess_row = s.get(GameSessionRow, session_id)
+        if sess_row:
+            sess_row.updated_at = now_iso
+            s.add(sess_row)
+        s.commit()
+    return True
 
 
 def list_game_sessions_for_user(user_id: int) -> List[Dict[str, object]]:

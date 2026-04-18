@@ -165,6 +165,21 @@ def can_manage_game_session(session_id: str, user_id: int) -> bool:
     return storage_sessions.can_manage_game_session(session_id, user_id)
 
 
+def count_session_gms(session_id: str) -> int:
+    _sync_sessions_engine()
+    return storage_sessions.count_session_gms(session_id)
+
+
+def set_game_session_member_role(session_id: str, user_id: int, role: str) -> bool:
+    _sync_sessions_engine()
+    return storage_sessions.set_game_session_member_role(session_id, user_id, role, utc_now_iso())
+
+
+def remove_game_session_member(session_id: str, user_id: int) -> bool:
+    _sync_sessions_engine()
+    return storage_sessions.remove_game_session_member(session_id, user_id, utc_now_iso())
+
+
 def list_game_sessions_for_user(user_id: int) -> List[Dict[str, object]]:
     _sync_sessions_engine()
     return storage_sessions.list_game_sessions_for_user(user_id)
