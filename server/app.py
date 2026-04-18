@@ -1270,7 +1270,12 @@ def list_assets_api(
                 "pack_id": asset.get("pack_id"),
                 "pack_slug": asset.get("pack_slug"),
                 "pack_name": asset.get("pack_name"),
+                "owner_user_id": asset.get("owner_user_id"),
+                "owner_username": asset.get("owner_username"),
+                "access_source": asset.get("access_source"),
+                "access_sources": asset.get("access_sources", []),
                 "shared_in_session": bool(asset.get("shared_in_session", False)),
+                "shared_via_sessions": asset.get("shared_via_sessions", []),
             }
             # Return a direct thumb URL when available to bypass the full auth endpoint.
             # Uploads: /uploads/... (static mount, no Python overhead).

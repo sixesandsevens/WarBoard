@@ -10,7 +10,13 @@ from typing import Callable, Dict, List, Optional, Tuple
 from sqlmodel import Session, select
 
 from . import storage_db
-from .storage_models import AssetRow, PrivatePackAssetRow, PrivatePackEntitlementRow, PrivatePackRow
+from .storage_models import AssetRow, PrivatePackAssetRow, PrivatePackEntitlementRow, PrivatePackRow, UserRow
+
+_PACK_ACCESS_PRIORITY = {
+    "owned": 0,
+    "direct_entitlement": 1,
+    "session_shared": 2,
+}
 
 engine = storage_db.engine
 logger = logging.getLogger("warhamster.assets")
@@ -222,6 +228,73 @@ def _pack_ids_for_user(user_id: int) -> set[int]:
     return {int(pack_id) for pack_id in [*owned, *entitled] if pack_id is not None}
 
 
+def _pack_access_sources_for_user(
+    user_id: int,
+    session_id: Optional[str],
+    *,
+    is_game_session_member: Callable[[str, int], bool],
+    shared_pack_ids_for_game_session: Callable[[str], set[int]],
+) -> tuple[Dict[int, List[str]], set[int]]:
+    with Session(engine) as s:
+        owned_ids = {
+            int(pack_id)
+            for pack_id in s.exec(select(PrivatePackRow.pack_id).where(PrivatePackRow.owner_user_id == user_id)).all()
+            if pack_id is not None
+        }
+        entitled_ids = {
+            int(pack_id)
+            for pack_id in s.exec(select(PrivatePackEntitlementRow.pack_id).where(PrivatePackEntitlementRow.user_id == user_id)).all()
+            if pack_id is not None
+        }
+    shared_ids = (
+        shared_pack_ids_for_game_session(session_id)
+        if session_id and is_game_session_member(session_id, user_id)
+        else set()
+    )
+    source_map: Dict[int, set[str]] = {}
+    for pack_id in owned_ids:
+        source_map.setdefault(pack_id, set()).add("owned")
+    for pack_id in entitled_ids:
+        source_map.setdefault(pack_id, set()).add("direct_entitlement")
+    for pack_id in shared_ids:
+        source_map.setdefault(int(pack_id), set()).add("session_shared")
+    normalized = {
+        int(pack_id): sorted(
+            {str(source or "").strip() for source in sources if str(source or "").strip()},
+            key=lambda source: _PACK_ACCESS_PRIORITY.get(source, 99),
+        )
+        for pack_id, sources in source_map.items()
+    }
+    return normalized, shared_ids
+
+
+def _primary_pack_access_source(access_sources: List[str]) -> str:
+    if not access_sources:
+        return "direct_entitlement"
+    return access_sources[0]
+
+
+def _pack_access_metadata(
+    pack_id: int,
+    access_sources_by_pack_id: Dict[int, List[str]],
+    *,
+    session_id: Optional[str] = None,
+) -> Dict[str, object]:
+    access_sources = list(access_sources_by_pack_id.get(int(pack_id), []))
+    access_source = _primary_pack_access_source(access_sources)
+    shared_via_sessions = (
+        [{"session_id": session_id, "label": "Current Session"}]
+        if session_id and "session_shared" in access_sources
+        else []
+    )
+    return {
+        "access_source": access_source,
+        "access_sources": access_sources,
+        "shared_in_session": "session_shared" in access_sources,
+        "shared_via_sessions": shared_via_sessions,
+    }
+
+
 def list_private_packs_for_user(
     user_id: int,
     session_id: Optional[str] = None,
@@ -229,29 +302,41 @@ def list_private_packs_for_user(
     is_game_session_member: Callable[[str, int], bool],
     shared_pack_ids_for_game_session: Callable[[str], set[int]],
 ) -> List[Dict[str, object]]:
-    pack_ids = _pack_ids_for_user(user_id)
+    access_sources_by_pack_id, _shared_ids = _pack_access_sources_for_user(
+        user_id,
+        session_id,
+        is_game_session_member=is_game_session_member,
+        shared_pack_ids_for_game_session=shared_pack_ids_for_game_session,
+    )
+    pack_ids = set(access_sources_by_pack_id.keys())
     if not pack_ids:
         return []
-    shared_ids = (
-        shared_pack_ids_for_game_session(session_id)
-        if session_id and is_game_session_member(session_id, user_id)
-        else set()
-    )
     with Session(engine) as s:
         packs = s.exec(select(PrivatePackRow).where(PrivatePackRow.pack_id.in_(pack_ids))).all()
+        owner_ids = sorted({int(pack.owner_user_id) for pack in packs if pack.owner_user_id is not None})
+        owners = (
+            {
+                row.user_id: row.username
+                for row in s.exec(select(UserRow).where(UserRow.user_id.in_(owner_ids))).all()
+            }
+            if owner_ids
+            else {}
+        )
     out: List[Dict[str, object]] = []
     for pack in packs:
         pack_id = int(pack.pack_id) if pack.pack_id is not None else 0
+        access_meta = _pack_access_metadata(pack_id, access_sources_by_pack_id, session_id=session_id)
         out.append(
             {
                 "pack_id": pack.pack_id,
                 "slug": pack.slug,
                 "name": pack.name,
                 "owner_user_id": pack.owner_user_id,
+                "owner_username": owners.get(pack.owner_user_id, "") if pack.owner_user_id is not None else "",
                 "created_at": pack.created_at,
                 "root_rel": pack.root_rel,
                 "thumb_rel": pack.thumb_rel,
-                "shared_in_session": pack_id in shared_ids,
+                **access_meta,
             }
         )
     out.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
@@ -271,20 +356,29 @@ def list_pack_assets_for_user(
     qn = (q or "").strip().lower()
     tn = (tag or "").strip().lower()
     fn = (folder or "").strip().strip("/").lower()
-    pack_ids = _pack_ids_for_user(user_id)
-    if session_id and is_game_session_member(session_id, user_id):
-        pack_ids.update(shared_pack_ids_for_game_session(session_id))
+    access_sources_by_pack_id, _shared_ids = _pack_access_sources_for_user(
+        user_id,
+        session_id,
+        is_game_session_member=is_game_session_member,
+        shared_pack_ids_for_game_session=shared_pack_ids_for_game_session,
+    )
+    pack_ids = set(access_sources_by_pack_id.keys())
     if not pack_ids:
         return []
-    shared_ids = (
-        shared_pack_ids_for_game_session(session_id)
-        if session_id and is_game_session_member(session_id, user_id)
-        else set()
-    )
     with Session(engine) as s:
         packs = s.exec(select(PrivatePackRow).where(PrivatePackRow.pack_id.in_(pack_ids))).all()
         slug_by_pack_id = {int(pack.pack_id): pack.slug for pack in packs if pack.pack_id is not None}
         name_by_pack_id = {int(pack.pack_id): pack.name for pack in packs if pack.pack_id is not None}
+        owner_id_by_pack_id = {int(pack.pack_id): int(pack.owner_user_id) for pack in packs if pack.pack_id is not None and pack.owner_user_id is not None}
+        owner_ids = sorted(set(owner_id_by_pack_id.values()))
+        owners = (
+            {
+                row.user_id: row.username
+                for row in s.exec(select(UserRow).where(UserRow.user_id.in_(owner_ids))).all()
+            }
+            if owner_ids
+            else {}
+        )
         rows = s.exec(select(PrivatePackAssetRow).where(PrivatePackAssetRow.pack_id.in_(pack_ids))).all()
     out: List[Dict[str, object]] = []
     for row in rows:
@@ -315,7 +409,9 @@ def list_pack_assets_for_user(
                 "pack_id": row.pack_id,
                 "pack_slug": slug_by_pack_id.get(int(row.pack_id), ""),
                 "pack_name": name_by_pack_id.get(int(row.pack_id), ""),
-                "shared_in_session": int(row.pack_id) in shared_ids,
+                "owner_user_id": owner_id_by_pack_id.get(int(row.pack_id)),
+                "owner_username": owners.get(owner_id_by_pack_id.get(int(row.pack_id)), "") if owner_id_by_pack_id.get(int(row.pack_id)) is not None else "",
+                **_pack_access_metadata(int(row.pack_id), access_sources_by_pack_id, session_id=session_id),
             }
         )
     out.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
@@ -627,12 +723,13 @@ def list_assets_for_user_page(
     safe_offset = max(0, int(offset or 0))
 
     # Resolve which pack IDs this user may see (owned + entitled + session-shared)
-    pack_ids = _pack_ids_for_user(user_id)
-    shared_ids: set[int] = set()
-    if session_id and is_game_session_member(session_id, user_id):
-        sess_pack_ids = shared_pack_ids_for_game_session(session_id)
-        pack_ids.update(sess_pack_ids)
-        shared_ids = sess_pack_ids
+    access_sources_by_pack_id, _shared_ids = _pack_access_sources_for_user(
+        user_id,
+        session_id,
+        is_game_session_member=is_game_session_member,
+        shared_pack_ids_for_game_session=shared_pack_ids_for_game_session,
+    )
+    pack_ids = set(access_sources_by_pack_id.keys())
 
     # Build SQL WHERE fragments — name, folder, and tag all pushed into SQL
     upload_wheres: List[str] = ["a.uploader_user_id = ?"]
@@ -694,16 +791,26 @@ def list_assets_for_user_page(
         slug_by_pack_id: Dict[int, str] = {}
         name_by_pack_id: Dict[int, str] = {}
         pack_id_by_slug: Dict[str, int] = {}
+        owner_id_by_pack_id: Dict[int, int] = {}
+        owner_username_by_pack_id: Dict[int, str] = {}
         if pack_ids:
             ph = ",".join("?" * len(pack_ids))
             for row in conn.execute(
-                f"SELECT pack_id, slug, name FROM privatepackrow WHERE pack_id IN ({ph})",
+                f"""
+                SELECT p.pack_id, p.slug, p.name, p.owner_user_id, COALESCE(u.username, '') AS owner_username
+                FROM privatepackrow p
+                LEFT JOIN userrow u ON u.user_id = p.owner_user_id
+                WHERE p.pack_id IN ({ph})
+                """,
                 list(pack_ids),
             ).fetchall():
                 pid = int(row["pack_id"])
                 slug_by_pack_id[pid] = row["slug"]
                 name_by_pack_id[pid] = row["name"]
                 pack_id_by_slug[str(row["slug"])] = pid
+                if row["owner_user_id"] is not None:
+                    owner_id_by_pack_id[pid] = int(row["owner_user_id"])
+                owner_username_by_pack_id[pid] = str(row["owner_username"] or "")
 
         include_uploads = pack_filter in {"", "all", "upload"}
         selected_pack_ids = [] if pack_filter == "upload" else list(pack_ids)
@@ -852,7 +959,9 @@ def list_assets_for_user_page(
                 "pack_id": pack_id,
                 "pack_slug": pack_slug,
                 "pack_name": name_by_pack_id.get(pack_id, ""),
-                "shared_in_session": pack_id in shared_ids,
+                "owner_user_id": owner_id_by_pack_id.get(pack_id),
+                "owner_username": owner_username_by_pack_id.get(pack_id, ""),
+                **_pack_access_metadata(pack_id, access_sources_by_pack_id, session_id=session_id),
             })
         else:
             out.append({

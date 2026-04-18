@@ -582,6 +582,27 @@
     return `<span class="inline-badge ${cls}">${escapeHtml(normalized.replace(/_/g, ' '))}</span>`;
   }
 
+  function packAccessLabel(source){
+    const normalized = String(source || '').trim();
+    if(normalized === 'owned') return 'Owned';
+    if(normalized === 'session_shared') return 'Shared via Session';
+    return 'Direct Access';
+  }
+
+  function packAccessBadge(source){
+    const normalized = String(source || '').trim();
+    const cls = normalized === 'owned' ? 'good' : (normalized === 'session_shared' ? 'warn' : '');
+    return `<span class="inline-badge ${cls}">${escapeHtml(packAccessLabel(normalized))}</span>`;
+  }
+
+  function packSecondaryAccessNote(pack){
+    const sources = Array.isArray(pack?.access_sources) ? pack.access_sources : [];
+    const primary = String(pack?.access_source || '').trim();
+    const extras = sources.filter((source) => source && source !== primary);
+    if(!extras.length) return '';
+    return 'Also ' + extras.map((source) => packAccessLabel(source)).join(' · ');
+  }
+
   function canViewAdmin(){
     return !!currentMe && !currentMe.must_change_password && ['admin', 'owner'].includes(String(currentMe.role || ''));
   }
@@ -1106,7 +1127,8 @@
     }
     const sessions = Array.isArray(sessionData.sessions) ? sessionData.sessions : [];
     const ownedPacks = packs.filter((pack) => Number(pack.owner_user_id || 0) === Number(me.user_id || 0));
-    const sharedPacks = packs.filter((pack) => Number(pack.owner_user_id || 0) !== Number(me.user_id || 0));
+    const directAccessPacks = packs.filter((pack) => String(pack.access_source || '') === 'direct_entitlement');
+    const sessionSharedPacks = packs.filter((pack) => String(pack.access_source || '') === 'session_shared');
 
     accountPanel.innerHTML = `
       ${me.must_change_password ? `<div class="banner bad">Your account requires a password change before normal access continues. Lobby and admin tools stay locked until this is completed.</div>` : ''}
@@ -1167,31 +1189,45 @@
             </div>
           </div>
           <div class="list-card">
-            <div class="list-head">My Packs</div>
+            <div class="list-head">Owned Packs</div>
             <div class="list-body">
               ${locked ? `<div class="empty-state">Available again after your password is updated.</div>` : ownedPacks.length ? ownedPacks.map((pack) => `
                 <div class="list-row">
                   <div class="list-row-main">
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
-                    <div class="list-row-meta">${escapeHtml(pack.slug || '')} · Created ${escapeHtml(fmtDate(pack.created_at))}</div>
+                    <div class="list-row-meta">${escapeHtml(pack.slug || '')} · Created ${escapeHtml(fmtDate(pack.created_at))}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
                   </div>
-                  <span class="inline-badge good">Owner</span>
+                  ${packAccessBadge(pack.access_source)}
                 </div>
               `).join('') : `<div class="empty-state">No owned private packs yet.</div>`}
             </div>
           </div>
           <div class="list-card">
-            <div class="list-head">Granted Pack Access</div>
+            <div class="list-head">Direct Access</div>
             <div class="list-body">
-              ${locked ? `<div class="empty-state">Available again after your password is updated.</div>` : sharedPacks.length ? sharedPacks.map((pack) => `
+              ${locked ? `<div class="empty-state">Available again after your password is updated.</div>` : directAccessPacks.length ? directAccessPacks.map((pack) => `
                 <div class="list-row">
                   <div class="list-row-main">
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
-                    <div class="list-row-meta">${escapeHtml(pack.slug || '')}</div>
+                    <div class="list-row-meta">Owner: ${escapeHtml(pack.owner_username || ('user-' + pack.owner_user_id))}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
                   </div>
-                  <span class="inline-badge warn">Granted</span>
+                  ${packAccessBadge(pack.access_source)}
                 </div>
-              `).join('') : `<div class="empty-state">No granted private pack access yet.</div>`}
+              `).join('') : `<div class="empty-state">No directly granted private pack access yet.</div>`}
+            </div>
+          </div>
+          <div class="list-card">
+            <div class="list-head">Session Shared</div>
+            <div class="list-body">
+              ${locked ? `<div class="empty-state">Available again after your password is updated.</div>` : sessionSharedPacks.length ? sessionSharedPacks.map((pack) => `
+                <div class="list-row">
+                  <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
+                    <div class="list-row-meta">Owner: ${escapeHtml(pack.owner_username || ('user-' + pack.owner_user_id))}${Array.isArray(pack.shared_via_sessions) && pack.shared_via_sessions.length ? ' · Shared via current session' : ''}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
+                  </div>
+                  ${packAccessBadge(pack.access_source)}
+                </div>
+              `).join('') : `<div class="empty-state">No session-shared packs in this view.</div>`}
             </div>
           </div>
         </div>

@@ -538,6 +538,22 @@ function assetKind(asset) {
   return "unknown";
 }
 
+function assetPackAccessLabel(source) {
+  const normalized = String(source || "").trim();
+  if (normalized === "owned") return "Owned";
+  if (normalized === "session_shared") return "Shared via Session";
+  if (normalized === "direct_entitlement") return "Direct Access";
+  return "";
+}
+
+function assetPackSecondaryAccessNote(entity) {
+  const primary = String(entity?.access_source || "").trim();
+  const sources = Array.isArray(entity?.access_sources) ? entity.access_sources : [];
+  const extras = sources.filter((source) => source && source !== primary);
+  if (!extras.length) return "";
+  return `Also ${extras.map(assetPackAccessLabel).filter(Boolean).join(" · ")}`;
+}
+
 // ─── Asset search ─────────────────────────────────────────────────────────────
 
 function parseAssetSearch(rawSearch) {
@@ -651,6 +667,7 @@ function availableAssetPackOptions() {
       value: String(pack?.slug || "").trim(),
       label: String(pack?.name || pack?.slug || "Pack").trim() || "Pack",
       shared: !!pack?.shared_in_session,
+      accessSource: String(pack?.access_source || "").trim(),
     }))
     .filter((pack) => pack.value)
     .sort((a, b) => a.label.localeCompare(b.label));
@@ -1090,11 +1107,12 @@ function renderAssetSessionSharePanel() {
     ? privatePacks.map((pack) => {
         const packId = Number(pack?.pack_id || 0);
         const shared = !!pack?.shared_in_session;
+        const accessLabel = assetPackAccessLabel(pack?.access_source || (shared ? "session_shared" : ""));
         return `
           <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 8px;">
             <div style="min-width:0;">
               <div style="font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(pack?.name || pack?.slug || "Pack"))}</div>
-              <div style="font-size:11px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(pack?.slug || ""))}${shared ? " • shared now" : ""}</div>
+              <div style="font-size:11px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(pack?.slug || ""))}${accessLabel ? ` • ${escapeHtml(accessLabel)}` : ""}${shared ? " • shared now" : ""}</div>
             </div>
             <button type="button" data-session-pack-toggle="${packId}" data-session-pack-enabled="${shared ? "1" : "0"}" style="padding:4px 8px;">${shared ? "Unshare" : "Share"}</button>
           </div>
@@ -1119,7 +1137,11 @@ function refreshAssetFilterOptions() {
   const options = [
     `<option value="all">All Packs</option>`,
     `<option value="upload">Uploads</option>`,
-    ...packs.map((pack) => `<option value="${escapeHtml(pack.value)}">${escapeHtml(pack.label)}${pack.shared ? " • shared" : ""}</option>`),
+    ...packs.map((pack) => {
+      const accessLabel = assetPackAccessLabel(pack.accessSource);
+      const suffix = accessLabel ? ` • ${accessLabel}` : (pack.shared ? " • shared" : "");
+      return `<option value="${escapeHtml(pack.value)}">${escapeHtml(pack.label)}${escapeHtml(suffix)}</option>`;
+    }),
   ];
   assetPackFilterEl.innerHTML = options.join("");
   assetState.packFilter = current;
@@ -1344,15 +1366,23 @@ function renderAssetGrid() {
     const ext = assetFileExt(a).toUpperCase() || "IMG";
     const dimsLabel = (width > 0 && height > 0) ? `${width}x${height}` : "unknown size";
     const alphaLabel = assetHasAlphaGuess(a) ? "alpha" : "opaque";
-    const packLabel = String(a.pack_slug || "").trim() || "uploads";
-    const packMetaLabel = a.shared_in_session ? `${packLabel} • shared` : packLabel;
+    const packLabel = String(a.pack_name || a.pack_slug || "").trim() || "uploads";
+    const accessLabel = assetPackAccessLabel(a.access_source || (a.shared_in_session ? "session_shared" : ""));
+    const secondaryAccess = assetPackSecondaryAccessNote(a);
+    const ownerLabel = String(a.owner_username || "").trim();
+    const packMetaBits = [packLabel];
+    if (accessLabel) packMetaBits.push(accessLabel);
+    if (ownerLabel && String(a.source || "") === "pack") packMetaBits.push(`Owner ${ownerLabel}`);
+    if (secondaryAccess) packMetaBits.push(secondaryAccess);
+    const packMetaLabel = packMetaBits.join(" • ");
     const kind = assetKind(a);
     const mediaClass = kind === "map"
       ? "asset-card-media asset-card-media--map"
       : "asset-card-media asset-card-media--piece";
     const kindBadge = kind === "map" ? "Map" : kind === "piece" ? "Piece" : "Unknown";
-    const readonlyBadge = a.readonly ? `<span class="asset-card-pill">Read only</span>` : "";
-    const sharedBadge = a.shared_in_session ? `<span class="asset-card-pill">Shared</span>` : "";
+    const accessBadge = accessLabel
+      ? `<span class="asset-card-pill">${escapeHtml(accessLabel)}</span>`
+      : (a.readonly ? `<span class="asset-card-pill">Read only</span>` : "");
     return `
     <button
       data-asset-card="1"
@@ -1364,8 +1394,7 @@ function renderAssetGrid() {
         <div class="asset-card-badges">
           <div class="asset-card-pill-row">
             <span class="asset-card-pill kind-${escapeHtml(kind)}">${escapeHtml(kindBadge)}</span>
-            ${sharedBadge}
-            ${readonlyBadge}
+            ${accessBadge}
           </div>
           <div class="asset-card-menu">
             <button type="button" data-asset-action="kind-open" data-asset-idx="${idx}" class="asset-kind-trigger" title="Classification">⋯</button>
