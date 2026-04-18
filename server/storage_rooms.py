@@ -215,7 +215,7 @@ def list_room_members(room_id: str) -> List[Dict[str, object]]:
             {
                 "user_id": row.user_id,
                 "username": user.username if user else f"user-{row.user_id}",
-                "room_role": "owner" if room_role == "owner" else "member",
+                "room_role": room_role if room_role == "owner" else "player",
                 "role": room_role,
                 "status": (user.status if user and user.status else "active"),
                 "last_seen_at": row.last_seen_at,
