@@ -53,6 +53,7 @@ def apply_interior_event(
             w=max(1.0, float(payload.get("w", 1))),
             h=max(1.0, float(payload.get("h", 1))),
             style=str(payload.get("style") or "wood"),
+            label=str(payload.get("label") or "").strip(),
             creator_id=client_id,
             locked=bool(payload.get("locked", False)),
         )
@@ -76,6 +77,14 @@ def apply_interior_event(
         for key in ("w", "h"):
             if key in payload:
                 setattr(item, key, max(1.0, float(payload.get(key, getattr(item, key)))))
+                changed = True
+        if "label" in payload:
+            label = payload.get("label", item.label)
+            if label is None:
+                label = ""
+            label = str(label).strip()
+            if item.label != label:
+                item.label = label
                 changed = True
         if "locked" in payload:
             item.locked = bool(payload.get("locked", False))

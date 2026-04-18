@@ -141,6 +141,7 @@ class InteriorRoom(BaseModel):
     w: float
     h: float
     style: str = "wood"
+    label: str = ""
     creator_id: Optional[str] = None
     locked: bool = False
 

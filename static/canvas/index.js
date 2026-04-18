@@ -193,6 +193,7 @@
       w: Math.max(1, Number(record.w || 1)),
       h: Math.max(1, Number(record.h || 1)),
       style: String(record.style || "wood"),
+      label: String(record.label || ""),
       creator_id: record.creator_id || null,
       locked: !!record.locked,
     };
@@ -459,7 +460,12 @@
   function openInteriorRoomMenu(interiorId, x, y) {
     const room = state.interiors.get(interiorId || "");
     if (!interiorCtx || !room || !isGM()) return;
+    const setLabelItem = interiorCtx.querySelector('[data-action="interior_set_label"]');
+    const clearLabelItem = interiorCtx.querySelector('[data-action="interior_clear_label"]');
     const lockItem = interiorCtx.querySelector('[data-action="interior_lock_toggle"]');
+    const hasLabel = !!String(room.label || "").trim();
+    if (setLabelItem) setLabelItem.textContent = hasLabel ? "Edit Room Label" : "Set Room Label";
+    if (clearLabelItem) clearLabelItem.classList.toggle("hidden", !hasLabel);
     if (lockItem) lockItem.textContent = room.locked ? "Unlock Interior" : "Lock Interior";
     currentInteriorContextId = room.id;
     showContextMenu(interiorCtx, x, y);
@@ -813,6 +819,7 @@
       w: room.w,
       h: room.h,
       style: room.style,
+      label: room.label,
       creator_id: myId(),
       locked: false,
     });
@@ -827,6 +834,29 @@
     interiorDragStart = null;
     interiorDragOrigin = null;
     requestRender();
+  }
+
+  function editInteriorLabel(interiorId) {
+    const room = state.interiors.get(interiorId || "");
+    if (!room || !isGM() || !canEditInterior(room)) return;
+
+    const next = window.prompt("Room label:", room.label || "");
+    if (next === null) return;
+
+    send("INTERIOR_UPDATE", {
+      id: room.id,
+      label: String(next).trim(),
+    });
+  }
+
+  function clearInteriorLabel(interiorId) {
+    const room = state.interiors.get(interiorId || "");
+    if (!room || !isGM() || !canEditInterior(room)) return;
+
+    send("INTERIOR_UPDATE", {
+      id: room.id,
+      label: "",
+    });
   }
 
   function handleCtxAction(action) {
@@ -1026,6 +1056,18 @@
         const room = state.interiors.get(currentInteriorContextId || selectedInteriorId || "");
         if (!room) break;
         duplicateInteriorRoom(room.id);
+        break;
+      }
+      case "interior_set_label": {
+        const room = state.interiors.get(currentInteriorContextId || selectedInteriorId || "");
+        if (!room) break;
+        editInteriorLabel(room.id);
+        break;
+      }
+      case "interior_clear_label": {
+        const room = state.interiors.get(currentInteriorContextId || selectedInteriorId || "");
+        if (!room) break;
+        clearInteriorLabel(room.id);
         break;
       }
       case "interior_delete": {

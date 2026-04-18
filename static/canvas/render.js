@@ -311,6 +311,7 @@ function drawInteriors() {
   if (!state.layer_visibility.interiors) return;
   const resolved = getResolvedInteriors();
   drawInteriorFloors(resolved.rooms);
+  drawInteriorLabels(resolved.rooms);
   drawInteriorOverlapWarnings(resolved.relationships);
   drawInteriorWalls(resolved.visibleWalls);
   drawInteriorSelections(resolved);
@@ -334,6 +335,32 @@ function drawInteriorFloors(rooms) {
       ctx.lineTo(topLeft.x + widthPx, y);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+}
+
+function drawInteriorLabels(rooms) {
+  for (const room of rooms) {
+    const label = String(room.label || "").trim();
+    if (!label) continue;
+    if (room.w < ui.gridSize * 1.5 || room.h < ui.gridSize * 1.0) continue;
+
+    const cx = room.x + room.w / 2;
+    const cy = room.y + room.h / 2;
+    const p = worldToScreen(cx, cy);
+    const fontPx = Math.max(11, Math.min(22, (Math.min(room.w, room.h) * cam.z) * 0.18));
+    const maxWidth = Math.max(24, room.w * cam.z - 12);
+
+    ctx.save();
+    ctx.font = `${fontPx}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "rgba(248, 239, 224, 0.5)";
+    ctx.lineWidth = 3;
+    ctx.fillStyle = "rgba(36, 22, 12, 0.92)";
+    ctx.strokeText(label, p.x, p.y, maxWidth);
+    ctx.fillText(label, p.x, p.y, maxWidth);
     ctx.restore();
   }
 }
