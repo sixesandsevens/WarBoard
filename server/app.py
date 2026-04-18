@@ -76,6 +76,7 @@ from .storage import (
     ensure_room_membership_for_user,
     get_game_session,
     get_game_session_role,
+    get_room_member_role,
     get_room_meta,
     get_pack_asset_by_asset_id,
     get_private_pack_by_id,
@@ -99,6 +100,7 @@ from .storage import (
     list_game_session_shared_packs,
     list_game_sessions_for_user,
     list_private_packs_for_user,
+    list_room_members,
     list_room_member_user_ids,
     list_assets_for_user,
     list_owned_assets,
@@ -111,6 +113,7 @@ from .storage import (
     load_room_state_json,
     load_snapshot_state_json,
     room_id_from_join_code,
+    remove_room_membership,
     save_room_state_json,
     touch_membership,
     count_users_with_role,
@@ -127,6 +130,7 @@ from .storage import (
     get_game_session_root_room_id,
     update_room_display_name,
     update_room_order,
+    transfer_room_ownership,
 )
 
 app = FastAPI(title="WarHamster")
@@ -444,6 +448,62 @@ def _room_display_name(room_id: str) -> str:
     if not meta:
         return room_id
     return meta.display_name or meta.name or room_id
+
+
+def _get_room_actor_role(user, room_id: str, meta=None) -> str:
+    if not user or user.user_id is None:
+        return ""
+    meta = meta or get_room_meta(room_id)
+    if not meta:
+        return ""
+    if _is_site_admin(user):
+        return "platform_admin"
+    if meta.owner_user_id == user.user_id:
+        return "owner"
+    member_role = get_room_member_role(user.user_id, room_id)
+    return "member" if member_role else ""
+
+
+def _can_view_room_members(actor, room_id: str, meta=None) -> bool:
+    actor_role = _get_room_actor_role(actor, room_id, meta)
+    return actor_role in {"platform_admin", "owner"}
+
+
+def _can_manage_room_members(actor, room_id: str, meta=None) -> bool:
+    actor_role = _get_room_actor_role(actor, room_id, meta)
+    return actor_role in {"platform_admin", "owner"}
+
+
+def _can_transfer_room_ownership(actor, room_id: str, meta=None) -> bool:
+    actor_role = _get_room_actor_role(actor, room_id, meta)
+    return actor_role in {"platform_admin", "owner"}
+
+
+def _room_access_still_valid(user_id: int, room_id: str) -> bool:
+    meta = get_room_meta(room_id)
+    if not meta:
+        return False
+    if meta.session_id:
+        return ensure_room_membership_for_user(user_id, room_id)
+    return is_member(user_id, room_id)
+
+
+def _room_governance_payload(meta, actor) -> dict:
+    room_id = meta.room_id
+    actor_role = _get_room_actor_role(actor, room_id, meta)
+    return {
+        "room_id": meta.room_id,
+        "name": meta.name,
+        "display_name": meta.display_name or meta.name,
+        "join_code": meta.join_code or "",
+        "session_id": meta.session_id,
+        "owner_user_id": meta.owner_user_id,
+        "actor_room_role": actor_role or "viewer",
+        "can_view_members": _can_view_room_members(actor, room_id, meta),
+        "can_manage_members": _can_manage_room_members(actor, room_id, meta),
+        "can_transfer_ownership": _can_transfer_room_ownership(actor, room_id, meta),
+        "member_management_mode": "session_inherited" if meta.session_id else "direct",
+    }
 
 
 def _resolve_pack_asset_paths(asset: dict | object) -> tuple[Path | None, Path | None]:
@@ -1827,6 +1887,86 @@ async def join_room(req: Request):
     return {"room_id": room_id, "session_id": meta.session_id if meta else None}
 
 
+@app.get("/api/rooms/{room_id}/members")
+def get_room_members_api(room_id: str, req: Request):
+    actor = _require_user(req)
+    meta = get_room_meta(room_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if not _can_view_room_members(actor, room_id, meta):
+        raise HTTPException(status_code=403, detail="Room owner or admin required")
+    return {
+        "room": _room_governance_payload(meta, actor),
+        "members": list_room_members(room_id),
+    }
+
+
+@app.post("/api/rooms/{room_id}/members/{user_id}/remove")
+def remove_room_member_api(room_id: str, user_id: int, req: Request):
+    actor = _require_user(req)
+    meta = get_room_meta(room_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if not _can_manage_room_members(actor, room_id, meta):
+        raise HTTPException(status_code=403, detail="Room owner or admin required")
+    if meta.owner_user_id is not None and int(meta.owner_user_id) == int(user_id):
+        raise HTTPException(status_code=400, detail="Use transfer ownership to change the current room owner")
+    if meta.session_id:
+        raise HTTPException(status_code=400, detail="Session-backed room membership is managed by the session")
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    before_members = list_room_members(room_id)
+    if not remove_room_membership(user_id, room_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    after_members = list_room_members(room_id)
+    _audit(
+        actor_user_id=actor.user_id,
+        action="room.remove_member",
+        target_type="room_member",
+        target_id=f"{room_id}:{user_id}",
+        summary=f"{actor.username} removed {target.username} from room {meta.display_name or meta.name or room_id}",
+        before={"room_id": room_id, "members": before_members},
+        after={"room_id": room_id, "members": after_members},
+    )
+    return {"ok": True, "room": _room_governance_payload(meta, actor), "members": after_members}
+
+
+@app.post("/api/rooms/{room_id}/transfer-ownership")
+async def transfer_room_ownership_api(room_id: str, req: Request):
+    actor = _require_user(req)
+    meta = get_room_meta(room_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if not _can_transfer_room_ownership(actor, room_id, meta):
+        raise HTTPException(status_code=403, detail="Room owner or admin required")
+    body = await req.json()
+    new_owner_user_id = int(body.get("user_id") or 0)
+    if new_owner_user_id <= 0:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    target = get_user_by_id(new_owner_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not get_room_member_role(new_owner_user_id, room_id):
+        raise HTTPException(status_code=400, detail="Target user must already be a room member")
+    before_room = _room_governance_payload(meta, actor)
+    before_members = list_room_members(room_id)
+    if not transfer_room_ownership(room_id, new_owner_user_id):
+        raise HTTPException(status_code=400, detail="Failed to transfer room ownership")
+    updated_meta = get_room_meta(room_id)
+    after_members = list_room_members(room_id)
+    _audit(
+        actor_user_id=actor.user_id,
+        action="room.transfer_ownership",
+        target_type="room",
+        target_id=room_id,
+        summary=f"{actor.username} transferred room {updated_meta.display_name or updated_meta.name or room_id} ownership to {target.username}",
+        before={"room": before_room, "members": before_members},
+        after={"room": _room_governance_payload(updated_meta, actor), "members": after_members},
+    )
+    return {"ok": True, "room": _room_governance_payload(updated_meta, actor), "members": after_members}
+
+
 @app.get("/api/rooms/{room_id}/snapshots")
 def snapshots(room_id: str, req: Request):
     user = _require_user(req)
@@ -1984,7 +2124,7 @@ async def ws_room(ws: WebSocket, room_id: str):
         return
 
     # membership guard
-    if not ensure_room_membership_for_user(user.user_id, room_id):
+    if not _room_access_still_valid(user.user_id, room_id):
         await ws.close(code=1008)
         return
 
@@ -2097,8 +2237,15 @@ async def ws_room(ws: WebSocket, room_id: str):
                     if not get_user_by_sid(session_sid):
                         await ws.close(code=1008)
                         return
+                    if not _room_access_still_valid(user.user_id, room_id):
+                        await ws.close(code=1008)
+                        return
                 await ws.send_text(WireEvent(type="HEARTBEAT", payload={"ts": time.time()}).model_dump_json())
                 continue
+
+            if not _room_access_still_valid(user.user_id, room_id):
+                await ws.close(code=1008)
+                return
 
             if event.type in {"SESSION_ROOM_MOVE_REQUEST", "SESSION_ROOM_MOVE_FORCE", "SESSION_ROOM_MOVE_ACCEPT"}:
                 session_out = await _handle_session_control_event(event, user, client_id)

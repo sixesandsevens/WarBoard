@@ -6,7 +6,7 @@ from typing import Callable, Dict, List, Optional
 from sqlmodel import Session, select
 
 from . import storage_db
-from .storage_models import GameSessionMemberRow, RoomMemberRow, RoomMetaRow, RoomRow, SnapshotRow
+from .storage_models import GameSessionMemberRow, RoomMemberRow, RoomMetaRow, RoomRow, SnapshotRow, UserRow
 
 engine = storage_db.engine
 
@@ -198,10 +198,76 @@ def list_room_member_user_ids(room_id: str) -> List[int]:
         return [int(row.user_id) for row in rows]
 
 
+def list_room_members(room_id: str) -> List[Dict[str, object]]:
+    with Session(engine) as s:
+        rows = s.exec(select(RoomMemberRow).where(RoomMemberRow.room_id == room_id)).all()
+        user_ids = [int(row.user_id) for row in rows]
+        users = (
+            {row.user_id: row for row in s.exec(select(UserRow).where(UserRow.user_id.in_(user_ids))).all()}
+            if user_ids
+            else {}
+        )
+    out: List[Dict[str, object]] = []
+    for row in rows:
+        user = users.get(row.user_id)
+        room_role = str(row.role or "player").strip() or "player"
+        out.append(
+            {
+                "user_id": row.user_id,
+                "username": user.username if user else f"user-{row.user_id}",
+                "room_role": "owner" if room_role == "owner" else "member",
+                "role": room_role,
+                "status": (user.status if user and user.status else "active"),
+                "last_seen_at": row.last_seen_at,
+            }
+        )
+    out.sort(key=lambda item: (0 if item.get("room_role") == "owner" else 1, str(item.get("username") or "").lower()))
+    return out
+
+
 def is_member(user_id: int, room_id: str) -> bool:
     with Session(engine) as s:
         row = s.get(RoomMemberRow, (user_id, room_id))
         return bool(row)
+
+
+def get_room_member_role(user_id: int, room_id: str) -> Optional[str]:
+    with Session(engine) as s:
+        row = s.get(RoomMemberRow, (user_id, room_id))
+        if not row:
+            return None
+        return str(row.role or "").strip() or None
+
+
+def remove_room_membership(user_id: int, room_id: str) -> bool:
+    with Session(engine) as s:
+        row = s.get(RoomMemberRow, (user_id, room_id))
+        if not row:
+            return False
+        s.delete(row)
+        s.commit()
+        return True
+
+
+def transfer_room_ownership(room_id: str, new_owner_user_id: int, fallback_role: str = "player") -> bool:
+    with Session(engine) as s:
+        meta = s.get(RoomMetaRow, room_id)
+        if not meta:
+            return False
+        target_row = s.get(RoomMemberRow, (new_owner_user_id, room_id))
+        if not target_row:
+            return False
+        previous_owner_user_id = meta.owner_user_id
+        previous_owner_row = s.get(RoomMemberRow, (previous_owner_user_id, room_id)) if previous_owner_user_id is not None else None
+        target_row.role = "owner"
+        s.add(target_row)
+        if previous_owner_row and int(previous_owner_row.user_id) != int(new_owner_user_id):
+            previous_owner_row.role = fallback_role or "player"
+            s.add(previous_owner_row)
+        meta.owner_user_id = int(new_owner_user_id)
+        s.add(meta)
+        s.commit()
+        return True
 
 
 def ensure_room_membership_for_user(

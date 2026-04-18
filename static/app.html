@@ -440,6 +440,7 @@
     <div class="view-tabs">
       <button id="viewLobbyBtn" class="view-tab active" type="button">Lobby</button>
       <button id="viewAccountBtn" class="view-tab" type="button">Account</button>
+      <button id="viewRoomBtn" class="view-tab hidden" type="button">Room</button>
       <button id="viewAdminBtn" class="view-tab hidden" type="button">Admin</button>
     </div>
 
@@ -495,6 +496,10 @@
       <div id="accountPanel" class="stack"></div>
     </section>
 
+    <section id="viewRoom" class="view-panel hidden">
+      <div id="roomPanel" class="stack"></div>
+    </section>
+
     <section id="viewAdmin" class="view-panel hidden">
       <div id="adminPanel" class="stack"></div>
     </section>
@@ -506,18 +511,23 @@
   const lobbyEl = document.getElementById('lobbyContent');
   const joinMsg = document.getElementById('joinMsg');
   const accountPanel = document.getElementById('accountPanel');
+  const roomPanel = document.getElementById('roomPanel');
   const adminPanel = document.getElementById('adminPanel');
   const viewLobby = document.getElementById('viewLobby');
   const viewAccount = document.getElementById('viewAccount');
+  const viewRoom = document.getElementById('viewRoom');
   const viewAdmin = document.getElementById('viewAdmin');
   const viewLobbyBtn = document.getElementById('viewLobbyBtn');
   const viewAccountBtn = document.getElementById('viewAccountBtn');
+  const viewRoomBtn = document.getElementById('viewRoomBtn');
   const viewAdminBtn = document.getElementById('viewAdminBtn');
 
   let currentMe = null;
   let currentView = 'lobby';
+  let currentGovernanceRoomId = '';
   let currentAdminUserId = null;
   let adminSearchQuery = '';
+  let adminRoomLookupId = '';
   let adminUsers = [];
   let adminPacks = [];
   let adminAuditEntries = [];
@@ -573,13 +583,18 @@
 
   function syncViewAccessControls(){
     const locked = isPasswordLocked();
+    const hasRoomTarget = !!currentGovernanceRoomId;
     viewLobbyBtn.disabled = locked;
+    viewRoomBtn.disabled = locked || !hasRoomTarget;
     viewAdminBtn.disabled = locked || !canViewAdmin();
+    viewRoomBtn.classList.toggle('hidden', !hasRoomTarget);
     if(locked){
       viewLobbyBtn.title = 'Password change required';
+      viewRoomBtn.title = 'Password change required';
       viewAdminBtn.title = 'Password change required';
     } else {
       viewLobbyBtn.title = '';
+      viewRoomBtn.title = hasRoomTarget ? '' : 'Select a room to manage';
       viewAdminBtn.title = canViewAdmin() ? '' : 'Admin access required';
     }
   }
@@ -587,6 +602,12 @@
   function setHashView(next){
     const hash = next === 'lobby' ? '' : `#${next}`;
     history.replaceState(null, '', location.pathname + location.search + hash);
+  }
+
+  async function openRoomGovernance(roomId){
+    currentGovernanceRoomId = String(roomId || '').trim();
+    syncViewAccessControls();
+    await switchView('room');
   }
 
   function flattenTree(rooms, rootRoomId){
@@ -668,6 +689,17 @@
         }
       };
       actions.appendChild(renameBtn);
+    }
+
+    if(opts.canGovern){
+      const membersBtn = document.createElement('button');
+      membersBtn.className = 'btn-ghost btn-sm';
+      membersBtn.textContent = 'Members';
+      membersBtn.onclick = (e) => {
+        e.stopPropagation();
+        void openRoomGovernance(r.room_id);
+      };
+      actions.appendChild(membersBtn);
     }
 
     if(opts.canDelete){
@@ -787,7 +819,8 @@
           const canDelete = sess.role === 'gm';
           const canRename = sess.role === 'gm' || sess.role === 'co_gm';
           for(const {room, depth} of flat){
-            roomsDiv.appendChild(makeRoomNode(room, depth, {canDelete, canRename}));
+            const canGovern = (!!currentMe && ['admin', 'owner'].includes(String(currentMe.role || ''))) || Number(room.owner_user_id || 0) === Number(currentMe?.user_id || 0);
+            roomsDiv.appendChild(makeRoomNode(room, depth, {canDelete, canRename, canGovern}));
           }
         } else {
           const empty = document.createElement('div');
@@ -890,6 +923,14 @@
         right.appendChild(renameBtn);
       }
 
+      if(r.role === 'owner' || (!!currentMe && ['admin', 'owner'].includes(String(currentMe.role || '')))){
+        const membersBtn = document.createElement('button');
+        membersBtn.className = 'btn-ghost btn-sm';
+        membersBtn.textContent = 'Members';
+        membersBtn.onclick = () => { void openRoomGovernance(r.room_id); };
+        right.appendChild(membersBtn);
+      }
+
       if(r.role === 'owner'){
         const delBtn = document.createElement('button');
         delBtn.className = 'btn-danger btn-sm';
@@ -918,7 +959,7 @@
     const hasAdminRole = !!currentMe && ['admin', 'owner'].includes(String(currentMe.role || ''));
     viewAdminBtn.classList.toggle('hidden', !hasAdminRole);
     syncViewAccessControls();
-    if ((isPasswordLocked() && currentView !== 'account') || (!canViewAdmin() && currentView === 'admin')) {
+    if ((isPasswordLocked() && currentView !== 'account') || (!canViewAdmin() && currentView === 'admin') || (!currentGovernanceRoomId && currentView === 'room')) {
       await switchView('account');
     }
     return currentMe;
@@ -1131,6 +1172,113 @@
     bindAccountPanel();
   }
 
+  function bindRoomPanel(room){
+    const backBtn = document.getElementById('closeRoomGovernanceBtn');
+    if(backBtn){
+      backBtn.onclick = async () => {
+        await switchView('lobby');
+      };
+    }
+    roomPanel.querySelectorAll('[data-room-remove-user]').forEach((btn) => {
+      btn.onclick = async () => {
+        const userId = btn.getAttribute('data-room-remove-user');
+        if(!room || !userId) return;
+        if(!confirm('Remove this member from the room?')) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/rooms/${encodeURIComponent(room.room_id)}/members/${encodeURIComponent(userId)}/remove`, {method:'POST'});
+          await refreshRoomGovernance();
+        }catch(e){
+          alert(e.message);
+          btn.disabled = false;
+        }
+      };
+    });
+    roomPanel.querySelectorAll('[data-room-transfer-owner]').forEach((btn) => {
+      btn.onclick = async () => {
+        const userId = btn.getAttribute('data-room-transfer-owner');
+        const username = btn.getAttribute('data-room-transfer-username') || 'this user';
+        if(!room || !userId) return;
+        if(!confirm(`Transfer room ownership to ${username}?`)) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/rooms/${encodeURIComponent(room.room_id)}/transfer-ownership`, {
+            method:'POST',
+            body: JSON.stringify({user_id: Number(userId)}),
+          });
+          await refreshRoomGovernance();
+          await refreshLobby();
+        }catch(e){
+          alert(e.message);
+          btn.disabled = false;
+        }
+      };
+    });
+  }
+
+  async function refreshRoomGovernance(){
+    syncViewAccessControls();
+    if(!currentGovernanceRoomId){
+      roomPanel.innerHTML = '<div class="card"><div class="empty-state">Select a room to manage from the lobby or the admin panel.</div></div>';
+      return;
+    }
+    try{
+      const data = await api(`/api/rooms/${encodeURIComponent(currentGovernanceRoomId)}/members`);
+      const room = data.room || {};
+      const members = Array.isArray(data.members) ? data.members : [];
+      roomPanel.innerHTML = `
+        <div class="card">
+          <div class="card-label">Room Governance</div>
+          <div class="info-grid">
+            <div class="mini-stat"><div class="mini-stat-label">Room</div><div class="mini-stat-value">${escapeHtml(room.display_name || room.name || room.room_id || '')}</div></div>
+            <div class="mini-stat"><div class="mini-stat-label">Room ID</div><div class="mini-stat-value">${escapeHtml(room.room_id || '')}</div></div>
+            <div class="mini-stat"><div class="mini-stat-label">Join Code</div><div class="mini-stat-value">${escapeHtml(room.join_code || '—')}</div></div>
+            <div class="mini-stat"><div class="mini-stat-label">Your Access</div><div class="mini-stat-value">${escapeHtml(String(room.actor_room_role || 'viewer').replace(/_/g, ' '))}</div></div>
+          </div>
+          <div class="badge-row">
+            ${roleBadge(room.actor_room_role || 'viewer')}
+            ${room.member_management_mode === 'session_inherited' ? `<span class="inline-badge warn">session-backed</span>` : `<span class="inline-badge good">direct members</span>`}
+          </div>
+          ${room.member_management_mode === 'session_inherited' ? `<div class="hint" style="margin-top:8px;">This room belongs to a session. Ownership transfer is available, but member removal stays managed by session membership for now.</div>` : ''}
+          <div class="detail-actions">
+            <button id="closeRoomGovernanceBtn" class="btn-ghost btn-sm" type="button">Back to Lobby</button>
+          </div>
+        </div>
+        <div class="list-card">
+          <div class="list-head">Members</div>
+          <div class="list-body">
+            ${members.length ? members.map((member) => `
+              <div class="list-row">
+                <div class="list-row-main">
+                  <div class="list-row-title">${escapeHtml(member.username || `user-${member.user_id}`)}</div>
+                  <div class="list-row-meta">User #${escapeHtml(member.user_id)}${member.last_seen_at ? ` · Last seen ${escapeHtml(fmtDateTime(member.last_seen_at))}` : ''}</div>
+                </div>
+                <div class="detail-actions" style="margin-top:0;">
+                  ${roleBadge(member.room_role || member.role || 'member')}
+                  ${statusBadge(member.status || 'active')}
+                  ${room.can_transfer_ownership && member.room_role !== 'owner' ? `<button class="btn-primary btn-sm" type="button" data-room-transfer-owner="${escapeHtml(member.user_id)}" data-room-transfer-username="${escapeHtml(member.username || '')}">Make Owner</button>` : ''}
+                  ${room.can_manage_members && room.member_management_mode !== 'session_inherited' && member.room_role !== 'owner' ? `<button class="btn-danger btn-sm" type="button" data-room-remove-user="${escapeHtml(member.user_id)}">Remove</button>` : ''}
+                </div>
+              </div>
+            `).join('') : `<div class="empty-state">No room members found.</div>`}
+          </div>
+        </div>
+      `;
+      bindRoomPanel(room);
+    }catch(e){
+      roomPanel.innerHTML = `
+        <div class="card">
+          <div class="card-label">Room Governance</div>
+          <div class="empty-state">${escapeHtml(e.message || 'Unable to load room governance.')}</div>
+          <div class="detail-actions">
+            <button id="closeRoomGovernanceBtn" class="btn-ghost btn-sm" type="button">Back to Lobby</button>
+          </div>
+        </div>
+      `;
+      bindRoomPanel(null);
+    }
+  }
+
   function bindAdminPanel(){
     const adminSearchBtn = document.getElementById('adminSearchBtn');
     const adminSearchInput = document.getElementById('adminSearchInput');
@@ -1258,6 +1406,14 @@
       resetAuditFiltersBtn.onclick = async () => {
         adminAuditFilters = { actorUserId: '', targetType: '', targetId: '', action: '' };
         await refreshAdmin();
+      };
+    }
+    const adminRoomLookupBtn = document.getElementById('adminRoomLookupBtn');
+    if(adminRoomLookupBtn){
+      adminRoomLookupBtn.onclick = async () => {
+        adminRoomLookupId = document.getElementById('adminRoomLookupInput')?.value.trim() || '';
+        if(!adminRoomLookupId) return;
+        await openRoomGovernance(adminRoomLookupId);
       };
     }
   }
@@ -1422,6 +1578,14 @@
               </div>
             </div>
           ` : `<div class="card"><div class="empty-state">Select a user to inspect their account and entitlements.</div></div>`}
+          <div class="card">
+            <div class="card-label">Room Governance Lookup</div>
+            <div class="search-row">
+              <input id="adminRoomLookupInput" type="text" placeholder="Room id" value="${escapeHtml(adminRoomLookupId)}"/>
+              <button id="adminRoomLookupBtn" class="btn-primary btn-sm" type="button">Open</button>
+            </div>
+            <div class="hint">Load a room governance view by room id for ownership or membership repair.</div>
+          </div>
           <div class="list-card">
             <div class="list-head">
               <div class="form-stack">
@@ -1457,9 +1621,12 @@
   }
 
   async function switchView(next){
-    const target = next === 'account' ? 'account' : (next === 'admin' ? 'admin' : 'lobby');
+    const target = next === 'account' ? 'account' : (next === 'admin' ? 'admin' : (next === 'room' ? 'room' : 'lobby'));
     if(isPasswordLocked() && target !== 'account'){
       return switchView('account');
+    }
+    if(target === 'room' && !currentGovernanceRoomId){
+      return switchView('lobby');
     }
     if(target === 'admin' && !canViewAdmin()){
       return switchView('account');
@@ -1467,13 +1634,16 @@
     currentView = target;
     viewLobby.classList.toggle('hidden', target !== 'lobby');
     viewAccount.classList.toggle('hidden', target !== 'account');
+    viewRoom.classList.toggle('hidden', target !== 'room');
     viewAdmin.classList.toggle('hidden', target !== 'admin');
     viewLobbyBtn.classList.toggle('active', target === 'lobby');
     viewAccountBtn.classList.toggle('active', target === 'account');
+    viewRoomBtn.classList.toggle('active', target === 'room');
     viewAdminBtn.classList.toggle('active', target === 'admin');
     setHashView(target);
     if(target === 'lobby') await refreshLobby();
     else if(target === 'account') await refreshAccount();
+    else if(target === 'room') await refreshRoomGovernance();
     else if(target === 'admin') await refreshAdmin();
   }
 
@@ -1518,10 +1688,11 @@
 
   viewLobbyBtn.onclick = () => { void switchView('lobby'); };
   viewAccountBtn.onclick = () => { void switchView('account'); };
+  viewRoomBtn.onclick = () => { void switchView('room'); };
   viewAdminBtn.onclick = () => { void switchView('admin'); };
 
   await refreshShell();
-  const initialView = ['account', 'admin'].includes(location.hash.replace(/^#/, '')) ? location.hash.replace(/^#/, '') : 'lobby';
+  const initialView = ['account', 'admin', 'room'].includes(location.hash.replace(/^#/, '')) ? location.hash.replace(/^#/, '') : 'lobby';
   await switchView(initialView);
 })();
 </script>

@@ -354,9 +354,29 @@ def list_room_member_user_ids(room_id: str) -> List[int]:
     return storage_rooms.list_room_member_user_ids(room_id)
 
 
+def list_room_members(room_id: str) -> List[Dict[str, object]]:
+    _sync_rooms_engine()
+    return storage_rooms.list_room_members(room_id)
+
+
 def is_member(user_id: int, room_id: str) -> bool:
     _sync_rooms_engine()
     return storage_rooms.is_member(user_id, room_id)
+
+
+def get_room_member_role(user_id: int, room_id: str) -> Optional[str]:
+    _sync_rooms_engine()
+    return storage_rooms.get_room_member_role(user_id, room_id)
+
+
+def remove_room_membership(user_id: int, room_id: str) -> bool:
+    _sync_rooms_engine()
+    return storage_rooms.remove_room_membership(user_id, room_id)
+
+
+def transfer_room_ownership(room_id: str, new_owner_user_id: int, fallback_role: str = "player") -> bool:
+    _sync_rooms_engine()
+    return storage_rooms.transfer_room_ownership(room_id, new_owner_user_id, fallback_role)
 
 
 def ensure_room_membership_for_user(user_id: int, room_id: str) -> bool:
