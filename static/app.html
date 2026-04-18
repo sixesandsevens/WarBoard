@@ -1359,6 +1359,34 @@
         }catch(e){ alert(e.message); btn.disabled = false; }
       };
     });
+
+    sessionPanel.querySelectorAll('[data-sess-revoke-pack]').forEach((btn) => {
+      btn.onclick = async () => {
+        const packId = btn.getAttribute('data-sess-revoke-pack');
+        const packName = btn.getAttribute('data-sess-revoke-packname') || 'this pack';
+        if(!sess || !packId) return;
+        if(!confirm(`Revoke "${packName}" from session "${sess.name}"?\n\nSession members will lose access immediately.`)) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/sessions/${encodeURIComponent(sess.session_id)}/shared-packs/${encodeURIComponent(packId)}/remove`, {method:'POST'});
+          await refreshSessionGovernance();
+        }catch(e){ alert(e.message); btn.disabled = false; }
+      };
+    });
+
+    const shareBtn = document.getElementById('sessSharePackBtn');
+    const shareSelect = document.getElementById('sessSharePackSelect');
+    if(shareBtn && shareSelect && sess){
+      shareBtn.onclick = async () => {
+        const packId = shareSelect.value;
+        if(!packId) return;
+        shareBtn.disabled = true;
+        try{
+          await api(`/api/sessions/${encodeURIComponent(sess.session_id)}/shared-packs/${encodeURIComponent(packId)}`, {method:'POST'});
+          await refreshSessionGovernance();
+        }catch(e){ alert(e.message); shareBtn.disabled = false; }
+      };
+    }
   }
 
   async function refreshSessionGovernance(){
@@ -1368,10 +1396,18 @@
       return;
     }
     try{
-      const data = await api(`/api/sessions/${encodeURIComponent(currentGovernanceSessionId)}/members`);
-      const sess = data.session || {};
-      const members = Array.isArray(data.members) ? data.members : [];
+      const [membersData, packsData, myPacksData] = await Promise.all([
+        api(`/api/sessions/${encodeURIComponent(currentGovernanceSessionId)}/members`),
+        api(`/api/sessions/${encodeURIComponent(currentGovernanceSessionId)}/shared-packs`),
+        api(`/api/private-packs?session_id=${encodeURIComponent(currentGovernanceSessionId)}`).catch(() => ({packs:[]})),
+      ]);
+      const sess = membersData.session || {};
+      const members = Array.isArray(membersData.members) ? membersData.members : [];
+      const sharedPacks = Array.isArray(packsData.packs) ? packsData.packs : [];
+      const myPacks = Array.isArray(myPacksData.packs) ? myPacksData.packs : [];
+      const unsharablePacks = myPacks.filter(p => !p.shared_in_session);
       const sessionRoleLabel = (r) => r === 'gm' ? 'GM' : r === 'co_gm' ? 'Co-GM' : 'Player';
+      const canManagePacks = !!sess.can_manage_packs;
       sessionPanel.innerHTML = `
         <div class="card">
           <div class="card-label">Session Governance</div>
@@ -1412,6 +1448,41 @@
                 </div>
               </div>`;
             }).join('') : `<div class="empty-state">No session members found.</div>`}
+          </div>
+        </div>
+        <div class="list-card">
+          <div class="list-head">Shared Packs</div>
+          <div class="list-body">
+            <div class="hint" style="margin-bottom:8px;">Session members access these packs through session membership — not as personal ownership.</div>
+            ${sharedPacks.length ? sharedPacks.map((p) => `
+              <div class="list-row">
+                <div class="list-row-main">
+                  <div class="list-row-title">${escapeHtml(p.name || p.slug || 'Pack')}</div>
+                  <div class="list-row-meta">Owned by ${escapeHtml(p.owner_username || 'user-' + p.owner_user_id)}${p.shared_by_username && p.shared_by_user_id !== p.owner_user_id ? ' · Shared by ' + escapeHtml(p.shared_by_username) : ''}${p.shared_at ? ' · ' + escapeHtml(fmtDateTime(p.shared_at)) : ''}</div>
+                </div>
+                <div class="detail-actions" style="margin-top:0;">
+                  <span class="inline-badge">Shared to session</span>
+                  ${canManagePacks ? `<button class="btn-danger btn-sm" type="button" data-sess-revoke-pack="${escapeHtml(String(p.pack_id))}" data-sess-revoke-packname="${escapeHtml(p.name || p.slug || '')}">Revoke</button>` : ''}
+                </div>
+              </div>
+            `).join('') : `<div class="empty-state">No packs shared to this session yet.</div>`}
+            ${canManagePacks ? `
+              <div class="list-row" style="border-top:1px solid #333;margin-top:8px;padding-top:8px;">
+                <div class="list-row-main">
+                  <div class="list-row-title">Share a pack</div>
+                  <div class="list-row-meta">Only packs you own or have access to can be shared.</div>
+                </div>
+                <div class="detail-actions" style="margin-top:0;">
+                  ${unsharablePacks.length ? `
+                    <select id="sessSharePackSelect" style="background:#333;color:#eee;border:1px solid #555;border-radius:4px;padding:3px 6px;font-size:13px;">
+                      <option value="">— pick a pack —</option>
+                      ${unsharablePacks.map(p => `<option value="${escapeHtml(String(p.pack_id))}">${escapeHtml(p.name || p.slug || 'Pack')}</option>`).join('')}
+                    </select>
+                    <button class="btn-primary btn-sm" id="sessSharePackBtn" type="button">Share</button>
+                  ` : `<span class="hint">No unshared packs available.</span>`}
+                </div>
+              </div>
+            ` : ''}
           </div>
         </div>
       `;

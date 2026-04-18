@@ -432,11 +432,25 @@ def list_game_session_shared_packs(session_id: str) -> List[Dict[str, object]]:
             if pack_ids
             else {}
         )
+        all_user_ids: set[int] = set()
+        for row in shared_rows:
+            pack = packs.get(int(row.pack_id))
+            if pack and pack.owner_user_id:
+                all_user_ids.add(int(pack.owner_user_id))
+            if row.shared_by_user_id:
+                all_user_ids.add(int(row.shared_by_user_id))
+        users = (
+            {row.user_id: row for row in s.exec(select(UserRow).where(UserRow.user_id.in_(all_user_ids))).all()}
+            if all_user_ids
+            else {}
+        )
     out: List[Dict[str, object]] = []
     for row in shared_rows:
         pack = packs.get(int(row.pack_id))
         if not pack:
             continue
+        owner = users.get(int(pack.owner_user_id)) if pack.owner_user_id else None
+        sharer = users.get(int(row.shared_by_user_id)) if row.shared_by_user_id else None
         out.append(
             {
                 "id": row.id,
@@ -445,7 +459,9 @@ def list_game_session_shared_packs(session_id: str) -> List[Dict[str, object]]:
                 "slug": pack.slug,
                 "name": pack.name,
                 "owner_user_id": pack.owner_user_id,
+                "owner_username": owner.username if owner else None,
                 "shared_by_user_id": row.shared_by_user_id,
+                "shared_by_username": sharer.username if sharer else None,
                 "shared_at": row.shared_at,
             }
         )

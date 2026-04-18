@@ -503,6 +503,11 @@ def _can_assign_session_roles(actor, session_id: str) -> bool:
     return _get_session_actor_role(actor, session_id) in {"platform_admin", "gm"}
 
 
+def _can_manage_session_packs(actor, session_id: str) -> bool:
+    """Only GM and platform admin can add/revoke session-shared packs."""
+    return _get_session_actor_role(actor, session_id) in {"platform_admin", "gm"}
+
+
 def _session_governance_payload(session, actor) -> dict:
     session_id = session.session_id
     actor_role = _get_session_actor_role(actor, session_id)
@@ -513,6 +518,7 @@ def _session_governance_payload(session, actor) -> dict:
         "can_view_members": _can_view_session_members(actor, session_id),
         "can_manage_members": _can_manage_session_members(actor, session_id),
         "can_assign_roles": _can_assign_session_roles(actor, session_id),
+        "can_manage_packs": _can_manage_session_packs(actor, session_id),
     }
 
 
@@ -1826,38 +1832,76 @@ def get_session_members_api(session_id: str, req: Request):
 
 @app.get("/api/sessions/{session_id}/shared-packs")
 def get_session_shared_packs_api(session_id: str, req: Request):
-    user = _require_user(req)
-    if user.user_id is None:
+    actor = _require_user(req)
+    if actor.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
-    if not get_game_session_role(session_id, user.user_id):
-        raise HTTPException(status_code=403, detail="Not a member of this session")
-    return {"packs": list_game_session_shared_packs(session_id)}
+    session = get_game_session(session_id)
+    if not session or session.archived:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not _can_view_session_members(actor, session_id):
+        raise HTTPException(status_code=403, detail="Session member access required")
+    packs = list_game_session_shared_packs(session_id)
+    return {"session": _session_governance_payload(session, actor), "packs": packs}
 
 
 @app.post("/api/sessions/{session_id}/shared-packs/{pack_id}")
 def share_session_pack_api(session_id: str, pack_id: int, req: Request):
-    user = _require_user(req)
-    if user.user_id is None:
+    actor = _require_user(req)
+    if actor.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
-    if not can_manage_game_session(session_id, user.user_id):
-        raise HTTPException(status_code=403, detail="GM or co-GM required")
-    if not user_has_pack_access(user.user_id, pack_id):
+    session = get_game_session(session_id)
+    if not session or session.archived:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not _can_manage_session_packs(actor, session_id):
+        raise HTTPException(status_code=403, detail="GM or admin required")
+    if not user_has_pack_access(actor.user_id, pack_id):
         raise HTTPException(status_code=403, detail="You do not have access to that pack")
-    if not set_game_session_shared_pack(session_id, pack_id, True, shared_by_user_id=user.user_id):
+    before_packs = list_game_session_shared_packs(session_id)
+    if not set_game_session_shared_pack(session_id, pack_id, True, shared_by_user_id=actor.user_id):
         raise HTTPException(status_code=404, detail="Session or pack not found")
-    return {"ok": True, "packs": list_game_session_shared_packs(session_id)}
+    after_packs = list_game_session_shared_packs(session_id)
+    _audit(
+        actor_user_id=actor.user_id,
+        action="session.share_pack",
+        target_type="session",
+        target_id=session_id,
+        summary=f"{actor.username} shared pack {pack_id} to session '{session.name}'",
+        before={"session_id": session_id, "packs": before_packs},
+        after={"session_id": session_id, "packs": after_packs},
+    )
+    return {"ok": True, "session": _session_governance_payload(session, actor), "packs": after_packs}
 
 
 @app.delete("/api/sessions/{session_id}/shared-packs/{pack_id}")
 def unshare_session_pack_api(session_id: str, pack_id: int, req: Request):
-    user = _require_user(req)
-    if user.user_id is None:
+    actor = _require_user(req)
+    if actor.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
-    if not can_manage_game_session(session_id, user.user_id):
-        raise HTTPException(status_code=403, detail="GM or co-GM required")
-    if not set_game_session_shared_pack(session_id, pack_id, False, shared_by_user_id=user.user_id):
+    session = get_game_session(session_id)
+    if not session or session.archived:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not _can_manage_session_packs(actor, session_id):
+        raise HTTPException(status_code=403, detail="GM or admin required")
+    before_packs = list_game_session_shared_packs(session_id)
+    if not set_game_session_shared_pack(session_id, pack_id, False, shared_by_user_id=actor.user_id):
         raise HTTPException(status_code=404, detail="Session or pack not found")
-    return {"ok": True, "packs": list_game_session_shared_packs(session_id)}
+    after_packs = list_game_session_shared_packs(session_id)
+    _audit(
+        actor_user_id=actor.user_id,
+        action="session.unshare_pack",
+        target_type="session",
+        target_id=session_id,
+        summary=f"{actor.username} unshared pack {pack_id} from session '{session.name}'",
+        before={"session_id": session_id, "packs": before_packs},
+        after={"session_id": session_id, "packs": after_packs},
+    )
+    return {"ok": True, "session": _session_governance_payload(session, actor), "packs": after_packs}
+
+
+@app.post("/api/sessions/{session_id}/shared-packs/{pack_id}/remove")
+def unshare_session_pack_post_api(session_id: str, pack_id: int, req: Request):
+    """POST-method alias for DELETE /api/sessions/{session_id}/shared-packs/{pack_id}."""
+    return unshare_session_pack_api(session_id, pack_id, req)
 
 
 @app.post("/api/sessions/{session_id}/members/{user_id}/role")
