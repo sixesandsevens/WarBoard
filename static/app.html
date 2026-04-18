@@ -81,6 +81,18 @@
       outline: none; font: inherit; font-size: 13px;
       box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
     }
+    select {
+      display: block; width: 100%;
+      padding: 7px 10px;
+      background: #1a1a1a; color: #eeeeec;
+      border: 1px solid #3d3d3d; border-radius: 4px;
+      outline: none; font: inherit; font-size: 13px;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
+    }
+    select:focus {
+      border-color: #3584e4;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.3), 0 0 0 2px rgba(53,132,228,0.22);
+    }
     input::placeholder { color: rgba(238,238,236,0.28); }
     input:focus {
       border-color: #3584e4;
@@ -321,6 +333,11 @@
       color: #e8d18a;
       font-size: 13px;
     }
+    .banner.bad {
+      border-color: rgba(196,84,84,0.45);
+      background: rgba(76,28,28,0.5);
+      color: #efb0b0;
+    }
     .admin-layout {
       display: grid;
       grid-template-columns: 290px minmax(0, 1fr);
@@ -450,7 +467,15 @@
         <div class="card">
           <div class="card-label">Join with a code</div>
           <div class="input-row">
-            <input id="joinCode" placeholder="WHAM-XXXXXX"/>
+            <input
+              id="joinCode"
+              placeholder="WHAM-XXXXXX"
+              autocomplete="off"
+              autocapitalize="characters"
+              autocorrect="off"
+              spellcheck="false"
+              inputmode="text"
+            />
             <button class="btn-primary" id="joinBtn">Join</button>
           </div>
           <div class="err" id="joinMsg"></div>
@@ -496,6 +521,7 @@
   let adminUsers = [];
   let adminPacks = [];
   let adminAuditEntries = [];
+  let adminAuditFilters = { actorUserId: '', targetType: '', targetId: '', action: '' };
 
   async function api(url, opts){
     const res = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
@@ -538,7 +564,24 @@
   }
 
   function canViewAdmin(){
-    return !!currentMe && ['admin', 'owner'].includes(String(currentMe.role || ''));
+    return !!currentMe && !currentMe.must_change_password && ['admin', 'owner'].includes(String(currentMe.role || ''));
+  }
+
+  function isPasswordLocked(){
+    return !!(currentMe && currentMe.must_change_password);
+  }
+
+  function syncViewAccessControls(){
+    const locked = isPasswordLocked();
+    viewLobbyBtn.disabled = locked;
+    viewAdminBtn.disabled = locked || !canViewAdmin();
+    if(locked){
+      viewLobbyBtn.title = 'Password change required';
+      viewAdminBtn.title = 'Password change required';
+    } else {
+      viewLobbyBtn.title = '';
+      viewAdminBtn.title = canViewAdmin() ? '' : 'Admin access required';
+    }
   }
 
   function setHashView(next){
@@ -872,8 +915,10 @@
   async function refreshShell(){
     currentMe = await api('/api/account/me');
     meEl.textContent = `${currentMe.username} · ${currentMe.role_label || currentMe.role || 'User'}`;
-    viewAdminBtn.classList.toggle('hidden', !canViewAdmin());
-    if (!canViewAdmin() && currentView === 'admin') {
+    const hasAdminRole = !!currentMe && ['admin', 'owner'].includes(String(currentMe.role || ''));
+    viewAdminBtn.classList.toggle('hidden', !hasAdminRole);
+    syncViewAccessControls();
+    if ((isPasswordLocked() && currentView !== 'account') || (!canViewAdmin() && currentView === 'admin')) {
       await switchView('account');
     }
     return currentMe;
@@ -970,21 +1015,32 @@
   }
 
   async function refreshAccount(){
-    const [me, sessionData, uploadData, packData] = await Promise.all([
+    const [me, sessionData] = await Promise.all([
       api('/api/account/me'),
       api('/api/account/sessions'),
-      api('/api/assets?pack=upload&lite=1&limit=8'),
-      api('/api/private-packs'),
     ]);
     currentMe = me;
+    meEl.textContent = `${currentMe.username} · ${currentMe.role_label || currentMe.role || 'User'}`;
+    const hasAdminRole = !!currentMe && ['admin', 'owner'].includes(String(currentMe.role || ''));
+    viewAdminBtn.classList.toggle('hidden', !hasAdminRole);
+    syncViewAccessControls();
+    const locked = !!me.must_change_password;
+    let uploads = [];
+    let packs = [];
+    if(!locked){
+      const [uploadData, packData] = await Promise.all([
+        api('/api/assets?pack=upload&lite=1&limit=8'),
+        api('/api/private-packs'),
+      ]);
+      uploads = Array.isArray(uploadData.assets) ? uploadData.assets : [];
+      packs = Array.isArray(packData.packs) ? packData.packs : [];
+    }
     const sessions = Array.isArray(sessionData.sessions) ? sessionData.sessions : [];
-    const uploads = Array.isArray(uploadData.assets) ? uploadData.assets : [];
-    const packs = Array.isArray(packData.packs) ? packData.packs : [];
     const ownedPacks = packs.filter((pack) => Number(pack.owner_user_id || 0) === Number(me.user_id || 0));
     const sharedPacks = packs.filter((pack) => Number(pack.owner_user_id || 0) !== Number(me.user_id || 0));
 
     accountPanel.innerHTML = `
-      ${me.must_change_password ? `<div class="banner">An admin flagged this account for password reset. Change your password before continuing long sessions.</div>` : ''}
+      ${me.must_change_password ? `<div class="banner bad">Your account requires a password change before normal access continues. Lobby and admin tools stay locked until this is completed.</div>` : ''}
       <div class="panel-grid">
         <div class="card">
           <div class="card-label">Profile</div>
@@ -1031,7 +1087,7 @@
           <div class="list-card">
             <div class="list-head">My Uploads</div>
             <div class="list-body">
-              ${uploads.length ? uploads.map((asset) => `
+              ${locked ? `<div class="empty-state">Available again after your password is updated.</div>` : uploads.length ? uploads.map((asset) => `
                 <div class="list-row">
                   <div class="list-row-main">
                     <div class="list-row-title">${escapeHtml(asset.name || asset.asset_id || 'Asset')}</div>
@@ -1044,7 +1100,7 @@
           <div class="list-card">
             <div class="list-head">My Packs</div>
             <div class="list-body">
-              ${ownedPacks.length ? ownedPacks.map((pack) => `
+              ${locked ? `<div class="empty-state">Available again after your password is updated.</div>` : ownedPacks.length ? ownedPacks.map((pack) => `
                 <div class="list-row">
                   <div class="list-row-main">
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
@@ -1058,7 +1114,7 @@
           <div class="list-card">
             <div class="list-head">Granted Pack Access</div>
             <div class="list-body">
-              ${sharedPacks.length ? sharedPacks.map((pack) => `
+              ${locked ? `<div class="empty-state">Available again after your password is updated.</div>` : sharedPacks.length ? sharedPacks.map((pack) => `
                 <div class="list-row">
                   <div class="list-row-main">
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
@@ -1129,6 +1185,25 @@
         }
       };
     });
+    adminPanel.querySelectorAll('[data-admin-role]').forEach((btn) => {
+      btn.onclick = async () => {
+        const nextRole = btn.getAttribute('data-admin-role');
+        if(!currentAdminUserId || !nextRole) return;
+        const pretty = nextRole.replace(/_/g, ' ');
+        if(!confirm(`Change this user's site role to ${pretty}?`)) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/admin/users/${encodeURIComponent(currentAdminUserId)}/role`, {
+            method: 'POST',
+            body: JSON.stringify({role: nextRole}),
+          });
+          await refreshAdmin();
+        }catch(e){
+          alert(e.message);
+          btn.disabled = false;
+        }
+      };
+    });
     const grantBtn = document.getElementById('grantPackBtn');
     const grantSelect = document.getElementById('grantPackSelect');
     if(grantBtn && grantSelect){
@@ -1166,6 +1241,25 @@
         }
       };
     });
+    const applyAuditFiltersBtn = document.getElementById('applyAuditFiltersBtn');
+    const resetAuditFiltersBtn = document.getElementById('resetAuditFiltersBtn');
+    if(applyAuditFiltersBtn){
+      applyAuditFiltersBtn.onclick = async () => {
+        adminAuditFilters = {
+          actorUserId: document.getElementById('auditActorFilter')?.value.trim() || '',
+          targetType: document.getElementById('auditTargetTypeFilter')?.value.trim() || '',
+          targetId: document.getElementById('auditTargetIdFilter')?.value.trim() || '',
+          action: document.getElementById('auditActionFilter')?.value.trim() || '',
+        };
+        await refreshAdmin();
+      };
+    }
+    if(resetAuditFiltersBtn){
+      resetAuditFiltersBtn.onclick = async () => {
+        adminAuditFilters = { actorUserId: '', targetType: '', targetId: '', action: '' };
+        await refreshAdmin();
+      };
+    }
   }
 
   async function refreshAdmin(){
@@ -1173,10 +1267,16 @@
       adminPanel.innerHTML = '<div class="card"><div class="empty-state">Admin access required.</div></div>';
       return;
     }
+    const auditParams = new URLSearchParams();
+    auditParams.set('limit', '30');
+    if(/^\d+$/.test(adminAuditFilters.actorUserId || '')) auditParams.set('actor_user_id', adminAuditFilters.actorUserId);
+    if(adminAuditFilters.targetType) auditParams.set('target_type', adminAuditFilters.targetType);
+    if(adminAuditFilters.targetId) auditParams.set('target_id', adminAuditFilters.targetId);
+    if(adminAuditFilters.action) auditParams.set('action', adminAuditFilters.action);
     const [usersData, packsData, auditData] = await Promise.all([
       api(`/api/admin/users?q=${encodeURIComponent(adminSearchQuery)}&limit=120`),
       api('/api/admin/packs?limit=250'),
-      api('/api/admin/audit?limit=30'),
+      api(`/api/admin/audit?${auditParams.toString()}`),
     ]);
     adminUsers = Array.isArray(usersData.users) ? usersData.users : [];
     adminPacks = Array.isArray(packsData.packs) ? packsData.packs : [];
@@ -1197,6 +1297,9 @@
     const entitlements = Array.isArray(detailData?.pack_entitlements) ? detailData.pack_entitlements : [];
     const uploads = Array.isArray(detailData?.uploads) ? detailData.uploads : [];
     const ownedPacks = Array.isArray(detailData?.packs_owned) ? detailData.packs_owned : [];
+    const actorIsOwner = !!currentMe && currentMe.role === 'owner';
+    const targetIsOwner = !!selectedUser && selectedUser.role === 'owner';
+    const ownerActionBlocked = !!selectedUser && targetIsOwner && (!actorIsOwner || !!selectedUser.is_last_owner);
     const entitledPackIds = new Set(entitlements.map((entry) => Number(entry.pack_id || 0)));
     const grantablePacks = adminPacks.filter((pack) => {
       const packId = Number(pack.pack_id || 0);
@@ -1243,15 +1346,25 @@
               <div class="badge-row">
                 ${roleBadge(selectedUser.role)}
                 ${statusBadge(selectedUser.status)}
+                ${selectedUser.is_last_owner ? `<span class="inline-badge bad">last owner</span>` : ''}
                 ${selectedUser.must_change_password ? `<span class="inline-badge warn">reset required</span>` : ''}
               </div>
+              ${selectedUser.role === 'owner' ? `<div class="hint" style="margin-top:8px;">Owner account. Owner-targeted actions require owner authority.</div>` : ''}
+              ${selectedUser.is_last_owner ? `<div class="hint" style="margin-top:4px; color:#efb0b0;">This is the last active owner account. Disable, delete, reset, and demotion are blocked.</div>` : ''}
               <div class="detail-actions">
                 ${selectedUser.status === 'active'
-                  ? `<button class="btn-ghost btn-sm" type="button" data-admin-action="disable">Disable</button>`
-                  : `<button class="btn-primary btn-sm" type="button" data-admin-action="enable">Enable</button>`}
-                <button class="btn-ghost btn-sm" type="button" data-admin-action="force-reset">Force Password Reset</button>
-                <button class="btn-danger btn-sm" type="button" data-admin-action="soft-delete">Soft Delete</button>
+                  ? `<button class="btn-ghost btn-sm" type="button" data-admin-action="disable" ${ownerActionBlocked ? 'disabled' : ''}>Disable</button>`
+                  : `<button class="btn-primary btn-sm" type="button" data-admin-action="enable" ${targetIsOwner && !actorIsOwner ? 'disabled' : ''}>Enable</button>`}
+                <button class="btn-ghost btn-sm" type="button" data-admin-action="force-reset" ${ownerActionBlocked ? 'disabled' : ''}>Force Password Reset</button>
+                <button class="btn-danger btn-sm" type="button" data-admin-action="soft-delete" ${ownerActionBlocked ? 'disabled' : ''}>Soft Delete</button>
               </div>
+              ${currentMe && currentMe.role === 'owner' ? `
+                <div class="detail-actions">
+                  ${selectedUser.role !== 'admin' ? `<button class="btn-ghost btn-sm" type="button" data-admin-role="admin">Promote to Admin</button>` : ''}
+                  ${selectedUser.role !== 'user' ? `<button class="btn-ghost btn-sm" type="button" data-admin-role="user" ${selectedUser.is_last_owner ? 'disabled' : ''}>Demote to User</button>` : ''}
+                  ${selectedUser.role !== 'owner' ? `<button class="btn-primary btn-sm" type="button" data-admin-role="owner">Promote to Owner</button>` : ''}
+                </div>
+              ` : ''}
             </div>
             <div class="panel-grid">
               <div class="list-card">
@@ -1310,7 +1423,21 @@
             </div>
           ` : `<div class="card"><div class="empty-state">Select a user to inspect their account and entitlements.</div></div>`}
           <div class="list-card">
-            <div class="list-head">Recent Audit</div>
+            <div class="list-head">
+              <div class="form-stack">
+                <div>Recent Audit</div>
+                <div class="search-row">
+                  <input id="auditActorFilter" type="text" placeholder="Actor user id" value="${escapeHtml(adminAuditFilters.actorUserId)}"/>
+                  <input id="auditTargetTypeFilter" type="text" placeholder="Target type" value="${escapeHtml(adminAuditFilters.targetType)}"/>
+                  <input id="auditActionFilter" type="text" placeholder="Action prefix" value="${escapeHtml(adminAuditFilters.action)}"/>
+                </div>
+                <div class="search-row">
+                  <input id="auditTargetIdFilter" type="text" placeholder="Target id" value="${escapeHtml(adminAuditFilters.targetId)}"/>
+                  <button id="applyAuditFiltersBtn" class="btn-primary btn-sm" type="button">Apply</button>
+                  <button id="resetAuditFiltersBtn" class="btn-ghost btn-sm" type="button">Reset</button>
+                </div>
+              </div>
+            </div>
             <div class="list-body">
               ${adminAuditEntries.length ? adminAuditEntries.map((entry) => `
                 <div class="list-row">
@@ -1331,6 +1458,9 @@
 
   async function switchView(next){
     const target = next === 'account' ? 'account' : (next === 'admin' ? 'admin' : 'lobby');
+    if(isPasswordLocked() && target !== 'account'){
+      return switchView('account');
+    }
     if(target === 'admin' && !canViewAdmin()){
       return switchView('account');
     }

@@ -10,6 +10,7 @@ from . import storage_db
 from .storage_models import SessionRow, UserRow
 
 engine = storage_db.engine
+VALID_SITE_ROLES = {"user", "admin", "owner"}
 
 
 def set_engine(value) -> None:
@@ -102,6 +103,56 @@ def update_user_must_change_password(user_id: int, must_change_password: bool) -
         s.add(user)
         s.commit()
         return True
+
+
+def update_user_role(user_id: int, role: str) -> bool:
+    next_role = str(role or "").strip().lower()
+    if next_role not in VALID_SITE_ROLES:
+        raise ValueError("Invalid role")
+    with Session(engine) as s:
+        user = s.get(UserRow, user_id)
+        if not user:
+            return False
+        user.role = next_role
+        s.add(user)
+        s.commit()
+        return True
+
+
+def count_users_with_role(role: str, status: Optional[str] = None) -> int:
+    role_name = str(role or "").strip().lower()
+    if role_name not in VALID_SITE_ROLES:
+        return 0
+    with Session(engine) as s:
+        stmt = select(UserRow.user_id).where(UserRow.role == role_name)
+        if status is not None:
+            stmt = stmt.where(UserRow.status == str(status or "").strip().lower())
+        rows = s.exec(stmt).all()
+    return len(rows)
+
+
+def bootstrap_owner_if_missing() -> Optional[UserRow]:
+    with Session(engine) as s:
+        existing_owner = s.exec(
+            select(UserRow)
+            .where(UserRow.role == "owner")
+            .where(UserRow.status == "active")
+            .order_by(UserRow.user_id)
+        ).first()
+        if existing_owner:
+            return None
+        candidate = s.exec(
+            select(UserRow)
+            .where(UserRow.status == "active")
+            .order_by(UserRow.created_at, UserRow.user_id)
+        ).first()
+        if not candidate:
+            return None
+        candidate.role = "owner"
+        s.add(candidate)
+        s.commit()
+        s.refresh(candidate)
+        return candidate
 
 
 def create_session(user_id: int, ttl_days: int = 30) -> str:

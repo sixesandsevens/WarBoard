@@ -58,6 +58,7 @@ from .storage import (
     archive_game_session,
     append_audit_log,
     assign_room_to_game_session,
+    bootstrap_owner_if_missing,
     can_manage_game_session,
     create_asset_record,
     create_game_session,
@@ -112,9 +113,11 @@ from .storage import (
     room_id_from_join_code,
     save_room_state_json,
     touch_membership,
+    count_users_with_role,
     update_user_must_change_password,
     update_user_last_room,
     update_user_password_hash,
+    update_user_role,
     update_user_status,
     update_room_name,
     user_has_pack_access,
@@ -233,10 +236,9 @@ def _ws_user(ws: WebSocket):
 
 
 SITE_ADMIN_ROLES = {"admin", "owner"}
+MANAGEABLE_SITE_ROLES = {"user", "admin", "owner"}
 ROLE_LABELS = {
     "user": "User",
-    "gm": "GM",
-    "moderator": "Moderator",
     "admin": "Admin",
     "owner": "Owner",
 }
@@ -254,6 +256,58 @@ def _is_site_admin(user) -> bool:
     return _role_name(user) in SITE_ADMIN_ROLES
 
 
+def _is_owner_account(user) -> bool:
+    return _role_name(user) == "owner"
+
+
+def _require_owner_actor(user):
+    if not _is_owner_account(user):
+        raise HTTPException(status_code=403, detail="Owner account required")
+    return user
+
+
+def _count_active_owners() -> int:
+    return count_users_with_role("owner", status="active")
+
+
+def _is_last_active_owner(target) -> bool:
+    return _is_owner_account(target) and _status_name(target) == "active" and _count_active_owners() <= 1
+
+
+def _ensure_not_last_owner(target, action: str):
+    if _is_last_active_owner(target):
+        raise HTTPException(status_code=403, detail="Cannot modify the last owner account")
+    return target
+
+
+def _ensure_actor_can_manage_target(actor, target, action: str, *, require_owner_for_roles: bool = False):
+    if not _is_site_admin(actor):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if require_owner_for_roles:
+        _require_owner_actor(actor)
+    actor_role = _role_name(actor)
+    target_role = _role_name(target)
+    destructive_owner_action = action in {"disable", "force_password_reset", "soft_delete", "change_role"}
+    if target_role == "owner":
+        if actor_role != "owner":
+            raise HTTPException(status_code=403, detail="Owner account required")
+        if destructive_owner_action:
+            _ensure_not_last_owner(target, action)
+    elif require_owner_for_roles and actor_role != "owner":
+        raise HTTPException(status_code=403, detail="Only an owner can change site roles")
+    return target
+
+
+def _password_change_allowed_path(path: str) -> bool:
+    if path in {"/api/me", "/api/account/me", "/api/account/change-password", "/api/account/sessions", "/api/auth/logout", "/app"}:
+        return True
+    if path.startswith("/api/account/sessions/"):
+        return True
+    if path.startswith("/static/"):
+        return True
+    return False
+
+
 def _require_site_admin(req: Request):
     user = _require_user(req)
     if not _is_site_admin(user):
@@ -266,14 +320,17 @@ def _current_sid(req: Request) -> str:
 
 
 def _user_public_payload(user) -> dict:
+    role_name = _role_name(user)
+    status_name = _status_name(user)
     return {
         "user_id": user.user_id,
         "username": user.username,
         "created_at": user.created_at,
-        "role": _role_name(user),
-        "role_label": ROLE_LABELS.get(_role_name(user), _role_name(user).replace("_", " ").title()),
-        "status": _status_name(user),
+        "role": role_name,
+        "role_label": ROLE_LABELS.get(role_name, role_name.replace("_", " ").title()),
+        "status": status_name,
         "must_change_password": bool(getattr(user, "must_change_password", False)),
+        "is_last_owner": bool(role_name == "owner" and status_name == "active" and _count_active_owners() <= 1),
         "last_room_id": getattr(user, "last_room_id", None),
         "disabled_at": getattr(user, "disabled_at", None),
         "disabled_reason": getattr(user, "disabled_reason", None),
@@ -447,6 +504,21 @@ async def _handle_session_control_event(event: WireEvent, user, client_id: str) 
 @app.on_event("startup")
 async def _startup() -> None:
     init_db()
+    bootstrapped_owner = bootstrap_owner_if_missing()
+    if bootstrapped_owner:
+        logger.warning(
+            "Bootstrapped missing owner account: user_id=%s username=%s",
+            bootstrapped_owner.user_id,
+            bootstrapped_owner.username,
+        )
+        _audit(
+            actor_user_id=None,
+            action="system.bootstrap_owner",
+            target_type="user",
+            target_id=str(bootstrapped_owner.user_id or ""),
+            summary=f"Promoted {bootstrapped_owner.username} to owner because no active owner account existed",
+            after=_user_public_payload(bootstrapped_owner),
+        )
     BG_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     ASSET_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     PRIVATE_PACKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -485,6 +557,11 @@ async def auth_gate(request: Request, call_next):
         if request.url.query:
             nxt = f"{nxt}?{request.url.query}"
         return RedirectResponse(url=f"/static/canvas.html?next={nxt}", status_code=302)
+
+    if bool(getattr(user, "must_change_password", False)) and not _password_change_allowed_path(path):
+        if path.startswith("/api/") or path.startswith("/ws/"):
+            return JSONResponse({"detail": "Password change required"}, status_code=403)
+        return RedirectResponse(url="/app#account", status_code=302)
 
     resp = await call_next(request)
     # Large pack/static payloads should be cacheable in browsers/CDNs.
@@ -706,8 +783,20 @@ def admin_get_user(req: Request, user_id: int):
     detail = get_user_detail(user_id)
     if not detail:
         raise HTTPException(status_code=404, detail="User not found")
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    user_payload = _user_public_payload(target)
+    user_payload.update(
+        {
+            "session_count": detail.get("session_count", 0),
+            "owned_room_count": detail.get("owned_room_count", 0),
+            "owned_asset_count": detail.get("owned_asset_count", 0),
+            "owned_pack_count": detail.get("owned_pack_count", 0),
+        }
+    )
     return {
-        "user": detail,
+        "user": user_payload,
         "uploads": list_owned_assets(user_id, limit=12),
         "packs_owned": list_owned_packs(user_id, limit=20),
         "pack_entitlements": list_user_pack_entitlements(user_id),
@@ -720,8 +809,7 @@ async def admin_disable_user(req: Request, user_id: int):
     target = get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    if _role_name(target) == "owner" and _role_name(admin_user) != "owner":
-        raise HTTPException(status_code=403, detail="Owner account required")
+    _ensure_actor_can_manage_target(admin_user, target, "disable")
     body = await req.json()
     reason = str(body.get("reason") or "").strip()
     before = _user_public_payload(target)
@@ -746,8 +834,7 @@ def admin_enable_user(req: Request, user_id: int):
     target = get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    if _role_name(target) == "owner" and _role_name(admin_user) != "owner":
-        raise HTTPException(status_code=403, detail="Owner account required")
+    _ensure_actor_can_manage_target(admin_user, target, "enable")
     before = _user_public_payload(target)
     update_user_status(user_id, "active")
     after = _user_public_payload(get_user_by_id(user_id))
@@ -769,6 +856,7 @@ def admin_force_password_reset(req: Request, user_id: int):
     target = get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+    _ensure_actor_can_manage_target(admin_user, target, "force_password_reset")
     before = _user_public_payload(target)
     update_user_must_change_password(user_id, True)
     delete_all_sessions_for_user(user_id)
@@ -791,8 +879,7 @@ async def admin_soft_delete_user(req: Request, user_id: int):
     target = get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    if _role_name(target) == "owner" and _role_name(admin_user) != "owner":
-        raise HTTPException(status_code=403, detail="Owner account required")
+    _ensure_actor_can_manage_target(admin_user, target, "soft_delete")
     body = await req.json() if req.headers.get("content-type", "").startswith("application/json") else {}
     reason = str((body or {}).get("reason") or "").strip()
     before = _user_public_payload(target)
@@ -805,6 +892,39 @@ async def admin_soft_delete_user(req: Request, user_id: int):
         target_type="user",
         target_id=str(user_id),
         summary=f"{admin_user.username} soft-deleted {target.username}",
+        before=before,
+        after=after,
+    )
+    return {"ok": True, "user": after}
+
+
+@app.post("/api/admin/users/{user_id}/role")
+async def admin_change_user_role(req: Request, user_id: int):
+    actor = _require_site_admin(req)
+    _require_owner_actor(actor)
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    body = await req.json()
+    next_role = str(body.get("role") or "").strip().lower()
+    if next_role not in MANAGEABLE_SITE_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid role")
+    current_role = _role_name(target)
+    if current_role == next_role:
+        return {"ok": True, "user": _user_public_payload(target)}
+    _ensure_actor_can_manage_target(actor, target, "change_role", require_owner_for_roles=True)
+    if current_role == "owner" and next_role != "owner":
+        _ensure_not_last_owner(target, "change_role")
+    before = _user_public_payload(target)
+    update_user_role(user_id, next_role)
+    after_target = get_user_by_id(user_id)
+    after = _user_public_payload(after_target)
+    _audit(
+        actor_user_id=actor.user_id,
+        action="admin.change_user_role",
+        target_type="user",
+        target_id=str(user_id),
+        summary=f"{actor.username} changed {target.username} role from {current_role} to {next_role}",
         before=before,
         after=after,
     )
@@ -864,9 +984,24 @@ async def admin_revoke_pack(req: Request, pack_id: int):
 
 
 @app.get("/api/admin/audit")
-def admin_list_audit(req: Request, limit: int = 100):
+def admin_list_audit(
+    req: Request,
+    limit: int = 100,
+    actor_user_id: int | None = None,
+    target_type: str = "",
+    target_id: str = "",
+    action: str = "",
+):
     _require_site_admin(req)
-    return {"entries": list_audit_logs(limit=limit)}
+    return {
+        "entries": list_audit_logs(
+            limit=limit,
+            actor_user_id=actor_user_id,
+            target_type=target_type,
+            target_id=target_id,
+            action=action,
+        )
+    }
 
 
 # ----------------------------- Packs API --------------------------------------
@@ -1842,6 +1977,9 @@ async def ws_room(ws: WebSocket, room_id: str):
         await ws.close(code=1008)
         return
     if user.user_id is None:
+        await ws.close(code=1008)
+        return
+    if bool(getattr(user, "must_change_password", False)):
         await ws.close(code=1008)
         return
 

@@ -50,6 +50,7 @@ def list_audit_logs(
     actor_user_id: Optional[int] = None,
     target_type: str = "",
     target_id: str = "",
+    action: str = "",
 ) -> List[Dict[str, Any]]:
     safe_limit = max(1, min(int(limit or 100), 500))
     with Session(engine) as s:
@@ -62,6 +63,9 @@ def list_audit_logs(
         target_id = str(target_id or "").strip()
         if target_id:
             stmt = stmt.where(AuditLogRow.target_id == target_id)
+        action = str(action or "").strip()
+        if action:
+            stmt = stmt.where(AuditLogRow.action.startswith(action))
         rows = s.exec(stmt.order_by(desc(AuditLogRow.created_at)).limit(safe_limit)).all()
     out: List[Dict[str, Any]] = []
     for row in rows:

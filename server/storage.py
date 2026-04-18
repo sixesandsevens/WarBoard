@@ -275,6 +275,21 @@ def update_user_must_change_password(user_id: int, must_change_password: bool) -
     return storage_auth.update_user_must_change_password(user_id, must_change_password)
 
 
+def update_user_role(user_id: int, role: str) -> bool:
+    _sync_auth_engine()
+    return storage_auth.update_user_role(user_id, role)
+
+
+def count_users_with_role(role: str, status: Optional[str] = None) -> int:
+    _sync_auth_engine()
+    return storage_auth.count_users_with_role(role, status=status)
+
+
+def bootstrap_owner_if_missing() -> Optional[UserRow]:
+    _sync_auth_engine()
+    return storage_auth.bootstrap_owner_if_missing()
+
+
 def create_session(user_id: int, ttl_days: int = 30) -> str:
     _sync_auth_engine()
     return storage_auth.create_session(user_id, ttl_days)
@@ -679,6 +694,7 @@ def list_audit_logs(
     actor_user_id: Optional[int] = None,
     target_type: str = "",
     target_id: str = "",
+    action: str = "",
 ) -> List[Dict[str, object]]:
     _sync_audit_engine()
     return storage_audit.list_audit_logs(
@@ -686,4 +702,5 @@ def list_audit_logs(
         actor_user_id=actor_user_id,
         target_type=target_type,
         target_id=target_id,
+        action=action,
     )
