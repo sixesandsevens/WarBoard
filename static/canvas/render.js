@@ -1302,8 +1302,9 @@ function render() {
   drawBackground();
   if (state.background_mode === "terrain") drawTerrainOverlays();
   drawGrid();
+  drawGeometry("under");
   drawInteriors();
-  drawGeometry();
+  drawGeometry("over");
   drawCaveBrushOverlay();
   drawStrokes("below_assets");
   drawShapes("below_assets");

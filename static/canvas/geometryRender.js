@@ -2,9 +2,14 @@
 
 // ─── Top-level draw call ──────────────────────────────────────────────────────
 
-function drawGeometry() {
+// pass = "under": objects with zIndex < 0 (drawn before interiors)
+// pass = "over":  objects with zIndex >= 0 (drawn after interiors, default)
+function drawGeometry(pass) {
   if (!state.geometry || !state.geometry.size) return;
+  const under = pass === "under";
   for (const obj of getSortedGeometryObjects()) {
+    const z = Number(obj.zIndex || 0);
+    if (under ? z >= 0 : z < 0) continue;
     drawGeometryObject(obj);
   }
 }
