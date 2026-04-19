@@ -412,8 +412,7 @@ async function refreshPacks() {
       return (
       `<option value="${p.pack_id}">${p.name} (${p.token_count})${typeLabel ? ` · ${typeLabel}` : ""}</option>`
       );
-    }
-    )).join("") || `<option value="">(no packs)</option>`;
+    }).join("") || `<option value="">(no packs)</option>`;
     packSelectEl.value = packState.selectedPackId || "";
     await loadPack(packState.selectedPackId);
   } catch (e) {
