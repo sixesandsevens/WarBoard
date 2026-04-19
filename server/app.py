@@ -178,6 +178,8 @@ MAX_ZIP_ASSET_FILES = _env_int("MAX_ZIP_ASSET_FILES", 2000)
 MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = _env_int("MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES", 1024 * 1024 * 1024)
 MAX_OFFICIAL_IMPORT_UPLOAD_BYTES = _env_int("MAX_OFFICIAL_IMPORT_UPLOAD_BYTES", 8 * 1024 * 1024 * 1024)
 OFFICIAL_IMPORT_CHUNK_BYTES = _env_int("OFFICIAL_IMPORT_CHUNK_BYTES", 8 * 1024 * 1024)
+MAX_OFFICIAL_IMPORT_ASSET_FILES = _env_int("MAX_OFFICIAL_IMPORT_ASSET_FILES", 25000)
+MAX_OFFICIAL_IMPORT_UNCOMPRESSED_BYTES = _env_int("MAX_OFFICIAL_IMPORT_UNCOMPRESSED_BYTES", 16 * 1024 * 1024 * 1024)
 
 # Static assets (still routed through FastAPI so middleware can protect them)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
@@ -792,8 +794,8 @@ def _import_zip_into_pack(*, actor_user_id: int, pack_id: int, pack, shared_tags
         uploads_dir=UPLOADS_DIR,
         asset_uploads_dir=ASSET_UPLOADS_DIR,
         max_asset_upload_bytes=MAX_ASSET_UPLOAD_BYTES,
-        max_zip_asset_files=MAX_ZIP_ASSET_FILES,
-        max_zip_total_uncompressed_bytes=MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
+        max_zip_asset_files=MAX_OFFICIAL_IMPORT_ASSET_FILES,
+        max_zip_total_uncompressed_bytes=MAX_OFFICIAL_IMPORT_UNCOMPRESSED_BYTES,
         create_asset_record_fn=_create_pack_record,
     )
 
