@@ -5,6 +5,7 @@ import importlib.util
 import json
 import logging
 import os
+import shutil
 import tempfile
 import time
 import uuid
@@ -141,6 +142,9 @@ from .storage import (
     transfer_room_ownership,
     add_private_pack_asset_record,
     delete_private_pack_asset_record,
+    delete_private_pack_asset_rows,
+    delete_private_pack_row,
+    delete_game_session_shared_pack_rows,
 )
 
 app = FastAPI(title="WarHamster")
@@ -1539,6 +1543,61 @@ async def admin_archive_official_pack_api(pack_id: int, req: Request):
         after=_pack_public_payload(updated),
     )
     return {"ok": True, "pack": _pack_public_payload(updated)}
+
+
+@app.delete("/api/admin/official-packs/{pack_id}")
+def admin_delete_official_pack_api(pack_id: int, req: Request):
+    actor = _require_site_admin(req)
+    pack = get_private_pack_by_id(pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Official pack not found")
+    if str(getattr(pack, "pack_scope", "") or "") != "official":
+        raise HTTPException(status_code=400, detail="Official pack required")
+    before = _pack_public_payload(pack)
+    item_count = count_private_pack_asset_rows(pack_id)
+    shared_count = delete_game_session_shared_pack_rows(pack_id)
+    deleted_item_rows = delete_private_pack_asset_rows(pack_id)
+    deleted = delete_private_pack_row(pack_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Official pack not found")
+    pack_root = _pack_files_root(pack)
+    files_removed = False
+    if pack_root.exists():
+        try:
+            shutil.rmtree(pack_root)
+            files_removed = True
+        except OSError as e:
+            logger.warning(
+                "official pack delete filesystem cleanup failed: pack_id=%s slug=%s error=%s",
+                pack_id,
+                getattr(pack, "slug", ""),
+                e,
+            )
+    _audit(
+        actor_user_id=actor.user_id,
+        action="admin.delete_official_pack",
+        target_type="pack",
+        target_id=str(pack_id),
+        summary=f"{actor.username} permanently deleted official pack {getattr(pack, 'slug', '') or getattr(pack, 'name', '')}",
+        before={
+            **before,
+            "item_count": item_count,
+            "shared_session_count": shared_count,
+        },
+        after={
+            "deleted": True,
+            "deleted_item_rows": deleted_item_rows,
+            "deleted_shared_rows": shared_count,
+            "files_removed": files_removed,
+        },
+    )
+    return {
+        "ok": True,
+        "deleted_pack_id": pack_id,
+        "deleted_item_rows": deleted_item_rows,
+        "deleted_shared_rows": shared_count,
+        "files_removed": files_removed,
+    }
 
 
 @app.post("/api/admin/official-packs/{pack_id}/imports/init")

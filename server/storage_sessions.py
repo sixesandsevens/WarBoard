@@ -532,3 +532,25 @@ def set_game_session_shared_pack(
         s.add(session)
         s.commit()
     return True
+
+
+def delete_game_session_shared_pack_rows(pack_id: int) -> int:
+    with Session(engine) as s:
+        rows = s.exec(
+            select(GameSessionSharedPackRow).where(GameSessionSharedPackRow.pack_id == pack_id)
+        ).all()
+        count = len(rows)
+        if not count:
+            return 0
+        touched_sessions: dict[str, GameSessionRow] = {}
+        for row in rows:
+            session = s.get(GameSessionRow, row.session_id)
+            if session and row.session_id not in touched_sessions:
+                touched_sessions[row.session_id] = session
+            s.delete(row)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for session in touched_sessions.values():
+            session.updated_at = now_iso
+            s.add(session)
+        s.commit()
+        return count

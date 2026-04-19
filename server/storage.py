@@ -596,6 +596,11 @@ def set_game_session_shared_pack(
     return storage_sessions.set_game_session_shared_pack(session_id, pack_id, enabled, shared_by_user_id, utc_now_iso())
 
 
+def delete_game_session_shared_pack_rows(pack_id: int) -> int:
+    _sync_sessions_engine()
+    return storage_sessions.delete_game_session_shared_pack_rows(pack_id)
+
+
 def list_private_packs_for_user(
     user_id: int,
     session_id: Optional[str] = None,

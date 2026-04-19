@@ -1918,6 +1918,31 @@
         }
       };
     });
+    adminPanel.querySelectorAll('[data-official-delete-pack]').forEach((btn) => {
+      btn.onclick = async () => {
+        const packId = btn.getAttribute('data-official-delete-pack');
+        const packName = btn.getAttribute('data-official-delete-pack-name') || 'official pack';
+        if(!packId) return;
+        const typed = window.prompt(`Type the official pack name to permanently delete it:\n\n${packName}`);
+        if(typed === null) return;
+        if(String(typed).trim() !== String(packName).trim()){
+          alert('Pack name did not match. Delete cancelled.');
+          return;
+        }
+        if(!confirm(`Permanently delete "${packName}"? This cannot be undone.`)) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/admin/official-packs/${encodeURIComponent(packId)}`, {method:'DELETE'});
+          if(Number(currentAdminOfficialPackId || 0) === Number(packId || 0)){
+            currentAdminOfficialPackId = null;
+          }
+          await refreshAdmin();
+        }catch(e){
+          alert(e.message);
+          btn.disabled = false;
+        }
+      };
+    });
     adminPanel.querySelectorAll('[data-admin-official-pack-id]').forEach((btn) => {
       btn.onclick = async () => {
         currentAdminOfficialPackId = Number(btn.getAttribute('data-admin-official-pack-id') || '0') || null;
@@ -2169,6 +2194,7 @@
                     <button class="btn-ghost btn-sm" type="button" data-admin-official-pack-id="${escapeHtml(pack.pack_id)}">Inspect</button>
                     ${pack.archived ? `<span class="inline-badge bad">archived</span>` : ''}
                     ${!pack.archived ? `<button class="btn-danger btn-sm" type="button" data-official-archive-pack="${escapeHtml(pack.pack_id)}">Archive</button>` : ''}
+                    <button class="btn-danger btn-sm" type="button" data-official-delete-pack="${escapeHtml(pack.pack_id)}" data-official-delete-pack-name="${escapeHtml(pack.name || pack.slug || 'Official Pack')}">Delete</button>
                   </div>
                 </div>
               `).join('') : `<div class="empty-state">No official packs yet.</div>`}
