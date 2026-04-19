@@ -1778,11 +1778,16 @@
         if(!packId || !file) return;
         const fd = new FormData();
         fd.set('file', file);
+        const isZip = /\.zip$/i.test(String(file.name || ''));
         uploadOfficialPackBtn.disabled = true;
         try{
           const url = contentType === 'token_pack'
-            ? `/api/token-packs/${encodeURIComponent(packId)}/upload`
-            : `/api/admin/official-packs/${encodeURIComponent(packId)}/assets/upload`;
+            ? (isZip
+              ? `/api/token-packs/${encodeURIComponent(packId)}/upload-zip`
+              : `/api/token-packs/${encodeURIComponent(packId)}/upload`)
+            : (isZip
+              ? `/api/admin/official-packs/${encodeURIComponent(packId)}/assets/upload-zip`
+              : `/api/admin/official-packs/${encodeURIComponent(packId)}/assets/upload`);
           const res = await fetch(url, {
             method:'POST', body: fd, credentials:'same-origin'
           });
@@ -2043,8 +2048,8 @@
                 <option value="">Select official pack for upload</option>
                 ${adminOfficialPacks.filter((pack) => !pack.archived).map((pack) => `<option value="${escapeHtml(pack.pack_id)}" data-content-type="${escapeHtml(pack.content_type || 'asset_pack')}">${escapeHtml(pack.name || pack.slug || 'Official Pack')} · ${escapeHtml(pack.content_type === 'token_pack' ? 'Token' : 'Asset')}</option>`).join('')}
               </select>
-              <input id="officialPackFile" type="file" accept="image/*"/>
-              <button id="uploadOfficialPackBtn" class="btn-ghost" type="button" ${adminOfficialPacks.some((pack) => !pack.archived) ? '' : 'disabled'}>Upload into Official Pack</button>
+              <input id="officialPackFile" type="file" accept="image/*,.zip,application/zip"/>
+              <button id="uploadOfficialPackBtn" class="btn-ghost" type="button" ${adminOfficialPacks.some((pack) => !pack.archived) ? '' : 'disabled'}>Upload File or ZIP</button>
             </div>
           </div>
           <div class="list-card">

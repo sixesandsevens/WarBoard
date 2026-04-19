@@ -736,6 +736,59 @@ def _require_pack_upload_access(actor, pack_id: int, *, content_type: str = "", 
     return pack
 
 
+def _import_zip_into_pack(*, actor_user_id: int, pack_id: int, pack, shared_tags: list[str], fileobj) -> tuple[list[dict], list[str]]:
+    pack_root = _pack_files_root(pack)
+    original_dir = pack_root / "originals"
+    thumb_dir = pack_root / "thumbs"
+    original_dir.mkdir(parents=True, exist_ok=True)
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+
+    def _create_pack_record(**kwargs):
+        asset_id = str(kwargs.get("asset_id") or "")
+        url_original = str(kwargs.get("url_original") or "")
+        url_thumb = str(kwargs.get("url_thumb") or "")
+        original_path = UPLOADS_DIR / url_original.replace("/uploads/", "", 1)
+        thumb_path = UPLOADS_DIR / url_thumb.replace("/uploads/", "", 1)
+        original_name = f"{asset_id}{Path(url_original).suffix.lower() or '.bin'}"
+        thumb_name = f"{asset_id}{Path(url_thumb).suffix.lower() or '.png'}"
+        (original_dir / original_name).write_bytes(original_path.read_bytes())
+        (thumb_dir / thumb_name).write_bytes(thumb_path.read_bytes())
+        try:
+            if original_path.exists():
+                original_path.unlink()
+        except OSError:
+            pass
+        try:
+            if thumb_path.exists():
+                thumb_path.unlink()
+        except OSError:
+            pass
+        add_private_pack_asset_record(
+            pack_id=pack_id,
+            asset_id=asset_id,
+            name=str(kwargs.get("name") or "Asset"),
+            folder_path=str(kwargs.get("folder_path") or ""),
+            tags=list(kwargs.get("tags") or []),
+            mime=str(kwargs.get("mime") or ""),
+            width=int(kwargs.get("width") or 0),
+            height=int(kwargs.get("height") or 0),
+            url_original=original_name,
+            url_thumb=thumb_name,
+        )
+
+    return import_asset_zip(
+        fileobj=fileobj,
+        user_id=actor_user_id,
+        shared_tags=shared_tags,
+        uploads_dir=UPLOADS_DIR,
+        asset_uploads_dir=ASSET_UPLOADS_DIR,
+        max_asset_upload_bytes=MAX_ASSET_UPLOAD_BYTES,
+        max_zip_asset_files=MAX_ZIP_ASSET_FILES,
+        max_zip_total_uncompressed_bytes=MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
+        create_asset_record_fn=_create_pack_record,
+    )
+
+
 async def _handle_session_control_event(event: WireEvent, user, client_id: str) -> WireEvent | None:
     return await handle_session_control_event(
         event=event,
@@ -1973,6 +2026,51 @@ if HAS_MULTIPART:
         await file.close()
         return {"ok": True, "asset_id": asset_id, "pack": _pack_public_payload(pack)}
 
+    @app.post("/api/admin/official-packs/{pack_id}/assets/upload-zip")
+    async def upload_official_pack_asset_zip_api(
+        pack_id: int,
+        req: Request,
+        file: UploadFile = File(...),
+        tags: str = Form(""),
+    ):
+        actor = _require_site_admin(req)
+        if actor.user_id is None:
+            raise HTTPException(status_code=500, detail="Invalid user record")
+        pack = _require_pack_upload_access(actor, pack_id, content_type="asset_pack", official_only=True)
+        fname = str(file.filename or "").lower()
+        if not fname.endswith(".zip"):
+            raise HTTPException(status_code=400, detail="Expected a .zip file")
+        shared_tags = [t.strip() for t in tags.split(",") if t.strip()][:20]
+        try:
+            with tempfile.TemporaryFile() as tmp:
+                bytes_written = 0
+                while True:
+                    chunk = await file.read(65536)
+                    if not chunk:
+                        break
+                    bytes_written += len(chunk)
+                    if bytes_written > MAX_ZIP_UPLOAD_BYTES:
+                        raise HTTPException(status_code=413, detail=f"ZIP too large (max {MAX_ZIP_UPLOAD_BYTES // (1024 * 1024)}MB)")
+                    tmp.write(chunk)
+                if bytes_written == 0:
+                    raise HTTPException(status_code=400, detail="Empty upload")
+                tmp.seek(0)
+                created, skipped = _import_zip_into_pack(
+                    actor_user_id=actor.user_id,
+                    pack_id=pack_id,
+                    pack=pack,
+                    shared_tags=shared_tags,
+                    fileobj=tmp,
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid zip: {e}") from e
+        await file.close()
+        if not created:
+            raise HTTPException(status_code=400, detail="No supported image files found in zip")
+        return {"ok": True, "created_count": len(created), "skipped_count": len(skipped), "pack": _pack_public_payload(pack)}
+
     @app.post("/api/token-packs/{pack_id}/upload")
     async def upload_token_pack_item_api(
         pack_id: int,
@@ -2034,45 +2132,6 @@ if HAS_MULTIPART:
         if not fname.endswith(".zip"):
             raise HTTPException(status_code=400, detail="Expected a .zip file")
         shared_tags = [t.strip() for t in tags.split(",") if t.strip()][:20]
-        pack_root = _pack_files_root(pack)
-        original_dir = pack_root / "originals"
-        thumb_dir = pack_root / "thumbs"
-        original_dir.mkdir(parents=True, exist_ok=True)
-        thumb_dir.mkdir(parents=True, exist_ok=True)
-
-        def _create_token_pack_record(**kwargs):
-            asset_id = str(kwargs.get("asset_id") or "")
-            url_original = str(kwargs.get("url_original") or "")
-            url_thumb = str(kwargs.get("url_thumb") or "")
-            original_path = UPLOADS_DIR / url_original.replace("/uploads/", "", 1)
-            thumb_path = UPLOADS_DIR / url_thumb.replace("/uploads/", "", 1)
-            original_name = f"{asset_id}{Path(url_original).suffix.lower() or '.bin'}"
-            thumb_name = f"{asset_id}{Path(url_thumb).suffix.lower() or '.png'}"
-            (original_dir / original_name).write_bytes(original_path.read_bytes())
-            (thumb_dir / thumb_name).write_bytes(thumb_path.read_bytes())
-            try:
-                if original_path.exists():
-                    original_path.unlink()
-            except OSError:
-                pass
-            try:
-                if thumb_path.exists():
-                    thumb_path.unlink()
-            except OSError:
-                pass
-            add_private_pack_asset_record(
-                pack_id=pack_id,
-                asset_id=asset_id,
-                name=str(kwargs.get("name") or "Token"),
-                folder_path=str(kwargs.get("folder_path") or ""),
-                tags=list(kwargs.get("tags") or []),
-                mime=str(kwargs.get("mime") or ""),
-                width=int(kwargs.get("width") or 0),
-                height=int(kwargs.get("height") or 0),
-                url_original=original_name,
-                url_thumb=thumb_name,
-            )
-
         try:
             with tempfile.TemporaryFile() as tmp:
                 bytes_written = 0
@@ -2087,16 +2146,12 @@ if HAS_MULTIPART:
                 if bytes_written == 0:
                     raise HTTPException(status_code=400, detail="Empty upload")
                 tmp.seek(0)
-                created, skipped = import_asset_zip(
-                    fileobj=tmp,
-                    user_id=actor.user_id,
+                created, skipped = _import_zip_into_pack(
+                    actor_user_id=actor.user_id,
+                    pack_id=pack_id,
+                    pack=pack,
                     shared_tags=shared_tags,
-                    uploads_dir=UPLOADS_DIR,
-                    asset_uploads_dir=ASSET_UPLOADS_DIR,
-                    max_asset_upload_bytes=MAX_ASSET_UPLOAD_BYTES,
-                    max_zip_asset_files=MAX_ZIP_ASSET_FILES,
-                    max_zip_total_uncompressed_bytes=MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
-                    create_asset_record_fn=_create_token_pack_record,
+                    fileobj=tmp,
                 )
         except HTTPException:
             raise
@@ -2121,6 +2176,11 @@ else:
     async def upload_official_pack_asset_unavailable(pack_id: int, req: Request):
         _ = (pack_id, req)
         raise HTTPException(status_code=503, detail="Asset upload unavailable: python-multipart not installed")
+
+    @app.post("/api/admin/official-packs/{pack_id}/assets/upload-zip")
+    async def upload_official_pack_asset_zip_unavailable(pack_id: int, req: Request):
+        _ = (pack_id, req)
+        raise HTTPException(status_code=503, detail="Asset zip upload unavailable: python-multipart not installed")
 
     @app.post("/api/token-packs/{pack_id}/upload")
     async def upload_token_pack_unavailable(pack_id: int, req: Request):
