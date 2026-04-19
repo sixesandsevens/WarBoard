@@ -1349,9 +1349,9 @@
                 <div class="list-row">
                   <div class="list-row-main">
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
-                    <div class="list-row-meta">${escapeHtml(pack.slug || '')} · Created ${escapeHtml(fmtDate(pack.created_at))}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
+                    <div class="list-row-meta">${escapeHtml(pack.content_type === 'token_pack' ? 'Token Pack' : 'Asset Pack')} · ${escapeHtml(pack.slug || '')} · Created ${escapeHtml(fmtDate(pack.created_at))}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
                   </div>
-                  <div class="badge-row">${packContentBadge(pack.content_type)}${packAccessBadge(pack.access_source)}</div>
+                  <div class="badge-row">${packAccessBadge(pack.access_source)}</div>
                 </div>
               `).join('') : `<div class="empty-state">No owned private packs yet.</div>`}
             </div>
@@ -1377,11 +1377,11 @@
                   <div class="list-row">
                     <div class="list-row-main">
                       <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Token Pack')}</div>
-                      <div class="list-row-meta">${escapeHtml(pack.slug || '')} · ${escapeHtml(pack.token_count || 0)} tokens</div>
+                      <div class="list-row-meta">Token Pack · ${escapeHtml(pack.slug || '')} · ${escapeHtml(pack.token_count || 0)} tokens</div>
                     </div>
-                    <div class="badge-row">${packContentBadge('token_pack')}${packAccessBadge(pack.access_source)}</div>
+                    <div class="badge-row">${packAccessBadge(pack.access_source)}</div>
                   </div>
-                `).join('') : `<div class="empty-state">No personal token packs yet.</div>`}
+                `).join('') : `<div class="empty-state">No personal token packs yet. Create one above to get started.</div>`}
               `}
             </div>
           </div>
@@ -1392,9 +1392,9 @@
                 <div class="list-row">
                   <div class="list-row-main">
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
-                    <div class="list-row-meta">Owner: ${escapeHtml(pack.owner_username || ('user-' + pack.owner_user_id))}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
+                    <div class="list-row-meta">${escapeHtml(pack.content_type === 'token_pack' ? 'Token Pack' : 'Asset Pack')} · Owner: ${escapeHtml(pack.owner_username || ('user-' + pack.owner_user_id))}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
                   </div>
-                  <div class="badge-row">${packContentBadge(pack.content_type)}${packAccessBadge(pack.access_source)}</div>
+                  <div class="badge-row">${packAccessBadge(pack.access_source)}</div>
                 </div>
               `).join('') : `<div class="empty-state">No directly granted private pack access yet.</div>`}
             </div>
@@ -1406,9 +1406,9 @@
                 <div class="list-row">
                   <div class="list-row-main">
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
-                    <div class="list-row-meta">${escapeHtml(pack.content_type === 'token_pack' ? 'Official token pack' : 'Official asset pack')}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
+                    <div class="list-row-meta">${escapeHtml(pack.content_type === 'token_pack' ? 'Token Pack' : 'Asset Pack')}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
                   </div>
-                  <div class="badge-row">${packContentBadge(pack.content_type)}${packAccessBadge(pack.access_source)}</div>
+                  <div class="badge-row">${packAccessBadge(pack.access_source)}</div>
                 </div>
               `).join('') : `<div class="empty-state">No official packs visible yet.</div>`}
             </div>
@@ -1420,9 +1420,9 @@
                 <div class="list-row">
                   <div class="list-row-main">
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
-                    <div class="list-row-meta">Owner: ${escapeHtml(pack.owner_username || ('user-' + pack.owner_user_id))}${Array.isArray(pack.shared_via_sessions) && pack.shared_via_sessions.length ? ' · Shared via current session' : ''}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
+                    <div class="list-row-meta">${escapeHtml(pack.content_type === 'token_pack' ? 'Token Pack' : 'Asset Pack')} · Owner: ${escapeHtml(pack.owner_username || ('user-' + pack.owner_user_id))}${Array.isArray(pack.shared_via_sessions) && pack.shared_via_sessions.length ? ' · via current session' : ''}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
                   </div>
-                  <div class="badge-row">${packContentBadge(pack.content_type)}${packAccessBadge(pack.access_source)}</div>
+                  <div class="badge-row">${packAccessBadge(pack.access_source)}</div>
                 </div>
               `).join('') : `<div class="empty-state">No packs shared via session yet.</div>`}
             </div>
@@ -1448,9 +1448,10 @@
         btn.disabled = true;
         try{
           await api(`/api/rooms/${encodeURIComponent(room.room_id)}/members/${encodeURIComponent(userId)}/remove`, {method:'POST'});
+          toast('Member removed.');
           await refreshRoomGovernance();
         }catch(e){
-          alert(e.message);
+          toast(e.message || 'Couldn\'t remove member.');
           btn.disabled = false;
         }
       };
@@ -1553,8 +1554,9 @@
         btn.disabled = true;
         try{
           await api(`/api/sessions/${encodeURIComponent(sess.session_id)}/members/${encodeURIComponent(userId)}/remove`, {method:'POST'});
+          toast('Member removed from session.');
           await refreshSessionGovernance();
-        }catch(e){ alert(e.message); btn.disabled = false; }
+        }catch(e){ toast(e.message || 'Couldn\'t remove member.'); btn.disabled = false; }
       };
     });
 
@@ -1598,12 +1600,13 @@
         const packId = btn.getAttribute('data-sess-revoke-pack');
         const packName = btn.getAttribute('data-sess-revoke-packname') || 'this pack';
         if(!sess || !packId) return;
-        if(!confirm(`Revoke "${packName}" from session "${sess.name}"?\n\nSession members will lose access immediately.`)) return;
+        if(!confirm(`Remove "${packName}" from this session?\n\nSession members will lose access immediately.`)) return;
         btn.disabled = true;
         try{
           await api(`/api/sessions/${encodeURIComponent(sess.session_id)}/shared-packs/${encodeURIComponent(packId)}/remove`, {method:'POST'});
+          toast('Pack unshared from session.');
           await refreshSessionGovernance();
-        }catch(e){ alert(e.message); btn.disabled = false; }
+        }catch(e){ toast(e.message || 'Couldn\'t unshare pack.'); btn.disabled = false; }
       };
     });
 
@@ -1907,13 +1910,14 @@
       btn.onclick = async () => {
         const packId = btn.getAttribute('data-official-archive-pack');
         if(!packId) return;
-        if(!confirm('Archive this official pack?')) return;
+        if(!confirm('Archive this official pack? It will be hidden from users.')) return;
         btn.disabled = true;
         try{
           await api(`/api/admin/official-packs/${encodeURIComponent(packId)}/archive`, {method:'POST'});
+          toast('Pack archived.');
           await refreshAdmin();
         }catch(e){
-          alert(e.message);
+          toast(e.message || 'Couldn\'t archive pack.');
           btn.disabled = false;
         }
       };
@@ -1923,22 +1927,23 @@
         const packId = btn.getAttribute('data-official-delete-pack');
         const packName = btn.getAttribute('data-official-delete-pack-name') || 'official pack';
         if(!packId) return;
-        const typed = window.prompt(`Type the official pack name to permanently delete it:\n\n${packName}`);
+        const typed = window.prompt(`Type the pack name to confirm permanent deletion:\n\n${packName}`);
         if(typed === null) return;
         if(String(typed).trim() !== String(packName).trim()){
-          alert('Pack name did not match. Delete cancelled.');
+          toast('Pack name did not match. Delete cancelled.');
           return;
         }
-        if(!confirm(`Permanently delete "${packName}"? This cannot be undone.`)) return;
+        if(!confirm(`Delete "${packName}" permanently? This cannot be undone.`)) return;
         btn.disabled = true;
         try{
           await api(`/api/admin/official-packs/${encodeURIComponent(packId)}`, {method:'DELETE'});
           if(Number(currentAdminOfficialPackId || 0) === Number(packId || 0)){
             currentAdminOfficialPackId = null;
           }
+          toast('Pack deleted.');
           await refreshAdmin();
         }catch(e){
-          alert(e.message);
+          toast(e.message || 'Couldn\'t delete pack.');
           btn.disabled = false;
         }
       };
@@ -2207,11 +2212,11 @@
                 <div class="list-row">
                   <div class="list-row-main">
                     <div class="list-row-title">${escapeHtml(officialPackDetail.pack.name || officialPackDetail.pack.slug || 'Pack')}</div>
-                    <div class="list-row-meta">${escapeHtml(officialPackDetail.pack.description || 'No description')} · ${escapeHtml((officialPackDetail.items || []).length)} items</div>
+                    <div class="list-row-meta">${escapeHtml(officialPackDetail.pack.content_type === 'token_pack' ? 'Token Pack' : 'Asset Pack')} · ${escapeHtml(officialPackDetail.pack.description || 'No description')} · ${escapeHtml((officialPackDetail.items || []).length)} items</div>
                   </div>
-                  <div class="badge-row">${packContentBadge(officialPackDetail.pack.content_type)}${packAccessBadge('official')}</div>
+                  <div class="badge-row">${packAccessBadge('official')}</div>
                 </div>
-              ` : `<div class="empty-state">Select an official pack to inspect its contents.</div>`}
+              ` : `<div class="empty-state">Select an official pack above to inspect its contents.</div>`}
               ${Array.isArray(officialPackDetail?.items) && officialPackDetail.items.length ? officialPackDetail.items.slice(0, 12).map((item) => `
                 <div class="list-row">
                   <div class="list-row-main">
@@ -2219,7 +2224,7 @@
                     <div class="list-row-meta">${escapeHtml(item.folder_path || 'root')} · ${escapeHtml(fmtDate(item.created_at))}</div>
                   </div>
                 </div>
-              `).join('') : ''}
+              `).join('') : officialPackDetail?.pack ? `<div class="empty-state">This pack is empty. Upload assets to populate it.</div>` : ''}
             </div>
           </div>
           <div class="list-card">
@@ -2383,7 +2388,11 @@
         return;
       }
       if (ev.type === 'GOVERNANCE_NOTICE') {
-        if (ev.payload && ev.payload.personal_message) toast(ev.payload.personal_message);
+        if (ev.payload && ev.payload.personal_message) {
+          toast(ev.payload.personal_message);
+        } else if (ev.payload && ev.payload.access_lost) {
+          toast('You no longer have access to this session.');
+        }
         if (ev.payload && ev.payload.access_lost) {
           setTimeout(() => location.reload(), 2500);
         }

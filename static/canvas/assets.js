@@ -387,7 +387,13 @@ function renderPackGrid() {
   });
 
   if (!rows.length) {
-    packGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">(no tokens match)</div>`;
+    if (!packState.selectedPackId) {
+      packGridEl.innerHTML = `<div style="opacity:.6; grid-column:1/-1; font-size:12px;">Select a token pack above to browse tokens.</div>`;
+    } else if (q) {
+      packGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">No tokens match your search.</div>`;
+    } else {
+      packGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">This pack is empty. Upload tokens to populate it.</div>`;
+    }
     return;
   }
 
@@ -434,6 +440,7 @@ async function loadPack(packId) {
     renderPackGrid();
     return;
   }
+  packGridEl.innerHTML = `<div style="opacity:.55; grid-column:1/-1; font-size:12px;">Loading…</div>`;
   try {
     const sessionId = currentAssetSessionId();
     const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
@@ -461,13 +468,16 @@ async function loadPack(packId) {
       error: e,
     });
     packState.tokens = [];
-    packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Couldn't load this pack.</div>`;
+    packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Couldn't load this pack. <button type="button" style="background:none;border:none;color:#7ab0ff;cursor:pointer;font:inherit;font-size:12px;padding:0;text-decoration:underline;" class="pack-retry-btn">Retry</button></div>`;
+    packGridEl.querySelector(".pack-retry-btn")?.addEventListener("click", () => loadPack(normalizedPackId));
     toast("Couldn't load this token pack.");
     log(`PACK LOAD ERROR: ${e.message || e}`);
   }
 }
 
 async function refreshPacks() {
+  packSelectEl.innerHTML = `<option value="">(loading…)</option>`;
+  packGridEl.innerHTML = `<div style="opacity:.55; grid-column:1/-1; font-size:12px;">Loading…</div>`;
   try {
     const sessionId = currentAssetSessionId();
     const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
@@ -511,7 +521,8 @@ async function refreshPacks() {
     packState.tokens = [];
     packState.selectedPackId = "";
     packSelectEl.innerHTML = `<option value="">(packs unavailable)</option>`;
-    packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Couldn't load token packs.</div>`;
+    packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Couldn't load token packs. <button type="button" style="background:none;border:none;color:#7ab0ff;cursor:pointer;font:inherit;font-size:12px;padding:0;text-decoration:underline;" class="packs-retry-btn">Retry</button></div>`;
+    packGridEl.querySelector(".packs-retry-btn")?.addEventListener("click", () => refreshPacks());
     toast("Couldn't load token packs.");
     saveSelectedTokenPackId("");
     log(`PACKS ERROR: ${e.message || e}`);
