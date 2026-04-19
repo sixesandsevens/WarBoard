@@ -1234,6 +1234,22 @@
         }
       };
     }
+    accountPanel.querySelectorAll('[data-delete-token-pack]').forEach((btn) => {
+      btn.onclick = async () => {
+        const packId = btn.getAttribute('data-delete-token-pack');
+        const packName = btn.getAttribute('data-delete-token-pack-name') || 'token pack';
+        if(!confirm(`Permanently delete "${packName}" and all its tokens? This cannot be undone.`)) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/token-packs/${encodeURIComponent(packId)}`, {method:'DELETE'});
+          await refreshAccount();
+        }catch(e){
+          const accountMsg = document.getElementById('accountMsg');
+          if(accountMsg){ accountMsg.style.color = '#d47070'; accountMsg.textContent = e.message; }
+          btn.disabled = false;
+        }
+      };
+    });
   }
 
   async function refreshAccount(){
@@ -1379,7 +1395,10 @@
                       <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Token Pack')}</div>
                       <div class="list-row-meta">Token Pack · ${escapeHtml(pack.slug || '')} · ${escapeHtml(pack.token_count || 0)} tokens</div>
                     </div>
-                    <div class="badge-row">${packAccessBadge(pack.access_source)}</div>
+                    <div class="badge-row">
+                      ${packAccessBadge(pack.access_source)}
+                      <button class="btn-danger btn-sm" type="button" data-delete-token-pack="${escapeHtml(pack.pack_id)}" data-delete-token-pack-name="${escapeHtml(pack.name || pack.slug || 'Token Pack')}">Delete</button>
+                    </div>
                   </div>
                 `).join('') : `<div class="empty-state">No personal token packs yet. Create one above to get started.</div>`}
               `}
