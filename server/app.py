@@ -64,6 +64,7 @@ from .storage import (
     remove_game_session_member,
     set_game_session_member_role,
     create_asset_record,
+    create_private_pack,
     create_game_session,
     create_room_in_game_session,
     create_room_record,
@@ -83,6 +84,8 @@ from .storage import (
     get_room_meta,
     get_pack_asset_by_asset_id,
     get_private_pack_by_id,
+    get_private_pack_by_slug,
+    get_token_pack_for_user,
     get_asset_by_id,
     get_asset_for_user,
     get_user_detail,
@@ -98,6 +101,7 @@ from .storage import (
     list_audit_logs,
     list_all_private_packs,
     list_private_pack_assets,
+    list_token_packs_for_user,
     list_game_session_members,
     list_game_session_rooms,
     list_game_session_shared_packs,
@@ -133,7 +137,10 @@ from .storage import (
     get_game_session_root_room_id,
     update_room_display_name,
     update_room_order,
+    update_private_pack,
     transfer_room_ownership,
+    add_private_pack_asset_record,
+    delete_private_pack_asset_record,
 )
 
 app = FastAPI(title="WarHamster")
@@ -226,6 +233,39 @@ def _pack_manifest_path(pack_id: str) -> Path:
 
 def _pack_cache_headers() -> dict:
     return {"Cache-Control": "public, max-age=3600"}
+
+
+def _safe_slug(raw: str) -> str:
+    slug = "".join(ch if (ch.isalnum() or ch == "-") else "-" for ch in str(raw or "").strip().lower())
+    slug = "-".join(part for part in slug.split("-") if part)
+    return slug[:80]
+
+
+def _pack_public_payload(pack) -> dict:
+    return {
+        "pack_id": getattr(pack, "pack_id", None),
+        "slug": getattr(pack, "slug", ""),
+        "name": getattr(pack, "name", ""),
+        "description": getattr(pack, "description", "") or "",
+        "content_type": getattr(pack, "content_type", "asset_pack") or "asset_pack",
+        "pack_scope": getattr(pack, "pack_scope", "personal") or "personal",
+        "globally_visible": bool(getattr(pack, "globally_visible", False)),
+        "archived": bool(getattr(pack, "archived", False)),
+        "owner_user_id": getattr(pack, "owner_user_id", None),
+        "created_at": getattr(pack, "created_at", ""),
+    }
+
+
+def _can_manage_pack(actor, pack) -> bool:
+    if actor.user_id is None or not pack:
+        return False
+    if _is_site_admin(actor):
+        return True
+    return int(getattr(pack, "owner_user_id", 0) or 0) == int(actor.user_id)
+
+
+def _pack_files_root(pack) -> Path:
+    return PRIVATE_PACKS_DIR / str(getattr(pack, "slug", "") or "")
 
 
 def _manifest_etag(manifest_path: Path) -> str:
@@ -630,6 +670,70 @@ def _asset_exists_on_disk(asset: dict) -> bool:
         original_path, _ = _resolve_pack_asset_paths(asset)
         return bool(original_path and original_path.exists() and original_path.is_file())
     return True
+
+
+def _save_pack_asset_upload(*, pack, asset_id: str, data: bytes, thumb_bytes: bytes, ext: str, thumb_ext: str) -> tuple[str, str]:
+    pack_root = _pack_files_root(pack)
+    original_dir = pack_root / "originals"
+    thumb_dir = pack_root / "thumbs"
+    original_dir.mkdir(parents=True, exist_ok=True)
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    original_name = f"{asset_id}{ext}"
+    thumb_name = f"{asset_id}{thumb_ext}"
+    original_path = original_dir / original_name
+    thumb_path = thumb_dir / thumb_name
+    try:
+        original_path.write_bytes(data)
+        thumb_path.write_bytes(thumb_bytes)
+    except OSError as e:
+        try:
+            if original_path.exists():
+                original_path.unlink()
+        except OSError:
+            pass
+        try:
+            if thumb_path.exists():
+                thumb_path.unlink()
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to save pack upload: {e}") from e
+    return original_name, thumb_name
+
+
+def _pack_items_payload(pack_id: int) -> list[dict]:
+    rows = list_private_pack_assets(pack_id)
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "asset_id": row.asset_id,
+                "name": row.name,
+                "folder_path": row.folder_path or "",
+                "mime": row.mime,
+                "width": row.width,
+                "height": row.height,
+                "created_at": row.created_at,
+                "url_original": f"/api/assets/file/{row.asset_id}",
+                "url_thumb": f"/api/assets/file/{row.asset_id}?src=assetlib",
+            }
+        )
+    items.sort(key=lambda item: (str(item.get("folder_path") or "").lower(), str(item.get("name") or "").lower()))
+    return items
+
+
+def _require_pack_upload_access(actor, pack_id: int, *, content_type: str = "", official_only: bool = False):
+    pack = get_private_pack_by_id(pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    if content_type and str(getattr(pack, "content_type", "") or "") != content_type:
+        raise HTTPException(status_code=400, detail="Pack content type mismatch")
+    if official_only and str(getattr(pack, "pack_scope", "") or "") != "official":
+        raise HTTPException(status_code=400, detail="Official pack required")
+    if not _can_manage_pack(actor, pack):
+        raise HTTPException(status_code=403, detail="Pack owner or admin required")
+    if str(getattr(pack, "pack_scope", "") or "") == "official" and not _is_site_admin(actor):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return pack
 
 
 async def _handle_session_control_event(event: WireEvent, user, client_id: str) -> WireEvent | None:
@@ -1147,45 +1251,232 @@ def admin_list_audit(
     }
 
 
+# ----------------------------- Content Admin API ------------------------------
+
+@app.get("/api/admin/official-packs")
+def admin_list_official_packs_api(req: Request, content_type: str = ""):
+    _require_site_admin(req)
+    packs = [
+        pack for pack in list_all_private_packs(limit=500)
+        if str(pack.get("pack_scope") or "") == "official"
+        and (not content_type or str(pack.get("content_type") or "") == str(content_type or "").strip())
+    ]
+    for pack in packs:
+        pack["item_count"] = count_private_pack_asset_rows(int(pack.get("pack_id") or 0))
+    return {"packs": packs}
+
+
+@app.post("/api/admin/official-packs")
+async def admin_create_official_pack_api(req: Request):
+    actor = _require_site_admin(req)
+    body = await req.json()
+    name = str(body.get("name") or "").strip() or "Official Pack"
+    slug = _safe_slug(body.get("slug") or name)
+    if not slug:
+        raise HTTPException(status_code=400, detail="Valid slug required")
+    content_type = str(body.get("content_type") or "asset_pack").strip().lower()
+    if content_type not in {"asset_pack", "token_pack"}:
+        raise HTTPException(status_code=400, detail="Invalid content type")
+    pack = create_private_pack(
+        owner_user_id=int(actor.user_id),
+        slug=slug,
+        name=name[:120],
+        description=str(body.get("description") or "").strip()[:500],
+        content_type=content_type,
+        pack_scope="official",
+        globally_visible=bool(body.get("globally_visible", True)),
+        root_rel="",
+        thumb_rel="",
+    )
+    _audit(
+        actor_user_id=actor.user_id,
+        action="admin.create_official_pack",
+        target_type="pack",
+        target_id=str(pack.pack_id),
+        summary=f"{actor.username} created official pack {pack.slug}",
+        after=_pack_public_payload(pack),
+    )
+    return {"ok": True, "pack": _pack_public_payload(pack)}
+
+
+@app.get("/api/admin/official-packs/{pack_id}")
+def admin_get_official_pack_api(pack_id: int, req: Request):
+    _require_site_admin(req)
+    pack = get_private_pack_by_id(pack_id)
+    if not pack or str(getattr(pack, "pack_scope", "") or "") != "official":
+        raise HTTPException(status_code=404, detail="Official pack not found")
+    return {"pack": _pack_public_payload(pack), "items": _pack_items_payload(pack_id)}
+
+
+@app.post("/api/admin/official-packs/{pack_id}")
+async def admin_update_official_pack_api(pack_id: int, req: Request):
+    actor = _require_site_admin(req)
+    pack = get_private_pack_by_id(pack_id)
+    if not pack or str(getattr(pack, "pack_scope", "") or "") != "official":
+        raise HTTPException(status_code=404, detail="Official pack not found")
+    body = await req.json()
+    before = _pack_public_payload(pack)
+    updated = update_private_pack(
+        pack_id,
+        name=str(body.get("name") or "").strip()[:120] if "name" in body else None,
+        description=str(body.get("description") or "").strip()[:500] if "description" in body else None,
+        globally_visible=bool(body.get("globally_visible")) if "globally_visible" in body else None,
+        archived=bool(body.get("archived")) if "archived" in body else None,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Official pack not found")
+    _audit(
+        actor_user_id=actor.user_id,
+        action="admin.update_official_pack",
+        target_type="pack",
+        target_id=str(pack_id),
+        summary=f"{actor.username} updated official pack {updated.slug}",
+        before=before,
+        after=_pack_public_payload(updated),
+    )
+    return {"ok": True, "pack": _pack_public_payload(updated)}
+
+
+@app.post("/api/admin/official-packs/{pack_id}/archive")
+async def admin_archive_official_pack_api(pack_id: int, req: Request):
+    actor = _require_site_admin(req)
+    pack = get_private_pack_by_id(pack_id)
+    if not pack or str(getattr(pack, "pack_scope", "") or "") != "official":
+        raise HTTPException(status_code=404, detail="Official pack not found")
+    before = _pack_public_payload(pack)
+    updated = update_private_pack(pack_id, archived=True, globally_visible=False)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Official pack not found")
+    _audit(
+        actor_user_id=actor.user_id,
+        action="admin.archive_official_pack",
+        target_type="pack",
+        target_id=str(pack_id),
+        summary=f"{actor.username} archived official pack {updated.slug}",
+        before=before,
+        after=_pack_public_payload(updated),
+    )
+    return {"ok": True, "pack": _pack_public_payload(updated)}
+
+
 # ----------------------------- Packs API --------------------------------------
 
-@app.get("/api/packs")
-def list_packs_api(req: Request):
-    if not PACKS_DIR.exists():
-        return JSONResponse({"packs": []}, headers=_pack_cache_headers())
-
-    packs = []
-    for entry in sorted(PACKS_DIR.iterdir(), key=lambda p: p.name.lower()):
-        if not entry.is_dir():
-            continue
-        manifest_path = entry / "manifest.json"
-        if not manifest_path.exists():
-            continue
-        try:
-            manifest = _load_pack_manifest(entry.name)
-        except HTTPException:
-            continue
-        packs.append(
+@app.get("/api/token-packs")
+def list_token_packs_api(req: Request, session_id: str = ""):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    current_session_id = str(session_id or "").strip() or None
+    if current_session_id and not get_game_session_role(current_session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Not a member of this session")
+    packs = list_token_packs_for_user(user.user_id, session_id=current_session_id)
+    return {
+        "packs": [
             {
-                "pack_id": manifest["pack_id"],
-                "name": str(manifest.get("name") or manifest["pack_id"]),
-                "author": str(manifest.get("author") or ""),
-                "license": str(manifest.get("license") or ""),
-                "version": str(manifest.get("version") or ""),
-                "token_count": len(manifest.get("tokens") or []),
+                **pack,
+                "token_count": count_private_pack_asset_rows(int(pack.get("pack_id") or 0)),
             }
-        )
-    return JSONResponse({"packs": packs}, headers=_pack_cache_headers())
+            for pack in packs
+        ]
+    }
+
+
+@app.get("/api/token-packs/{pack_id}")
+def get_token_pack_api(pack_id: int, req: Request, session_id: str = ""):
+    user = _require_user(req)
+    if user.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    current_session_id = str(session_id or "").strip() or None
+    if current_session_id and not get_game_session_role(current_session_id, user.user_id):
+        raise HTTPException(status_code=403, detail="Not a member of this session")
+    pack = get_token_pack_for_user(user.user_id, pack_id, session_id=current_session_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Token pack not found")
+    return pack
+
+
+@app.post("/api/token-packs")
+async def create_token_pack_api(req: Request):
+    actor = _require_user(req)
+    if actor.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    body = await req.json()
+    name = str(body.get("name") or "").strip() or "Token Pack"
+    slug = _safe_slug(body.get("slug") or name)
+    if not slug:
+        raise HTTPException(status_code=400, detail="Valid slug required")
+    requested_scope = str(body.get("pack_scope") or "personal").strip().lower()
+    requested_global = bool(body.get("globally_visible", False))
+    pack_scope = "official" if requested_scope == "official" and _is_site_admin(actor) else "personal"
+    globally_visible = requested_global if pack_scope == "official" and _is_site_admin(actor) else False
+    pack = create_private_pack(
+        owner_user_id=int(actor.user_id),
+        slug=slug,
+        name=name[:120],
+        description=str(body.get("description") or "").strip()[:500],
+        content_type="token_pack",
+        pack_scope=pack_scope,
+        globally_visible=globally_visible,
+        root_rel="",
+        thumb_rel="",
+    )
+    _audit(
+        actor_user_id=actor.user_id,
+        action="pack.create_token_pack" if pack_scope == "personal" else "admin.create_official_token_pack",
+        target_type="pack",
+        target_id=str(pack.pack_id),
+        summary=f"{actor.username} created {pack_scope} token pack {pack.slug}",
+        after=_pack_public_payload(pack),
+    )
+    return {"ok": True, "pack": _pack_public_payload(pack)}
+
+
+@app.get("/api/packs")
+def list_packs_api(req: Request, session_id: str = ""):
+    payload = list_token_packs_api(req, session_id=session_id)
+    packs = list(payload.get("packs") or [])
+    if PACKS_DIR.exists():
+        for entry in sorted(PACKS_DIR.iterdir(), key=lambda p: p.name.lower()):
+            if not entry.is_dir():
+                continue
+            manifest_path = entry / "manifest.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                manifest = _load_pack_manifest(entry.name)
+            except HTTPException:
+                continue
+            packs.append(
+                {
+                    "pack_id": manifest["pack_id"],
+                    "name": str(manifest.get("name") or manifest["pack_id"]),
+                    "author": str(manifest.get("author") or ""),
+                    "license": str(manifest.get("license") or ""),
+                    "version": str(manifest.get("version") or ""),
+                    "token_count": len(manifest.get("tokens") or []),
+                    "content_type": "token_pack",
+                    "pack_scope": "official",
+                    "access_source": "official",
+                    "access_sources": ["official"],
+                    "globally_visible": True,
+                }
+            )
+    packs.sort(key=lambda item: (str(item.get("name") or "").lower(), str(item.get("pack_id") or "")))
+    return {"packs": packs}
 
 
 @app.get("/api/packs/{pack_id}")
-def get_pack_api(pack_id: str, req: Request):
-    manifest_path = _pack_manifest_path(pack_id)
-    etag = _manifest_etag(manifest_path)
-    if req.headers.get("if-none-match") == etag:
-        return Response(status_code=304, headers={**_pack_cache_headers(), "ETag": etag})
-    manifest = _load_pack_manifest(pack_id)
-    return JSONResponse(manifest, headers={**_pack_cache_headers(), "ETag": etag})
+def get_pack_api(pack_id: str, req: Request, session_id: str = ""):
+    try:
+        numeric_pack_id = int(pack_id)
+    except ValueError:
+        manifest_path = _pack_manifest_path(pack_id)
+        etag = _manifest_etag(manifest_path)
+        if req.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={**_pack_cache_headers(), "ETag": etag})
+        manifest = _load_pack_manifest(pack_id)
+        return JSONResponse(manifest, headers={**_pack_cache_headers(), "ETag": etag})
+    return get_token_pack_api(numeric_pack_id, req, session_id=session_id)
 
 
 # ----------------------------- Asset Library API ------------------------------
@@ -1315,14 +1606,14 @@ def list_assets_api(
 
 
 @app.get("/api/private-packs")
-def list_private_packs_api(req: Request, session_id: str = ""):
+def list_private_packs_api(req: Request, session_id: str = "", content_type: str = ""):
     user = _require_user(req)
     if user.user_id is None:
         raise HTTPException(status_code=500, detail="Invalid user record")
     current_session_id = str(session_id or "").strip() or None
     if current_session_id and not get_game_session_role(current_session_id, user.user_id):
         raise HTTPException(status_code=403, detail="Not a member of this session")
-    return {"packs": list_private_packs_for_user(user.user_id, session_id=current_session_id)}
+    return {"packs": list_private_packs_for_user(user.user_id, session_id=current_session_id, content_type=content_type)}
 
 
 @app.get("/api/assets/folders")
@@ -1635,6 +1926,186 @@ if HAS_MULTIPART:
             "skipped_count": len(skipped),
             "skipped": skipped[:200],
         }
+
+    @app.post("/api/admin/official-packs/{pack_id}/assets/upload")
+    async def upload_official_pack_asset_api(
+        pack_id: int,
+        req: Request,
+        file: UploadFile = File(...),
+        name: str = Form(""),
+        tags: str = Form(""),
+        folder_path: str = Form(""),
+    ):
+        actor = _require_site_admin(req)
+        if actor.user_id is None:
+            raise HTTPException(status_code=500, detail="Invalid user record")
+        pack = _require_pack_upload_access(actor, pack_id, content_type="asset_pack", official_only=True)
+        ext = background_upload_ext(file)
+        data = await file.read(MAX_ASSET_UPLOAD_BYTES + 1)
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty upload")
+        if len(data) > MAX_ASSET_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Asset too large (max 20MB)")
+        width, height, thumb_bytes, thumb_ext = asset_image_meta_and_thumb(data)
+        asset_id = uuid.uuid4().hex
+        original_name, thumb_name = _save_pack_asset_upload(
+            pack=pack,
+            asset_id=asset_id,
+            data=data,
+            thumb_bytes=thumb_bytes,
+            ext=ext,
+            thumb_ext=thumb_ext,
+        )
+        display_name = name.strip() if name.strip() else Path(str(file.filename or "asset")).stem
+        tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+        add_private_pack_asset_record(
+            pack_id=pack_id,
+            asset_id=asset_id,
+            name=display_name[:120] or "Asset",
+            folder_path=str(folder_path or "").strip().strip("/"),
+            tags=tags_list[:20],
+            mime=image_mime_from_ext(ext),
+            width=width,
+            height=height,
+            url_original=original_name,
+            url_thumb=thumb_name,
+        )
+        await file.close()
+        return {"ok": True, "asset_id": asset_id, "pack": _pack_public_payload(pack)}
+
+    @app.post("/api/token-packs/{pack_id}/upload")
+    async def upload_token_pack_item_api(
+        pack_id: int,
+        req: Request,
+        file: UploadFile = File(...),
+        name: str = Form(""),
+        tags: str = Form(""),
+        folder_path: str = Form(""),
+    ):
+        actor = _require_user(req)
+        if actor.user_id is None:
+            raise HTTPException(status_code=500, detail="Invalid user record")
+        pack = _require_pack_upload_access(actor, pack_id, content_type="token_pack")
+        ext = background_upload_ext(file)
+        data = await file.read(MAX_ASSET_UPLOAD_BYTES + 1)
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty upload")
+        if len(data) > MAX_ASSET_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Asset too large (max 20MB)")
+        width, height, thumb_bytes, thumb_ext = asset_image_meta_and_thumb(data)
+        asset_id = uuid.uuid4().hex
+        original_name, thumb_name = _save_pack_asset_upload(
+            pack=pack,
+            asset_id=asset_id,
+            data=data,
+            thumb_bytes=thumb_bytes,
+            ext=ext,
+            thumb_ext=thumb_ext,
+        )
+        display_name = name.strip() if name.strip() else Path(str(file.filename or "token")).stem
+        tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+        add_private_pack_asset_record(
+            pack_id=pack_id,
+            asset_id=asset_id,
+            name=display_name[:120] or "Token",
+            folder_path=str(folder_path or "").strip().strip("/"),
+            tags=tags_list[:20],
+            mime=image_mime_from_ext(ext),
+            width=width,
+            height=height,
+            url_original=original_name,
+            url_thumb=thumb_name,
+        )
+        await file.close()
+        return {"ok": True, "asset_id": asset_id, "pack": _pack_public_payload(pack)}
+
+    @app.post("/api/token-packs/{pack_id}/upload-zip")
+    async def upload_token_pack_zip_api(
+        pack_id: int,
+        req: Request,
+        file: UploadFile = File(...),
+        tags: str = Form(""),
+    ):
+        actor = _require_user(req)
+        if actor.user_id is None:
+            raise HTTPException(status_code=500, detail="Invalid user record")
+        pack = _require_pack_upload_access(actor, pack_id, content_type="token_pack")
+        fname = str(file.filename or "").lower()
+        if not fname.endswith(".zip"):
+            raise HTTPException(status_code=400, detail="Expected a .zip file")
+        shared_tags = [t.strip() for t in tags.split(",") if t.strip()][:20]
+        pack_root = _pack_files_root(pack)
+        original_dir = pack_root / "originals"
+        thumb_dir = pack_root / "thumbs"
+        original_dir.mkdir(parents=True, exist_ok=True)
+        thumb_dir.mkdir(parents=True, exist_ok=True)
+
+        def _create_token_pack_record(**kwargs):
+            asset_id = str(kwargs.get("asset_id") or "")
+            url_original = str(kwargs.get("url_original") or "")
+            url_thumb = str(kwargs.get("url_thumb") or "")
+            original_path = UPLOADS_DIR / url_original.replace("/uploads/", "", 1)
+            thumb_path = UPLOADS_DIR / url_thumb.replace("/uploads/", "", 1)
+            original_name = f"{asset_id}{Path(url_original).suffix.lower() or '.bin'}"
+            thumb_name = f"{asset_id}{Path(url_thumb).suffix.lower() or '.png'}"
+            (original_dir / original_name).write_bytes(original_path.read_bytes())
+            (thumb_dir / thumb_name).write_bytes(thumb_path.read_bytes())
+            try:
+                if original_path.exists():
+                    original_path.unlink()
+            except OSError:
+                pass
+            try:
+                if thumb_path.exists():
+                    thumb_path.unlink()
+            except OSError:
+                pass
+            add_private_pack_asset_record(
+                pack_id=pack_id,
+                asset_id=asset_id,
+                name=str(kwargs.get("name") or "Token"),
+                folder_path=str(kwargs.get("folder_path") or ""),
+                tags=list(kwargs.get("tags") or []),
+                mime=str(kwargs.get("mime") or ""),
+                width=int(kwargs.get("width") or 0),
+                height=int(kwargs.get("height") or 0),
+                url_original=original_name,
+                url_thumb=thumb_name,
+            )
+
+        try:
+            with tempfile.TemporaryFile() as tmp:
+                bytes_written = 0
+                while True:
+                    chunk = await file.read(65536)
+                    if not chunk:
+                        break
+                    bytes_written += len(chunk)
+                    if bytes_written > MAX_ZIP_UPLOAD_BYTES:
+                        raise HTTPException(status_code=413, detail=f"ZIP too large (max {MAX_ZIP_UPLOAD_BYTES // (1024 * 1024)}MB)")
+                    tmp.write(chunk)
+                if bytes_written == 0:
+                    raise HTTPException(status_code=400, detail="Empty upload")
+                tmp.seek(0)
+                created, skipped = import_asset_zip(
+                    fileobj=tmp,
+                    user_id=actor.user_id,
+                    shared_tags=shared_tags,
+                    uploads_dir=UPLOADS_DIR,
+                    asset_uploads_dir=ASSET_UPLOADS_DIR,
+                    max_asset_upload_bytes=MAX_ASSET_UPLOAD_BYTES,
+                    max_zip_asset_files=MAX_ZIP_ASSET_FILES,
+                    max_zip_total_uncompressed_bytes=MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
+                    create_asset_record_fn=_create_token_pack_record,
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid zip: {e}") from e
+        await file.close()
+        if not created:
+            raise HTTPException(status_code=400, detail="No supported image files found in zip")
+        return {"ok": True, "created_count": len(created), "skipped_count": len(skipped), "pack": _pack_public_payload(pack)}
 else:
     @app.post("/api/assets/upload")
     async def upload_asset_unavailable(req: Request):
@@ -1645,6 +2116,21 @@ else:
     async def upload_asset_zip_unavailable(req: Request):
         _ = req
         raise HTTPException(status_code=503, detail="Asset zip upload unavailable: python-multipart not installed")
+
+    @app.post("/api/admin/official-packs/{pack_id}/assets/upload")
+    async def upload_official_pack_asset_unavailable(pack_id: int, req: Request):
+        _ = (pack_id, req)
+        raise HTTPException(status_code=503, detail="Asset upload unavailable: python-multipart not installed")
+
+    @app.post("/api/token-packs/{pack_id}/upload")
+    async def upload_token_pack_unavailable(pack_id: int, req: Request):
+        _ = (pack_id, req)
+        raise HTTPException(status_code=503, detail="Token upload unavailable: python-multipart not installed")
+
+    @app.post("/api/token-packs/{pack_id}/upload-zip")
+    async def upload_token_pack_zip_unavailable(pack_id: int, req: Request):
+        _ = (pack_id, req)
+        raise HTTPException(status_code=503, detail="Token zip upload unavailable: python-multipart not installed")
 
 
 @app.delete("/api/assets/{asset_id}")

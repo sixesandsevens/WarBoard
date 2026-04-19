@@ -122,6 +122,20 @@ def init_db() -> None:
                 f"CREATE INDEX IF NOT EXISTS ix_privatepackassetrow_created "
                 f"ON {pack_asset_table}(created_at DESC);"
             )
+        pack_table = "privatepackrow"
+        if _table_exists(conn, pack_table):
+            if not _column_exists(conn, pack_table, "description"):
+                conn.execute(f"ALTER TABLE {pack_table} ADD COLUMN description TEXT DEFAULT '';")
+            if not _column_exists(conn, pack_table, "content_type"):
+                conn.execute(f"ALTER TABLE {pack_table} ADD COLUMN content_type TEXT DEFAULT 'asset_pack';")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS ix_privatepackrow_content_type ON {pack_table}(content_type);")
+            if not _column_exists(conn, pack_table, "pack_scope"):
+                conn.execute(f"ALTER TABLE {pack_table} ADD COLUMN pack_scope TEXT DEFAULT 'personal';")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS ix_privatepackrow_pack_scope ON {pack_table}(pack_scope);")
+            if not _column_exists(conn, pack_table, "globally_visible"):
+                conn.execute(f"ALTER TABLE {pack_table} ADD COLUMN globally_visible BOOLEAN DEFAULT 0;")
+            if not _column_exists(conn, pack_table, "archived"):
+                conn.execute(f"ALTER TABLE {pack_table} ADD COLUMN archived BOOLEAN DEFAULT 0;")
         conn.commit()
     except Exception:
         # If anything goes sideways here, we don't want startup to fail; the app

@@ -535,10 +535,12 @@
   let currentGovernanceRoomId = '';
   let currentGovernanceSessionId = '';
   let currentAdminUserId = null;
+  let currentAdminOfficialPackId = null;
   let adminSearchQuery = '';
   let adminRoomLookupId = '';
   let adminUsers = [];
   let adminPacks = [];
+  let adminOfficialPacks = [];
   let adminAuditEntries = [];
   let adminAuditFilters = { actorUserId: '', targetType: '', targetId: '', action: '' };
 
@@ -584,6 +586,7 @@
 
   function packAccessLabel(source){
     const normalized = String(source || '').trim();
+    if(normalized === 'official') return 'Official';
     if(normalized === 'owned') return 'Owned';
     if(normalized === 'session_shared') return 'Shared via Session';
     return 'Direct Access';
@@ -591,8 +594,13 @@
 
   function packAccessBadge(source){
     const normalized = String(source || '').trim();
-    const cls = normalized === 'owned' ? 'good' : (normalized === 'session_shared' ? 'warn' : '');
+    const cls = normalized === 'owned' || normalized === 'official' ? 'good' : (normalized === 'session_shared' ? 'warn' : '');
     return `<span class="inline-badge ${cls}">${escapeHtml(packAccessLabel(normalized))}</span>`;
+  }
+
+  function packContentBadge(contentType){
+    const normalized = String(contentType || 'asset_pack').trim() || 'asset_pack';
+    return `<span class="inline-badge">${escapeHtml(normalized === 'token_pack' ? 'Token Pack' : 'Asset Pack')}</span>`;
   }
 
   function packSecondaryAccessNote(pack){
@@ -1102,6 +1110,47 @@
         }
       };
     });
+    const createTokenPackBtn = document.getElementById('createTokenPackBtn');
+    if(createTokenPackBtn){
+      createTokenPackBtn.onclick = async () => {
+        const name = (document.getElementById('tokenPackName')?.value || '').trim();
+        const slug = (document.getElementById('tokenPackSlug')?.value || '').trim();
+        if(!name) return;
+        createTokenPackBtn.disabled = true;
+        try{
+          await api('/api/token-packs', {method:'POST', body: JSON.stringify({name, slug})});
+          await refreshAccount();
+        }catch(e){
+          accountMsg.style.color = '#d47070';
+          accountMsg.textContent = e.message;
+        }finally{
+          createTokenPackBtn.disabled = false;
+        }
+      };
+    }
+    const uploadTokenPackBtn = document.getElementById('uploadTokenPackBtn');
+    if(uploadTokenPackBtn){
+      uploadTokenPackBtn.onclick = async () => {
+        const packId = document.getElementById('tokenPackSelect')?.value || '';
+        const fileInput = document.getElementById('tokenPackFile');
+        const file = fileInput?.files?.[0];
+        if(!packId || !file) return;
+        const fd = new FormData();
+        fd.set('file', file);
+        uploadTokenPackBtn.disabled = true;
+        try{
+          const res = await fetch(`/api/token-packs/${encodeURIComponent(packId)}/upload`, {method:'POST', body: fd, credentials:'same-origin'});
+          const data = await res.json().catch(()=>({}));
+          if(!res.ok) throw new Error(data.detail || (`HTTP ${res.status}`));
+          await refreshAccount();
+        }catch(e){
+          accountMsg.style.color = '#d47070';
+          accountMsg.textContent = e.message;
+        }finally{
+          uploadTokenPackBtn.disabled = false;
+        }
+      };
+    }
   }
 
   async function refreshAccount(){
@@ -1117,18 +1166,23 @@
     const locked = !!me.must_change_password;
     let uploads = [];
     let packs = [];
+    let tokenPacks = [];
     if(!locked){
-      const [uploadData, packData] = await Promise.all([
+      const [uploadData, packData, tokenPackData] = await Promise.all([
         api('/api/assets?pack=upload&lite=1&limit=8'),
         api('/api/private-packs'),
+        api('/api/token-packs'),
       ]);
       uploads = Array.isArray(uploadData.assets) ? uploadData.assets : [];
       packs = Array.isArray(packData.packs) ? packData.packs : [];
+      tokenPacks = Array.isArray(tokenPackData.packs) ? tokenPackData.packs : [];
     }
     const sessions = Array.isArray(sessionData.sessions) ? sessionData.sessions : [];
-    const ownedPacks = packs.filter((pack) => Number(pack.owner_user_id || 0) === Number(me.user_id || 0));
+    const ownedPacks = packs.filter((pack) => Number(pack.owner_user_id || 0) === Number(me.user_id || 0) && String(pack.content_type || 'asset_pack') === 'asset_pack');
     const directAccessPacks = packs.filter((pack) => String(pack.access_source || '') === 'direct_entitlement');
     const sessionSharedPacks = packs.filter((pack) => String(pack.access_source || '') === 'session_shared');
+    const officialPacks = packs.filter((pack) => String(pack.access_source || '') === 'official');
+    const personalTokenPacks = tokenPacks.filter((pack) => Number(pack.owner_user_id || 0) === Number(me.user_id || 0));
 
     accountPanel.innerHTML = `
       ${me.must_change_password ? `<div class="banner bad">Your account requires a password change before normal access continues. Lobby and admin tools stay locked until this is completed.</div>` : ''}
@@ -1197,9 +1251,38 @@
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
                     <div class="list-row-meta">${escapeHtml(pack.slug || '')} · Created ${escapeHtml(fmtDate(pack.created_at))}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
                   </div>
-                  ${packAccessBadge(pack.access_source)}
+                  <div class="badge-row">${packContentBadge(pack.content_type)}${packAccessBadge(pack.access_source)}</div>
                 </div>
               `).join('') : `<div class="empty-state">No owned private packs yet.</div>`}
+            </div>
+          </div>
+          <div class="list-card">
+            <div class="list-head">My Token Packs</div>
+            <div class="list-body">
+              ${locked ? `<div class="empty-state">Available again after your password is updated.</div>` : `
+                <div class="form-stack" style="margin-bottom:10px;">
+                  <input id="tokenPackName" type="text" placeholder="New token pack name"/>
+                  <input id="tokenPackSlug" type="text" placeholder="Optional slug"/>
+                  <button id="createTokenPackBtn" class="btn-primary" type="button">Create Token Pack</button>
+                </div>
+                <div class="form-stack" style="margin-bottom:10px;">
+                  <select id="tokenPackSelect">
+                    <option value="">Choose token pack for upload</option>
+                    ${personalTokenPacks.map((pack) => `<option value="${escapeHtml(pack.pack_id)}">${escapeHtml(pack.name || pack.slug || 'Token Pack')}</option>`).join('')}
+                  </select>
+                  <input id="tokenPackFile" type="file" accept="image/*"/>
+                  <button id="uploadTokenPackBtn" class="btn-ghost" type="button" ${personalTokenPacks.length ? '' : 'disabled'}>Upload Token Art</button>
+                </div>
+                ${personalTokenPacks.length ? personalTokenPacks.map((pack) => `
+                  <div class="list-row">
+                    <div class="list-row-main">
+                      <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Token Pack')}</div>
+                      <div class="list-row-meta">${escapeHtml(pack.slug || '')} · ${escapeHtml(pack.token_count || 0)} tokens</div>
+                    </div>
+                    <div class="badge-row">${packContentBadge('token_pack')}${packAccessBadge(pack.access_source)}</div>
+                  </div>
+                `).join('') : `<div class="empty-state">No personal token packs yet.</div>`}
+              `}
             </div>
           </div>
           <div class="list-card">
@@ -1211,9 +1294,23 @@
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
                     <div class="list-row-meta">Owner: ${escapeHtml(pack.owner_username || ('user-' + pack.owner_user_id))}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
                   </div>
-                  ${packAccessBadge(pack.access_source)}
+                  <div class="badge-row">${packContentBadge(pack.content_type)}${packAccessBadge(pack.access_source)}</div>
                 </div>
               `).join('') : `<div class="empty-state">No directly granted private pack access yet.</div>`}
+            </div>
+          </div>
+          <div class="list-card">
+            <div class="list-head">Official Packs</div>
+            <div class="list-body">
+              ${locked ? `<div class="empty-state">Available again after your password is updated.</div>` : officialPacks.length ? officialPacks.map((pack) => `
+                <div class="list-row">
+                  <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
+                    <div class="list-row-meta">${escapeHtml(pack.content_type === 'token_pack' ? 'Official token pack' : 'Official asset pack')}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
+                  </div>
+                  <div class="badge-row">${packContentBadge(pack.content_type)}${packAccessBadge(pack.access_source)}</div>
+                </div>
+              `).join('') : `<div class="empty-state">No official packs visible yet.</div>`}
             </div>
           </div>
           <div class="list-card">
@@ -1225,7 +1322,7 @@
                     <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
                     <div class="list-row-meta">Owner: ${escapeHtml(pack.owner_username || ('user-' + pack.owner_user_id))}${Array.isArray(pack.shared_via_sessions) && pack.shared_via_sessions.length ? ' · Shared via current session' : ''}${packSecondaryAccessNote(pack) ? ' · ' + escapeHtml(packSecondaryAccessNote(pack)) : ''}</div>
                   </div>
-                  ${packAccessBadge(pack.access_source)}
+                  <div class="badge-row">${packContentBadge(pack.content_type)}${packAccessBadge(pack.access_source)}</div>
                 </div>
               `).join('') : `<div class="empty-state">No session-shared packs in this view.</div>`}
             </div>
@@ -1492,11 +1589,12 @@
             <div class="hint" style="margin-bottom:8px;">Session members access these packs through session membership — not as personal ownership.</div>
             ${sharedPacks.length ? sharedPacks.map((p) => `
               <div class="list-row">
-                <div class="list-row-main">
-                  <div class="list-row-title">${escapeHtml(p.name || p.slug || 'Pack')}</div>
-                  <div class="list-row-meta">Owned by ${escapeHtml(p.owner_username || 'user-' + p.owner_user_id)}${p.shared_by_username && p.shared_by_user_id !== p.owner_user_id ? ' · Shared by ' + escapeHtml(p.shared_by_username) : ''}${p.shared_at ? ' · ' + escapeHtml(fmtDateTime(p.shared_at)) : ''}</div>
-                </div>
+                  <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(p.name || p.slug || 'Pack')}</div>
+                    <div class="list-row-meta">Owned by ${escapeHtml(p.owner_username || 'user-' + p.owner_user_id)} · ${escapeHtml(p.content_type === 'token_pack' ? 'Token Pack' : 'Asset Pack')}${p.shared_by_username && p.shared_by_user_id !== p.owner_user_id ? ' · Shared by ' + escapeHtml(p.shared_by_username) : ''}${p.shared_at ? ' · ' + escapeHtml(fmtDateTime(p.shared_at)) : ''}</div>
+                  </div>
                 <div class="detail-actions" style="margin-top:0;">
+                  ${packContentBadge(p.content_type)}
                   <span class="inline-badge">Shared to session</span>
                   ${canManagePacks ? `<button class="btn-danger btn-sm" type="button" data-sess-revoke-pack="${escapeHtml(String(p.pack_id))}" data-sess-revoke-packname="${escapeHtml(p.name || p.slug || '')}">Revoke</button>` : ''}
                 </div>
@@ -1512,7 +1610,7 @@
                   ${unsharablePacks.length ? `
                     <select id="sessSharePackSelect" style="background:#333;color:#eee;border:1px solid #555;border-radius:4px;padding:3px 6px;font-size:13px;">
                       <option value="">— pick a pack —</option>
-                      ${unsharablePacks.map(p => `<option value="${escapeHtml(String(p.pack_id))}">${escapeHtml(p.name || p.slug || 'Pack')}</option>`).join('')}
+                      ${unsharablePacks.map(p => `<option value="${escapeHtml(String(p.pack_id))}">${escapeHtml(p.name || p.slug || 'Pack')} · ${escapeHtml(p.content_type === 'token_pack' ? 'Token' : 'Asset')} · ${escapeHtml(packAccessLabel(p.access_source || 'owned'))}</option>`).join('')}
                     </select>
                     <button class="btn-primary btn-sm" id="sessSharePackBtn" type="button">Share</button>
                   ` : `<span class="hint">No unshared packs available.</span>`}
@@ -1647,6 +1745,78 @@
         }
       };
     });
+    const createOfficialPackBtn = document.getElementById('createOfficialPackBtn');
+    if(createOfficialPackBtn){
+      createOfficialPackBtn.onclick = async () => {
+        const name = document.getElementById('officialPackName')?.value.trim() || '';
+        const slug = document.getElementById('officialPackSlug')?.value.trim() || '';
+        const contentType = document.getElementById('officialPackType')?.value || 'asset_pack';
+        const globallyVisible = !!document.getElementById('officialPackGlobal')?.checked;
+        if(!name) return;
+        createOfficialPackBtn.disabled = true;
+        try{
+          await api('/api/admin/official-packs', {
+            method: 'POST',
+            body: JSON.stringify({name, slug, content_type: contentType, globally_visible: globallyVisible}),
+          });
+          await refreshAdmin();
+        }catch(e){
+          alert(e.message);
+        }finally{
+          createOfficialPackBtn.disabled = false;
+        }
+      };
+    }
+    const uploadOfficialPackBtn = document.getElementById('uploadOfficialPackBtn');
+    if(uploadOfficialPackBtn){
+      uploadOfficialPackBtn.onclick = async () => {
+        const select = document.getElementById('officialPackSelect');
+        const packId = select?.value || '';
+        const contentType = select?.selectedOptions?.[0]?.getAttribute('data-content-type') || 'asset_pack';
+        const fileInput = document.getElementById('officialPackFile');
+        const file = fileInput?.files?.[0];
+        if(!packId || !file) return;
+        const fd = new FormData();
+        fd.set('file', file);
+        uploadOfficialPackBtn.disabled = true;
+        try{
+          const url = contentType === 'token_pack'
+            ? `/api/token-packs/${encodeURIComponent(packId)}/upload`
+            : `/api/admin/official-packs/${encodeURIComponent(packId)}/assets/upload`;
+          const res = await fetch(url, {
+            method:'POST', body: fd, credentials:'same-origin'
+          });
+          const data = await res.json().catch(()=>({}));
+          if(!res.ok) throw new Error(data.detail || (`HTTP ${res.status}`));
+          await refreshAdmin();
+        }catch(e){
+          alert(e.message);
+        }finally{
+          uploadOfficialPackBtn.disabled = false;
+        }
+      };
+    }
+    adminPanel.querySelectorAll('[data-official-archive-pack]').forEach((btn) => {
+      btn.onclick = async () => {
+        const packId = btn.getAttribute('data-official-archive-pack');
+        if(!packId) return;
+        if(!confirm('Archive this official pack?')) return;
+        btn.disabled = true;
+        try{
+          await api(`/api/admin/official-packs/${encodeURIComponent(packId)}/archive`, {method:'POST'});
+          await refreshAdmin();
+        }catch(e){
+          alert(e.message);
+          btn.disabled = false;
+        }
+      };
+    });
+    adminPanel.querySelectorAll('[data-admin-official-pack-id]').forEach((btn) => {
+      btn.onclick = async () => {
+        currentAdminOfficialPackId = Number(btn.getAttribute('data-admin-official-pack-id') || '0') || null;
+        await refreshAdmin();
+      };
+    });
     const applyAuditFiltersBtn = document.getElementById('applyAuditFiltersBtn');
     const resetAuditFiltersBtn = document.getElementById('resetAuditFiltersBtn');
     if(applyAuditFiltersBtn){
@@ -1687,13 +1857,15 @@
     if(adminAuditFilters.targetType) auditParams.set('target_type', adminAuditFilters.targetType);
     if(adminAuditFilters.targetId) auditParams.set('target_id', adminAuditFilters.targetId);
     if(adminAuditFilters.action) auditParams.set('action', adminAuditFilters.action);
-    const [usersData, packsData, auditData] = await Promise.all([
+    const [usersData, packsData, officialPacksData, auditData] = await Promise.all([
       api(`/api/admin/users?q=${encodeURIComponent(adminSearchQuery)}&limit=120`),
       api('/api/admin/packs?limit=250'),
+      api('/api/admin/official-packs'),
       api(`/api/admin/audit?${auditParams.toString()}`),
     ]);
     adminUsers = Array.isArray(usersData.users) ? usersData.users : [];
     adminPacks = Array.isArray(packsData.packs) ? packsData.packs : [];
+    adminOfficialPacks = Array.isArray(officialPacksData.packs) ? officialPacksData.packs : [];
     adminAuditEntries = Array.isArray(auditData.entries) ? auditData.entries : [];
     if(!currentAdminUserId && adminUsers.length){
       currentAdminUserId = Number(adminUsers[0].user_id || 0) || null;
@@ -1701,10 +1873,20 @@
     if(currentAdminUserId && !adminUsers.some((user) => Number(user.user_id || 0) === Number(currentAdminUserId))){
       currentAdminUserId = adminUsers.length ? Number(adminUsers[0].user_id || 0) : null;
     }
+    if(!currentAdminOfficialPackId && adminOfficialPacks.length){
+      currentAdminOfficialPackId = Number(adminOfficialPacks[0].pack_id || 0) || null;
+    }
+    if(currentAdminOfficialPackId && !adminOfficialPacks.some((pack) => Number(pack.pack_id || 0) === Number(currentAdminOfficialPackId))){
+      currentAdminOfficialPackId = adminOfficialPacks.length ? Number(adminOfficialPacks[0].pack_id || 0) : null;
+    }
 
     let detailData = null;
     if(currentAdminUserId){
       detailData = await api(`/api/admin/users/${encodeURIComponent(currentAdminUserId)}`);
+    }
+    let officialPackDetail = null;
+    if(currentAdminOfficialPackId){
+      officialPackDetail = await api(`/api/admin/official-packs/${encodeURIComponent(currentAdminOfficialPackId)}`).catch(() => null);
     }
 
     const selectedUser = detailData?.user || null;
@@ -1843,6 +2025,68 @@
               <button id="adminRoomLookupBtn" class="btn-primary btn-sm" type="button">Open</button>
             </div>
             <div class="hint">Load a room governance view by room id for ownership or membership repair.</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Official Content</div>
+            <div class="form-stack">
+              <input id="officialPackName" type="text" placeholder="Official pack name"/>
+              <input id="officialPackSlug" type="text" placeholder="Slug"/>
+              <select id="officialPackType">
+                <option value="asset_pack">Official Asset Pack</option>
+                <option value="token_pack">Official Token Pack</option>
+              </select>
+              <label class="hint" style="display:flex;gap:8px;align-items:center;"><input id="officialPackGlobal" type="checkbox" checked style="width:auto;"> Globally visible</label>
+              <button id="createOfficialPackBtn" class="btn-primary" type="button">Create Official Pack</button>
+            </div>
+            <div class="form-stack" style="margin-top:10px;">
+              <select id="officialPackSelect">
+                <option value="">Select official pack for upload</option>
+                ${adminOfficialPacks.filter((pack) => !pack.archived).map((pack) => `<option value="${escapeHtml(pack.pack_id)}" data-content-type="${escapeHtml(pack.content_type || 'asset_pack')}">${escapeHtml(pack.name || pack.slug || 'Official Pack')} · ${escapeHtml(pack.content_type === 'token_pack' ? 'Token' : 'Asset')}</option>`).join('')}
+              </select>
+              <input id="officialPackFile" type="file" accept="image/*"/>
+              <button id="uploadOfficialPackBtn" class="btn-ghost" type="button" ${adminOfficialPacks.some((pack) => !pack.archived) ? '' : 'disabled'}>Upload into Official Pack</button>
+            </div>
+          </div>
+          <div class="list-card">
+            <div class="list-head">Official Packs</div>
+            <div class="list-body">
+              ${adminOfficialPacks.length ? adminOfficialPacks.map((pack) => `
+                <div class="list-row ${Number(pack.pack_id || 0) === Number(currentAdminOfficialPackId || 0) ? 'active' : ''}">
+                  <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(pack.name || pack.slug || 'Pack')}</div>
+                    <div class="list-row-meta">${escapeHtml(pack.slug || '')} · ${escapeHtml(pack.content_type === 'token_pack' ? 'Token Pack' : 'Asset Pack')} · ${pack.globally_visible ? 'Global' : 'Restricted'}</div>
+                  </div>
+                  <div class="detail-actions" style="margin-top:0;">
+                    ${packAccessBadge('official')}
+                    <button class="btn-ghost btn-sm" type="button" data-admin-official-pack-id="${escapeHtml(pack.pack_id)}">Inspect</button>
+                    ${pack.archived ? `<span class="inline-badge bad">archived</span>` : ''}
+                    ${!pack.archived ? `<button class="btn-danger btn-sm" type="button" data-official-archive-pack="${escapeHtml(pack.pack_id)}">Archive</button>` : ''}
+                  </div>
+                </div>
+              `).join('') : `<div class="empty-state">No official packs yet.</div>`}
+            </div>
+          </div>
+          <div class="list-card">
+            <div class="list-head">Official Pack Detail</div>
+            <div class="list-body">
+              ${officialPackDetail?.pack ? `
+                <div class="list-row">
+                  <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(officialPackDetail.pack.name || officialPackDetail.pack.slug || 'Pack')}</div>
+                    <div class="list-row-meta">${escapeHtml(officialPackDetail.pack.description || 'No description')} · ${escapeHtml((officialPackDetail.items || []).length)} items</div>
+                  </div>
+                  <div class="badge-row">${packContentBadge(officialPackDetail.pack.content_type)}${packAccessBadge('official')}</div>
+                </div>
+              ` : `<div class="empty-state">Select an official pack to inspect its contents.</div>`}
+              ${Array.isArray(officialPackDetail?.items) && officialPackDetail.items.length ? officialPackDetail.items.slice(0, 12).map((item) => `
+                <div class="list-row">
+                  <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(item.name || item.asset_id || 'Item')}</div>
+                    <div class="list-row-meta">${escapeHtml(item.folder_path || 'root')} · ${escapeHtml(fmtDate(item.created_at))}</div>
+                  </div>
+                </div>
+              `).join('') : ''}
+            </div>
           </div>
           <div class="list-card">
             <div class="list-head">

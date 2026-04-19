@@ -98,6 +98,11 @@ class PrivatePackRow(SQLModel, table=True):
     name: str
     owner_user_id: int = Field(index=True)
     created_at: str
+    description: str = ""
+    content_type: str = Field(default="asset_pack", index=True)
+    pack_scope: str = Field(default="personal", index=True)
+    globally_visible: bool = False
+    archived: bool = False
     root_rel: str
     thumb_rel: str
 

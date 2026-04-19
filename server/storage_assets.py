@@ -13,13 +13,27 @@ from . import storage_db
 from .storage_models import AssetRow, PrivatePackAssetRow, PrivatePackEntitlementRow, PrivatePackRow, UserRow
 
 _PACK_ACCESS_PRIORITY = {
+    "official": -1,
     "owned": 0,
     "direct_entitlement": 1,
     "session_shared": 2,
 }
 
+PACK_CONTENT_TYPES = {"asset_pack", "token_pack"}
+PACK_SCOPES = {"personal", "official"}
+
 engine = storage_db.engine
 logger = logging.getLogger("warhamster.assets")
+
+
+def _normalize_pack_content_type(value: str, default: str = "asset_pack") -> str:
+    raw = str(value or "").strip().lower()
+    return raw if raw in PACK_CONTENT_TYPES else default
+
+
+def _normalize_pack_scope(value: str, default: str = "personal") -> str:
+    raw = str(value or "").strip().lower()
+    return raw if raw in PACK_SCOPES else default
 
 
 @contextmanager
@@ -119,6 +133,12 @@ def create_private_pack(
     root_rel: str,
     thumb_rel: str,
     now_iso: str,
+    *,
+    description: str = "",
+    content_type: str = "asset_pack",
+    pack_scope: str = "personal",
+    globally_visible: bool = False,
+    archived: bool = False,
 ) -> PrivatePackRow:
     with Session(engine) as s:
         existing = s.exec(select(PrivatePackRow).where(PrivatePackRow.slug == slug)).first()
@@ -129,6 +149,11 @@ def create_private_pack(
             name=name,
             owner_user_id=owner_user_id,
             created_at=now_iso,
+            description=str(description or "").strip(),
+            content_type=_normalize_pack_content_type(content_type),
+            pack_scope=_normalize_pack_scope(pack_scope),
+            globally_visible=bool(globally_visible),
+            archived=bool(archived),
             root_rel=root_rel,
             thumb_rel=thumb_rel,
         )
@@ -146,6 +171,76 @@ def get_private_pack_by_slug(slug: str) -> Optional[PrivatePackRow]:
 def get_private_pack_by_id(pack_id: int) -> Optional[PrivatePackRow]:
     with Session(engine) as s:
         return s.get(PrivatePackRow, pack_id)
+
+
+def update_private_pack(
+    pack_id: int,
+    *,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    globally_visible: Optional[bool] = None,
+    archived: Optional[bool] = None,
+) -> Optional[PrivatePackRow]:
+    with Session(engine) as s:
+        row = s.get(PrivatePackRow, pack_id)
+        if not row:
+            return None
+        if name is not None:
+            row.name = str(name or "").strip() or row.name
+        if description is not None:
+            row.description = str(description or "").strip()
+        if globally_visible is not None:
+            row.globally_visible = bool(globally_visible)
+        if archived is not None:
+            row.archived = bool(archived)
+        s.add(row)
+        s.commit()
+        s.refresh(row)
+        return row
+
+
+def add_private_pack_asset_record(
+    *,
+    pack_id: int,
+    asset_id: str,
+    name: str,
+    folder_path: str = "",
+    tags: List[str],
+    mime: str,
+    width: int,
+    height: int,
+    url_original: str,
+    url_thumb: str,
+    now_iso: str,
+) -> PrivatePackAssetRow:
+    with Session(engine) as s:
+        row = PrivatePackAssetRow(
+            asset_id=asset_id,
+            pack_id=pack_id,
+            name=name,
+            folder_path=folder_path or "",
+            tags_json=json.dumps(tags or []),
+            mime=mime,
+            width=max(0, int(width or 0)),
+            height=max(0, int(height or 0)),
+            url_original=url_original,
+            url_thumb=url_thumb,
+            created_at=now_iso,
+        )
+        s.add(row)
+        s.commit()
+        s.refresh(row)
+        return row
+
+
+def delete_private_pack_asset_record(pack_id: int, asset_id: str) -> bool:
+    with Session(engine) as s:
+        row = s.get(PrivatePackAssetRow, asset_id)
+        if not row or int(row.pack_id) != int(pack_id):
+            return False
+        s.delete(row)
+        s.commit()
+        return True
 
 
 def delete_private_pack_asset_rows(pack_id: int) -> int:
@@ -193,6 +288,10 @@ def user_has_pack_access(user_id: int, pack_id: int) -> bool:
         pack = s.get(PrivatePackRow, pack_id)
         if not pack:
             return False
+        if bool(getattr(pack, "archived", False)):
+            return False
+        if str(getattr(pack, "pack_scope", "") or "") == "official" and bool(getattr(pack, "globally_visible", False)):
+            return True
         if int(pack.owner_user_id) == int(user_id):
             return True
         entitlement = s.get(PrivatePackEntitlementRow, (pack_id, user_id))
@@ -221,11 +320,23 @@ def revoke_private_pack_access(pack_id: int, user_id: int) -> None:
 
 def _pack_ids_for_user(user_id: int) -> set[int]:
     with Session(engine) as s:
-        owned = s.exec(select(PrivatePackRow.pack_id).where(PrivatePackRow.owner_user_id == user_id)).all()
+        owned = s.exec(
+            select(PrivatePackRow.pack_id).where(
+                PrivatePackRow.owner_user_id == user_id,
+                PrivatePackRow.archived == False,  # noqa: E712
+            )
+        ).all()
+        official = s.exec(
+            select(PrivatePackRow.pack_id).where(
+                PrivatePackRow.pack_scope == "official",
+                PrivatePackRow.globally_visible == True,  # noqa: E712
+                PrivatePackRow.archived == False,  # noqa: E712
+            )
+        ).all()
         entitled = s.exec(
             select(PrivatePackEntitlementRow.pack_id).where(PrivatePackEntitlementRow.user_id == user_id)
         ).all()
-    return {int(pack_id) for pack_id in [*owned, *entitled] if pack_id is not None}
+    return {int(pack_id) for pack_id in [*owned, *official, *entitled] if pack_id is not None}
 
 
 def _pack_access_sources_for_user(
@@ -238,7 +349,23 @@ def _pack_access_sources_for_user(
     with Session(engine) as s:
         owned_ids = {
             int(pack_id)
-            for pack_id in s.exec(select(PrivatePackRow.pack_id).where(PrivatePackRow.owner_user_id == user_id)).all()
+            for pack_id in s.exec(
+                select(PrivatePackRow.pack_id).where(
+                    PrivatePackRow.owner_user_id == user_id,
+                    PrivatePackRow.archived == False,  # noqa: E712
+                )
+            ).all()
+            if pack_id is not None
+        }
+        official_ids = {
+            int(pack_id)
+            for pack_id in s.exec(
+                select(PrivatePackRow.pack_id).where(
+                    PrivatePackRow.pack_scope == "official",
+                    PrivatePackRow.globally_visible == True,  # noqa: E712
+                    PrivatePackRow.archived == False,  # noqa: E712
+                )
+            ).all()
             if pack_id is not None
         }
         entitled_ids = {
@@ -252,6 +379,8 @@ def _pack_access_sources_for_user(
         else set()
     )
     source_map: Dict[int, set[str]] = {}
+    for pack_id in official_ids:
+        source_map.setdefault(pack_id, set()).add("official")
     for pack_id in owned_ids:
         source_map.setdefault(pack_id, set()).add("owned")
     for pack_id in entitled_ids:
@@ -299,6 +428,7 @@ def list_private_packs_for_user(
     user_id: int,
     session_id: Optional[str] = None,
     *,
+    content_type: str = "",
     is_game_session_member: Callable[[str, int], bool],
     shared_pack_ids_for_game_session: Callable[[str], set[int]],
 ) -> List[Dict[str, object]]:
@@ -323,7 +453,12 @@ def list_private_packs_for_user(
             else {}
         )
     out: List[Dict[str, object]] = []
+    normalized_content_type = _normalize_pack_content_type(content_type, "") if content_type else ""
     for pack in packs:
+        if bool(getattr(pack, "archived", False)):
+            continue
+        if normalized_content_type and str(getattr(pack, "content_type", "") or "") != normalized_content_type:
+            continue
         pack_id = int(pack.pack_id) if pack.pack_id is not None else 0
         access_meta = _pack_access_metadata(pack_id, access_sources_by_pack_id, session_id=session_id)
         out.append(
@@ -331,6 +466,11 @@ def list_private_packs_for_user(
                 "pack_id": pack.pack_id,
                 "slug": pack.slug,
                 "name": pack.name,
+                "description": getattr(pack, "description", "") or "",
+                "content_type": getattr(pack, "content_type", "asset_pack") or "asset_pack",
+                "pack_scope": getattr(pack, "pack_scope", "personal") or "personal",
+                "globally_visible": bool(getattr(pack, "globally_visible", False)),
+                "archived": bool(getattr(pack, "archived", False)),
                 "owner_user_id": pack.owner_user_id,
                 "owner_username": owners.get(pack.owner_user_id, "") if pack.owner_user_id is not None else "",
                 "created_at": pack.created_at,
@@ -349,6 +489,7 @@ def list_pack_assets_for_user(
     tag: str = "",
     folder: str = "",
     session_id: Optional[str] = None,
+    content_type: str = "asset_pack",
     *,
     is_game_session_member: Callable[[str, int], bool],
     shared_pack_ids_for_game_session: Callable[[str], set[int]],
@@ -367,9 +508,20 @@ def list_pack_assets_for_user(
         return []
     with Session(engine) as s:
         packs = s.exec(select(PrivatePackRow).where(PrivatePackRow.pack_id.in_(pack_ids))).all()
+        normalized_content_type = _normalize_pack_content_type(content_type, "asset_pack") if content_type else ""
+        packs = [
+            pack for pack in packs
+            if not bool(getattr(pack, "archived", False))
+            and (not normalized_content_type or str(getattr(pack, "content_type", "") or "") == normalized_content_type)
+        ]
+        if not packs:
+            return []
         slug_by_pack_id = {int(pack.pack_id): pack.slug for pack in packs if pack.pack_id is not None}
         name_by_pack_id = {int(pack.pack_id): pack.name for pack in packs if pack.pack_id is not None}
         owner_id_by_pack_id = {int(pack.pack_id): int(pack.owner_user_id) for pack in packs if pack.pack_id is not None and pack.owner_user_id is not None}
+        content_type_by_pack_id = {int(pack.pack_id): str(getattr(pack, "content_type", "asset_pack") or "asset_pack") for pack in packs if pack.pack_id is not None}
+        scope_by_pack_id = {int(pack.pack_id): str(getattr(pack, "pack_scope", "personal") or "personal") for pack in packs if pack.pack_id is not None}
+        global_by_pack_id = {int(pack.pack_id): bool(getattr(pack, "globally_visible", False)) for pack in packs if pack.pack_id is not None}
         owner_ids = sorted(set(owner_id_by_pack_id.values()))
         owners = (
             {
@@ -409,6 +561,9 @@ def list_pack_assets_for_user(
                 "pack_id": row.pack_id,
                 "pack_slug": slug_by_pack_id.get(int(row.pack_id), ""),
                 "pack_name": name_by_pack_id.get(int(row.pack_id), ""),
+                "content_type": content_type_by_pack_id.get(int(row.pack_id), "asset_pack"),
+                "pack_scope": scope_by_pack_id.get(int(row.pack_id), "personal"),
+                "globally_visible": global_by_pack_id.get(int(row.pack_id), False),
                 "owner_user_id": owner_id_by_pack_id.get(int(row.pack_id)),
                 "owner_username": owners.get(owner_id_by_pack_id.get(int(row.pack_id)), "") if owner_id_by_pack_id.get(int(row.pack_id)) is not None else "",
                 **_pack_access_metadata(int(row.pack_id), access_sources_by_pack_id, session_id=session_id),
@@ -524,7 +679,7 @@ def list_asset_folders_for_user(
         if pack_ids:
             ph = ",".join("?" * len(pack_ids))
             for row in conn.execute(
-                f"SELECT pack_id, slug FROM privatepackrow WHERE pack_id IN ({ph})",
+                f"SELECT pack_id, slug FROM privatepackrow WHERE pack_id IN ({ph}) AND COALESCE(archived, 0) = 0 AND COALESCE(content_type, 'asset_pack') = 'asset_pack'",
                 list(pack_ids),
             ).fetchall():
                 slug_by_pack_id[int(row["pack_id"])] = str(row["slug"] or "")
@@ -663,6 +818,62 @@ def list_all_assets_for_user(
     return out
 
 
+def list_token_packs_for_user(
+    user_id: int,
+    session_id: Optional[str] = None,
+    *,
+    is_game_session_member: Callable[[str, int], bool],
+    shared_pack_ids_for_game_session: Callable[[str], set[int]],
+) -> List[Dict[str, object]]:
+    return list_private_packs_for_user(
+        user_id,
+        session_id=session_id,
+        content_type="token_pack",
+        is_game_session_member=is_game_session_member,
+        shared_pack_ids_for_game_session=shared_pack_ids_for_game_session,
+    )
+
+
+def get_token_pack_for_user(
+    user_id: int,
+    pack_id: int,
+    session_id: Optional[str] = None,
+    *,
+    is_game_session_member: Callable[[str, int], bool],
+    shared_pack_ids_for_game_session: Callable[[str], set[int]],
+) -> Optional[Dict[str, object]]:
+    visible = list_token_packs_for_user(
+        user_id,
+        session_id=session_id,
+        is_game_session_member=is_game_session_member,
+        shared_pack_ids_for_game_session=shared_pack_ids_for_game_session,
+    )
+    pack = next((row for row in visible if int(row.get("pack_id") or 0) == int(pack_id)), None)
+    if not pack:
+        return None
+    items = []
+    for row in list_private_pack_assets(pack_id):
+        items.append(
+            {
+                "id": str(row.asset_id),
+                "name": str(row.name or "Token"),
+                "image_url": f"/api/assets/file/{row.asset_id}",
+                "thumb_url": f"/api/assets/file/{row.asset_id}?src=assetlib",
+                "tags": [str(t).strip().lower() for t in (json.loads(row.tags_json or "[]") or []) if str(t).strip()],
+                "folder_path": str(row.folder_path or ""),
+                "mime": str(row.mime or ""),
+                "width": int(row.width or 0),
+                "height": int(row.height or 0),
+            }
+        )
+    items.sort(key=lambda item: str(item.get("name") or "").lower())
+    return {
+        **pack,
+        "tokens": items,
+        "token_count": len(items),
+    }
+
+
 def get_asset_by_id(asset_id: str) -> Optional[AssetRow]:
     with Session(engine) as s:
         return s.get(AssetRow, asset_id)
@@ -793,14 +1004,17 @@ def list_assets_for_user_page(
         pack_id_by_slug: Dict[str, int] = {}
         owner_id_by_pack_id: Dict[int, int] = {}
         owner_username_by_pack_id: Dict[int, str] = {}
+        content_type_by_pack_id: Dict[int, str] = {}
+        pack_scope_by_pack_id: Dict[int, str] = {}
+        globally_visible_by_pack_id: Dict[int, bool] = {}
         if pack_ids:
             ph = ",".join("?" * len(pack_ids))
             for row in conn.execute(
                 f"""
-                SELECT p.pack_id, p.slug, p.name, p.owner_user_id, COALESCE(u.username, '') AS owner_username
+                SELECT p.pack_id, p.slug, p.name, p.owner_user_id, p.content_type, p.pack_scope, p.globally_visible, COALESCE(u.username, '') AS owner_username
                 FROM privatepackrow p
                 LEFT JOIN userrow u ON u.user_id = p.owner_user_id
-                WHERE p.pack_id IN ({ph})
+                WHERE p.pack_id IN ({ph}) AND COALESCE(p.archived, 0) = 0
                 """,
                 list(pack_ids),
             ).fetchall():
@@ -808,15 +1022,20 @@ def list_assets_for_user_page(
                 slug_by_pack_id[pid] = row["slug"]
                 name_by_pack_id[pid] = row["name"]
                 pack_id_by_slug[str(row["slug"])] = pid
+                content_type_by_pack_id[pid] = str(row["content_type"] or "asset_pack")
+                pack_scope_by_pack_id[pid] = str(row["pack_scope"] or "personal")
+                globally_visible_by_pack_id[pid] = bool(row["globally_visible"])
                 if row["owner_user_id"] is not None:
                     owner_id_by_pack_id[pid] = int(row["owner_user_id"])
                 owner_username_by_pack_id[pid] = str(row["owner_username"] or "")
 
         include_uploads = pack_filter in {"", "all", "upload"}
-        selected_pack_ids = [] if pack_filter == "upload" else list(pack_ids)
+        selected_pack_ids = [] if pack_filter == "upload" else [
+            pid for pid in pack_ids if content_type_by_pack_id.get(pid) == "asset_pack"
+        ]
         if pack_filter and pack_filter not in {"all", "upload"}:
             target_pack_id = pack_id_by_slug.get(pack_filter)
-            selected_pack_ids = [target_pack_id] if target_pack_id else []
+            selected_pack_ids = [target_pack_id] if target_pack_id and content_type_by_pack_id.get(target_pack_id) == "asset_pack" else []
             include_uploads = False
 
         if selected_pack_ids:
@@ -959,6 +1178,9 @@ def list_assets_for_user_page(
                 "pack_id": pack_id,
                 "pack_slug": pack_slug,
                 "pack_name": name_by_pack_id.get(pack_id, ""),
+                "content_type": content_type_by_pack_id.get(pack_id, "asset_pack"),
+                "pack_scope": pack_scope_by_pack_id.get(pack_id, "personal"),
+                "globally_visible": globally_visible_by_pack_id.get(pack_id, False),
                 "owner_user_id": owner_id_by_pack_id.get(pack_id),
                 "owner_username": owner_username_by_pack_id.get(pack_id, ""),
                 **_pack_access_metadata(pack_id, access_sources_by_pack_id, session_id=session_id),

@@ -446,6 +446,12 @@ def create_private_pack(
     name: str,
     root_rel: str,
     thumb_rel: str,
+    *,
+    description: str = "",
+    content_type: str = "asset_pack",
+    pack_scope: str = "personal",
+    globally_visible: bool = False,
+    archived: bool = False,
 ) -> PrivatePackRow:
     _sync_assets_engine()
     return storage_assets.create_private_pack(
@@ -454,6 +460,11 @@ def create_private_pack(
         name=name,
         root_rel=root_rel,
         thumb_rel=thumb_rel,
+        description=description,
+        content_type=content_type,
+        pack_scope=pack_scope,
+        globally_visible=globally_visible,
+        archived=archived,
         now_iso=utc_now_iso(),
     )
 
@@ -466,6 +477,24 @@ def get_private_pack_by_slug(slug: str) -> Optional[PrivatePackRow]:
 def get_private_pack_by_id(pack_id: int) -> Optional[PrivatePackRow]:
     _sync_assets_engine()
     return storage_assets.get_private_pack_by_id(pack_id)
+
+
+def update_private_pack(
+    pack_id: int,
+    *,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    globally_visible: Optional[bool] = None,
+    archived: Optional[bool] = None,
+) -> Optional[PrivatePackRow]:
+    _sync_assets_engine()
+    return storage_assets.update_private_pack(
+        pack_id,
+        name=name,
+        description=description,
+        globally_visible=globally_visible,
+        archived=archived,
+    )
 
 
 def delete_private_pack_asset_rows(pack_id: int) -> int:
@@ -486,6 +515,40 @@ def count_private_pack_asset_rows(pack_id: int) -> int:
 def list_private_pack_assets(pack_id: int):
     _sync_assets_engine()
     return storage_assets.list_private_pack_assets(pack_id)
+
+
+def add_private_pack_asset_record(
+    *,
+    pack_id: int,
+    asset_id: str,
+    name: str,
+    folder_path: str = "",
+    tags: List[str],
+    mime: str,
+    width: int,
+    height: int,
+    url_original: str,
+    url_thumb: str,
+) -> PrivatePackAssetRow:
+    _sync_assets_engine()
+    return storage_assets.add_private_pack_asset_record(
+        pack_id=pack_id,
+        asset_id=asset_id,
+        name=name,
+        folder_path=folder_path,
+        tags=tags,
+        mime=mime,
+        width=width,
+        height=height,
+        url_original=url_original,
+        url_thumb=url_thumb,
+        now_iso=utc_now_iso(),
+    )
+
+
+def delete_private_pack_asset_record(pack_id: int, asset_id: str) -> bool:
+    _sync_assets_engine()
+    return storage_assets.delete_private_pack_asset_record(pack_id, asset_id)
 
 
 def get_pack_asset_by_asset_id(asset_id: str) -> Optional[PrivatePackAssetRow]:
@@ -533,11 +596,17 @@ def set_game_session_shared_pack(
     return storage_sessions.set_game_session_shared_pack(session_id, pack_id, enabled, shared_by_user_id, utc_now_iso())
 
 
-def list_private_packs_for_user(user_id: int, session_id: Optional[str] = None) -> List[Dict[str, object]]:
+def list_private_packs_for_user(
+    user_id: int,
+    session_id: Optional[str] = None,
+    *,
+    content_type: str = "",
+) -> List[Dict[str, object]]:
     _sync_assets_engine()
     return storage_assets.list_private_packs_for_user(
         user_id,
         session_id=session_id,
+        content_type=content_type,
         is_game_session_member=is_game_session_member,
         shared_pack_ids_for_game_session=_shared_pack_ids_for_game_session,
     )
@@ -577,6 +646,7 @@ def list_pack_assets_for_user(
     tag: str = "",
     folder: str = "",
     session_id: Optional[str] = None,
+    content_type: str = "asset_pack",
 ) -> List[Dict[str, object]]:
     _sync_assets_engine()
     return storage_assets.list_pack_assets_for_user(
@@ -584,6 +654,28 @@ def list_pack_assets_for_user(
         q=q,
         tag=tag,
         folder=folder,
+        session_id=session_id,
+        content_type=content_type,
+        is_game_session_member=is_game_session_member,
+        shared_pack_ids_for_game_session=_shared_pack_ids_for_game_session,
+    )
+
+
+def list_token_packs_for_user(user_id: int, session_id: Optional[str] = None) -> List[Dict[str, object]]:
+    _sync_assets_engine()
+    return storage_assets.list_token_packs_for_user(
+        user_id,
+        session_id=session_id,
+        is_game_session_member=is_game_session_member,
+        shared_pack_ids_for_game_session=_shared_pack_ids_for_game_session,
+    )
+
+
+def get_token_pack_for_user(user_id: int, pack_id: int, session_id: Optional[str] = None) -> Optional[Dict[str, object]]:
+    _sync_assets_engine()
+    return storage_assets.get_token_pack_for_user(
+        user_id,
+        pack_id,
         session_id=session_id,
         is_game_session_member=is_game_session_member,
         shared_pack_ids_for_game_session=_shared_pack_ids_for_game_session,

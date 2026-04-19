@@ -173,19 +173,24 @@ function sanitizePackToken(token, packId) {
   const id = String(token?.id || "").trim();
   const name = String(token?.name || id || "Token").trim() || "Token";
   const file = String(token?.file || "").trim();
+  const directImageUrl = String(token?.image_url || token?.url_original || "").trim();
+  const thumbUrl = String(token?.thumb_url || "").trim();
   const tags = Array.isArray(token?.tags) ? token.tags.map((x) => String(x).trim().toLowerCase()).filter(Boolean) : [];
-  if (!id || !file) return null;
+  if (!id || (!file && !directImageUrl)) return null;
   const safePath = file
-    .replace(/^\/+/, "")
-    .split("/")
-    .map((seg) => encodeURIComponent(seg))
-    .join("/");
+    ? file
+        .replace(/^\/+/, "")
+        .split("/")
+        .map((seg) => encodeURIComponent(seg))
+        .join("/")
+    : "";
   return {
     id,
     name,
     file,
     tags,
-    image_url: `/packs/${encodeURIComponent(packId)}/${safePath}`,
+    image_url: directImageUrl || `/packs/${encodeURIComponent(packId)}/${safePath}`,
+    thumb_url: thumbUrl || directImageUrl || `/packs/${encodeURIComponent(packId)}/${safePath}`,
   };
 }
 
@@ -374,7 +379,9 @@ async function loadPack(packId) {
     return;
   }
   try {
-    const manifest = await apiGet(`/api/packs/${encodeURIComponent(packId)}`);
+    const sessionId = currentAssetSessionId();
+    const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+    const manifest = await apiGet(`/api/packs/${encodeURIComponent(packId)}${qs}`);
     const tokens = [];
     for (const token of (manifest.tokens || [])) {
       const normalized = sanitizePackToken(token, packId);
@@ -391,15 +398,21 @@ async function loadPack(packId) {
 
 async function refreshPacks() {
   try {
-    const data = await apiGet("/api/packs");
+    const sessionId = currentAssetSessionId();
+    const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+    const data = await apiGet(`/api/packs${qs}`);
     const packs = Array.isArray(data.packs) ? data.packs : [];
     packState.packs = packs;
     const existing = new Set(packs.map((p) => p.pack_id));
     if (!existing.has(packState.selectedPackId)) {
       packState.selectedPackId = packs[0]?.pack_id || "";
     }
-    packSelectEl.innerHTML = packs.map((p) => (
-      `<option value="${p.pack_id}">${p.name} (${p.token_count})</option>`
+    packSelectEl.innerHTML = packs.map((p) => {
+      const typeLabel = String(p?.pack_scope || "") === "official" ? "Official" : assetPackAccessLabel(p?.access_source || "");
+      return (
+      `<option value="${p.pack_id}">${p.name} (${p.token_count})${typeLabel ? ` · ${typeLabel}` : ""}</option>`
+      );
+    }
     )).join("") || `<option value="">(no packs)</option>`;
     packSelectEl.value = packState.selectedPackId || "";
     await loadPack(packState.selectedPackId);
@@ -540,6 +553,7 @@ function assetKind(asset) {
 
 function assetPackAccessLabel(source) {
   const normalized = String(source || "").trim();
+  if (normalized === "official") return "Official";
   if (normalized === "owned") return "Owned";
   if (normalized === "session_shared") return "Shared via Session";
   if (normalized === "direct_entitlement") return "Direct Access";
@@ -663,6 +677,7 @@ function renderAssetAdvancedFilters() {
 function availableAssetPackOptions() {
   const packs = Array.isArray(assetState.privatePacks) ? assetState.privatePacks : [];
   return packs
+    .filter((pack) => String(pack?.content_type || "asset_pack") === "asset_pack")
     .map((pack) => ({
       value: String(pack?.slug || "").trim(),
       label: String(pack?.name || pack?.slug || "Pack").trim() || "Pack",
@@ -1093,6 +1108,7 @@ function renderAssetSessionSharePanel() {
     ? sharedPacks.map((pack) => `
         <div style="display:flex; align-items:center; gap:6px; border:1px solid rgba(255,255,255,0.12); border-radius:999px; padding:4px 8px; font-size:11px;">
           <span style="font-weight:600;">${escapeHtml(String(pack.name || pack.slug || "Pack"))}</span>
+          <span style="opacity:.75;">${escapeHtml(String(pack.content_type || "asset_pack") === "token_pack" ? "Token" : "Asset")}</span>
           <span style="opacity:.65;">${escapeHtml(String(pack.slug || ""))}</span>
         </div>
       `).join("")
@@ -1112,7 +1128,7 @@ function renderAssetSessionSharePanel() {
           <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 8px;">
             <div style="min-width:0;">
               <div style="font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(pack?.name || pack?.slug || "Pack"))}</div>
-              <div style="font-size:11px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(pack?.slug || ""))}${accessLabel ? ` • ${escapeHtml(accessLabel)}` : ""}${shared ? " • shared now" : ""}</div>
+              <div style="font-size:11px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(pack?.slug || ""))} • ${escapeHtml(String(pack?.content_type || 'asset_pack') === 'token_pack' ? 'Token' : 'Asset')}${accessLabel ? ` • ${escapeHtml(accessLabel)}` : ""}${shared ? " • shared now" : ""}</div>
             </div>
             <button type="button" data-session-pack-toggle="${packId}" data-session-pack-enabled="${shared ? "1" : "0"}" style="padding:4px 8px;">${shared ? "Unshare" : "Share"}</button>
           </div>
