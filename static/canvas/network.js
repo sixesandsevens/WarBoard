@@ -338,6 +338,26 @@ function connectWS(force = false, options = {}) {
       return;
     }
 
+    if (ev.type === "GEOMETRY_ADD" || ev.type === "GEOMETRY_UPDATE") {
+      const p = ev.payload;
+      if (p?.id) {
+        const obj = normalizeAndValidateGeometry(p);
+        if (obj) state.geometry.set(obj.id, obj);
+      }
+      requestRender();
+      return;
+    }
+
+    if (ev.type === "GEOMETRY_DELETE") {
+      const id = String(ev.payload?.id || "");
+      if (id) {
+        state.geometry.delete(id);
+        if (selectedGeometryId === id) selectedGeometryId = null;
+      }
+      requestRender();
+      return;
+    }
+
     if (ev.type === "TOKEN_CREATE") {
       const p = ev.payload;
       if (p?.id) {

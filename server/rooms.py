@@ -15,6 +15,7 @@ from fastapi import WebSocket
 from .models import AssetInstance, FogPaintState, FogStroke, InteriorEdgeOverride, InteriorRoom, InteriorWallCut, Point, RoomState, Shape, Stroke, TerrainPaintState, TerrainStroke, Token, WireEvent
 from .room_events import (
     apply_asset_event,
+    apply_geometry_event,
     apply_cogm_event,
     apply_fog_event,
     apply_history_event,
@@ -548,6 +549,9 @@ class RoomManager:
         if t in {"INTERIOR_ADD", "INTERIOR_UPDATE", "INTERIOR_DELETE", "INTERIOR_SET_LOCK", "INTERIOR_EDGE_SET", "INTERIOR_WALL_CUT_ADD", "INTERIOR_WALL_CUT_REMOVE"}:
             return self._apply_interior_event(room_id, room, t, p, client_id, user_id)
 
+        if t in {"GEOMETRY_ADD", "GEOMETRY_UPDATE", "GEOMETRY_DELETE"}:
+            return self._apply_geometry_event(room_id, room, t, p, client_id, user_id)
+
         if t in {"TERRAIN_STROKE_ADD", "TERRAIN_STROKE_UNDO"}:
             return self._apply_terrain_event(room_id, room, t, p, client_id, user_id)
 
@@ -587,6 +591,10 @@ class RoomManager:
     # ---------------------------------------------------------------- interiors
     def _apply_interior_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
         return apply_interior_event(self, room_id, room, t, p, client_id, user_id)
+
+    # ---------------------------------------------------------------- geometry
+    def _apply_geometry_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:
+        return apply_geometry_event(self, room_id, room, t, p, client_id, user_id)
 
     # ------------------------------------------------------------------ terrain
     def _apply_terrain_event(self, room_id: str, room: Room, t: str, p: dict, client_id: str, user_id: Optional[int]) -> WireEvent:

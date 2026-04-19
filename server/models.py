@@ -60,6 +60,9 @@ EventType = Literal[
     "ROOM_GOVERNANCE_UPDATED",
     "PACK_ACCESS_UPDATED",
     "GOVERNANCE_NOTICE",
+    "GEOMETRY_ADD",
+    "GEOMETRY_UPDATE",
+    "GEOMETRY_DELETE",
     "ERROR",
 ]
 
@@ -171,6 +174,20 @@ class InteriorWallCut(BaseModel):
     creator_id: Optional[str] = None
 
 
+class GeometryObject(BaseModel):
+    id: str
+    kind: Literal["room", "cave", "wall_path"] = "cave"
+    outer: List[Point] = Field(default_factory=list)
+    closed: bool = True
+    style: Dict[str, Any] = Field(default_factory=dict)
+    created_by: str = ""
+    created_at: float = 0.0
+    updated_at: float = 0.0
+    locked: bool = False
+    visible: bool = True
+    z_index: int = 0
+
+
 class TerrainStroke(BaseModel):
     id: str
     material_id: str
@@ -246,6 +263,7 @@ class RoomState(BaseModel):
     )
     terrain_paint: TerrainPaintState = Field(default_factory=TerrainPaintState)
     fog_paint: FogPaintState = Field(default_factory=FogPaintState)
+    geometry: Dict[str, GeometryObject] = Field(default_factory=dict)
 
 
 class ClientHello(BaseModel):

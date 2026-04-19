@@ -56,12 +56,12 @@ function normalizeGeometryObject(raw) {
     edges,
     openings,
     style: Object.assign({}, GEOMETRY_STYLE_PRESETS[kind] || {}, raw.style || {}),
-    createdBy: String(raw.createdBy || ""),
-    createdAt: Number(raw.createdAt || now),
-    updatedAt: Number(raw.updatedAt || now),
+    createdBy: String(raw.createdBy || raw.created_by || ""),
+    createdAt: Number(raw.createdAt ?? raw.created_at ?? now),
+    updatedAt: Number(raw.updatedAt ?? raw.updated_at ?? now),
     locked: !!raw.locked,
     visible: raw.visible !== false,
-    zIndex: Number(raw.zIndex || 0),
+    zIndex: Number(raw.zIndex ?? raw.z_index ?? 0),
     bounds: null,
   };
 }
@@ -89,11 +89,17 @@ function normalizeAndValidateGeometry(raw) {
 function applyGeometryMutation(mutation) {
   for (const entry of (mutation.removed || [])) {
     const id = typeof entry === "string" ? entry : entry.id;
-    if (id) state.geometry.delete(id);
+    if (id) {
+      state.geometry.delete(id);
+      send("GEOMETRY_DELETE", { id });
+    }
   }
   for (const raw of (mutation.added || [])) {
     const obj = normalizeAndValidateGeometry(raw);
-    if (obj) state.geometry.set(obj.id, obj);
+    if (obj) {
+      state.geometry.set(obj.id, obj);
+      send("GEOMETRY_ADD", _geometryWirePayload(obj));
+    }
   }
   requestRender();
 }
@@ -118,12 +124,33 @@ function geometryUpdate(id, changes) {
   const obj = normalizeAndValidateGeometry(merged);
   if (obj) {
     state.geometry.set(id, obj);
+    send("GEOMETRY_UPDATE", _geometryWirePayload(obj));
     requestRender();
   }
 }
 
 function geometryDelete(id) {
-  if (state.geometry.delete(id)) requestRender();
+  if (state.geometry.delete(id)) {
+    send("GEOMETRY_DELETE", { id });
+    requestRender();
+  }
+}
+
+// Build the camelCase wire payload the server geometry handler expects.
+function _geometryWirePayload(obj) {
+  return {
+    id: obj.id,
+    kind: obj.kind,
+    outer: obj.outer,
+    closed: obj.closed,
+    style: obj.style || {},
+    createdBy: obj.createdBy || "",
+    createdAt: obj.createdAt || 0,
+    updatedAt: obj.updatedAt || 0,
+    locked: !!obj.locked,
+    visible: obj.visible !== false,
+    zIndex: Number(obj.zIndex || 0),
+  };
 }
 
 // ─── Z-Order Helpers ──────────────────────────────────────────────────────────

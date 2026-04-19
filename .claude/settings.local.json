@@ -14,7 +14,9 @@
       "Bash(python3 -m pytest tests/test_app_http.py::TestWebSocketHardening::test_session_move_does_not_reach_co_gm tests/test_app_http.py::TestWebSocketHardening::test_non_session_member_does_not_receive_session_move tests/test_app_http.py::TestPackImportSafety::test_pack_import_db_failure_cleans_up_copied_files -v)",
       "Bash(.venv/bin/pytest tests/test_app_http.py::TestWebSocketHardening::test_session_move_does_not_reach_co_gm tests/test_app_http.py::TestWebSocketHardening::test_non_session_member_does_not_receive_session_move tests/test_app_http.py::TestPackImportSafety::test_pack_import_db_failure_cleans_up_copied_files -v)",
       "Bash(wait)",
-      "Bash(.venv/bin/pytest -q --tb=short)"
+      "Bash(.venv/bin/pytest -q --tb=short)",
+      "Bash(python -m pytest tests/ -x -q)",
+      "Bash(python3 -m pytest tests/ -x -q)"
     ]
   }
 }
