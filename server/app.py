@@ -1778,6 +1778,58 @@ def get_token_pack_api(pack_id: int, req: Request, session_id: str = ""):
     return _token_pack_browser_payload(pack)
 
 
+@app.delete("/api/token-packs/{pack_id}")
+def delete_token_pack_api(pack_id: int, req: Request):
+    actor = _require_user(req)
+    if actor.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    pack = get_private_pack_by_id(pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Token pack not found")
+    if str(getattr(pack, "pack_scope", "") or "") == "official":
+        raise HTTPException(status_code=400, detail="Use the admin API to delete official packs")
+    if not _can_manage_pack(actor, pack):
+        raise HTTPException(status_code=403, detail="Pack owner or admin required")
+    before = _pack_public_payload(pack)
+    item_count = count_private_pack_asset_rows(pack_id)
+    delete_game_session_shared_pack_rows(pack_id)
+    delete_private_pack_asset_rows(pack_id)
+    deleted = delete_private_pack_row(pack_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Token pack not found")
+    pack_root = _pack_files_root(pack)
+    files_removed = False
+    if pack_root.exists():
+        try:
+            shutil.rmtree(pack_root)
+            files_removed = True
+        except OSError as e:
+            logger.warning(
+                "token pack delete filesystem cleanup failed: pack_id=%s slug=%s error=%s",
+                pack_id,
+                getattr(pack, "slug", ""),
+                e,
+            )
+    _audit(
+        actor_user_id=actor.user_id,
+        action="pack.delete_token_pack",
+        target_type="pack",
+        target_id=str(pack_id),
+        summary=f"{actor.username} permanently deleted token pack {getattr(pack, 'slug', '') or getattr(pack, 'name', '')}",
+        before={**before, "item_count": item_count},
+        after=None,
+    )
+    logger.info(
+        "token pack deleted: pack_id=%s slug=%s actor=%s items=%s files_removed=%s",
+        pack_id,
+        getattr(pack, "slug", ""),
+        actor.username,
+        item_count,
+        files_removed,
+    )
+    return {"ok": True, "pack_id": pack_id, "files_removed": files_removed}
+
+
 @app.post("/api/token-packs")
 async def create_token_pack_api(req: Request):
     actor = _require_user(req)
