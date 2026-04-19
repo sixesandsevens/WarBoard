@@ -2665,7 +2665,15 @@
   initTerrainPanelBindings();
   // refreshFogPaintPanel, fog panel event bindings → static/canvas/fog.js
   initFogPanelBindings();
-  initAssetLibBindings();
+  // Session auth/connect controls should stay available even if later UI panels fail.
+  initSessionBindings();
+  updateSessionPill();
+  try {
+    initAssetLibBindings();
+  } catch (e) {
+    console.error("initAssetLibBindings failed", e);
+    log(`ASSET UI INIT ERROR: ${e?.message || e}`);
+  }
   allCtxMenus.forEach((menuEl) => {
     if (!menuEl) return;
     menuEl.addEventListener("click", (e) => {
@@ -2813,9 +2821,6 @@
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
     btn.addEventListener("mouseleave", hideTooltip);
   });
-  // Session/room/GM panel and layer bindings → initSessionBindings() in static/canvas/sessions.js
-  initSessionBindings();
-  updateSessionPill();
   setLogCollapsed(false);
   if (logToggleEl && logWrapEl) {
     logToggleEl.addEventListener("click", () => {
