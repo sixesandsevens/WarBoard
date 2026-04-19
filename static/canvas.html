@@ -9,7 +9,14 @@
   <div id="top">
     <div class="top-left">
       <button id="drawerToggle" class="drawer-toggle">☰</button>
-      <div id="sessionPill" class="session-pill bad">○ Disconnected</div>
+      <div
+        id="sessionPill"
+        class="session-pill bad"
+        role="button"
+        tabindex="0"
+        onclick="if (window.openSessionModal) window.openSessionModal();"
+        onkeydown="if ((event.key === 'Enter' || event.key === ' ') && window.openSessionModal) { event.preventDefault(); window.openSessionModal(); }"
+      >○ Disconnected</div>
       <div id="sessionResyncBadge" class="session-resync hidden">Resyncing...</div>
     </div>
     <div class="top-center">
