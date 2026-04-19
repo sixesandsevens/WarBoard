@@ -49,6 +49,9 @@ class Room:
     state: RoomState
     sockets: Set[WebSocket] = field(default_factory=set)
     socket_to_client: Dict[WebSocket, str] = field(default_factory=dict)
+    # Authoritative per-socket identity used for session membership checks.
+    # Populated by attach_client alongside socket_to_client.
+    socket_to_user_id: Dict[WebSocket, int] = field(default_factory=dict)
     client_counts: Dict[str, int] = field(default_factory=dict)
     dirty: bool = False
     last_change_ts: float = 0.0
@@ -180,6 +183,7 @@ class RoomManager:
             if not room:
                 return None
             room.sockets.discard(ws)
+            room.socket_to_user_id.pop(ws, None)
             client_id = room.socket_to_client.pop(ws, None)
             if client_id:
                 count = room.client_counts.get(client_id, 0) - 1
@@ -199,8 +203,9 @@ class RoomManager:
                 return None
             return room
 
-    def attach_client(self, room: Room, ws: WebSocket, client_id: str) -> None:
+    def attach_client(self, room: Room, ws: WebSocket, client_id: str, user_id: int) -> None:
         room.socket_to_client[ws] = client_id
+        room.socket_to_user_id[ws] = user_id
         room.client_counts[client_id] = room.client_counts.get(client_id, 0) + 1
 
     def presence_event(self, room: Room) -> WireEvent:
@@ -242,6 +247,7 @@ class RoomManager:
             )
         for s in dead:
             room.sockets.discard(s)
+            room.socket_to_user_id.pop(s, None)
             client_id = room.socket_to_client.pop(s, None)
             if client_id:
                 count = room.client_counts.get(client_id, 0) - 1
@@ -249,6 +255,32 @@ class RoomManager:
                     room.client_counts.pop(client_id, None)
                 else:
                     room.client_counts[client_id] = count
+
+    async def broadcast_others(self, room: Room, exclude: WebSocket, event: WireEvent) -> None:
+        """Broadcast to all sockets in room except the one being excluded (e.g. the sender)."""
+        others = [s for s in room.sockets if s is not exclude]
+        if not others:
+            return
+        msg = event.model_dump_json()
+        results = await asyncio.gather(
+            *(asyncio.wait_for(s.send_text(msg), timeout=BROADCAST_SEND_TIMEOUT_SECONDS) for s in others),
+            return_exceptions=True,
+        )
+        dead = [s for s, r in zip(others, results) if isinstance(r, Exception)]
+        for s in dead:
+            room.sockets.discard(s)
+            room.socket_to_user_id.pop(s, None)
+            client_id = room.socket_to_client.pop(s, None)
+            if client_id:
+                count = room.client_counts.get(client_id, 0) - 1
+                if count <= 0:
+                    room.client_counts.pop(client_id, None)
+                else:
+                    room.client_counts[client_id] = count
+
+    def live_rooms(self):
+        """Iterate over (room_id, live_room) pairs for all currently active rooms."""
+        return list(self._rooms.items())
 
     def _mark_dirty(self, room_id: str, room: Room) -> None:
         room.dirty = True

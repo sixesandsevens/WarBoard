@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from .models import WireEvent
+
+logger = logging.getLogger("warhamster.session")
 
 
 def build_session_summary(
@@ -92,23 +95,34 @@ async def broadcast_session_event(
     session_rooms = {str(room.get("room_id") or "") for room in list_game_session_rooms_fn(session_id)}
     if not session_rooms:
         return
-    members_by_username = {
-        str(member.get("username") or ""): str(member.get("role") or "player")
+    # Use user_id as the authoritative identity for membership role lookups.
+    # socket_to_user_id is populated at connect time from the authenticated user record,
+    # so it is immune to client_id / username aliasing drift.
+    members_by_user_id: dict[int, str] = {
+        int(member.get("user_id")): str(member.get("role") or "player")
         for member in list_game_session_members_fn(session_id)
+        if member.get("user_id") is not None
     }
     sockets = []
     message = event.model_dump_json()
-    for room_id, live_room in list(rm._rooms.items()):
+    for room_id, live_room in rm.live_rooms():
         if room_id not in session_rooms:
             continue
-        for ws in list(live_room.sockets):
-            username = str(live_room.socket_to_client.get(ws) or "")
-            role = members_by_username.get(username)
+        for ws, user_id in list(live_room.socket_to_user_id.items()):
+            role = members_by_user_id.get(int(user_id))
             if not role:
                 continue
             if roles is not None and role not in roles:
                 continue
             sockets.append(ws)
+    logger.debug(
+        "session_event_fanout session=%s type=%s role_filter=%s candidates=%d delivering=%d",
+        session_id,
+        event.type,
+        sorted(roles) if roles is not None else "all",
+        sum(len(lr.socket_to_user_id) for _, lr in rm.live_rooms() if _ in session_rooms),
+        len(sockets),
+    )
     if not sockets:
         return
     await asyncio.gather(*(ws.send_text(message) for ws in sockets), return_exceptions=True)

@@ -807,30 +807,39 @@ def _import_zip_into_pack(*, actor_user_id: int, pack_id: int, pack, shared_tags
         thumb_path = UPLOADS_DIR / url_thumb.replace("/uploads/", "", 1)
         original_name = f"{asset_id}{Path(url_original).suffix.lower() or '.bin'}"
         thumb_name = f"{asset_id}{Path(url_thumb).suffix.lower() or '.png'}"
-        (original_dir / original_name).write_bytes(original_path.read_bytes())
-        (thumb_dir / thumb_name).write_bytes(thumb_path.read_bytes())
+        final_original = original_dir / original_name
+        final_thumb = thumb_dir / thumb_name
+        final_original.write_bytes(original_path.read_bytes())
+        final_thumb.write_bytes(thumb_path.read_bytes())
+        # Remove temp upload files regardless of DB outcome — they are single-use.
+        for tmp in (original_path, thumb_path):
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+        # If the DB insert fails, clean up the already-copied pack files so we
+        # don't leave orphaned originals/thumbs in pack storage.
         try:
-            if original_path.exists():
-                original_path.unlink()
-        except OSError:
-            pass
-        try:
-            if thumb_path.exists():
-                thumb_path.unlink()
-        except OSError:
-            pass
-        add_private_pack_asset_record(
-            pack_id=pack_id,
-            asset_id=asset_id,
-            name=str(kwargs.get("name") or "Asset"),
-            folder_path=str(kwargs.get("folder_path") or ""),
-            tags=list(kwargs.get("tags") or []),
-            mime=str(kwargs.get("mime") or ""),
-            width=int(kwargs.get("width") or 0),
-            height=int(kwargs.get("height") or 0),
-            url_original=original_name,
-            url_thumb=thumb_name,
-        )
+            add_private_pack_asset_record(
+                pack_id=pack_id,
+                asset_id=asset_id,
+                name=str(kwargs.get("name") or "Asset"),
+                folder_path=str(kwargs.get("folder_path") or ""),
+                tags=list(kwargs.get("tags") or []),
+                mime=str(kwargs.get("mime") or ""),
+                width=int(kwargs.get("width") or 0),
+                height=int(kwargs.get("height") or 0),
+                url_original=original_name,
+                url_thumb=thumb_name,
+            )
+        except Exception:
+            for orphan in (final_original, final_thumb):
+                try:
+                    orphan.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
 
     return import_asset_zip(
         fileobj=fileobj,
@@ -3425,7 +3434,7 @@ async def ws_room(ws: WebSocket, room_id: str):
     update_user_last_room(user.user_id, room_id)
 
     room = await rm.connect(room_id, ws)
-    rm.attach_client(room, ws, client_id)
+    rm.attach_client(room, ws, client_id, user.user_id)
 
     # Owner automatically becomes GM for this room, otherwise fall back to GM key model.
     gm_claimed = False
@@ -3448,6 +3457,9 @@ async def ws_room(ws: WebSocket, room_id: str):
     if gm_claimed:
         rm._mark_dirty(room_id, room)
 
+    # Bootstrap the connecting socket directly: STATE_SYNC, HELLO, PRESENCE.
+    # Then broadcast join-related updates to *other* sockets only so the new
+    # client never receives a duplicate echo of its own connect messages.
     await ws.send_text(WireEvent(type="STATE_SYNC", payload=room.state.model_dump(exclude={"gm_key_hash"})).model_dump_json())
     await ws.send_text(
         WireEvent(
@@ -3467,10 +3479,10 @@ async def ws_room(ws: WebSocket, room_id: str):
     await ws.send_text(rm.presence_event(room).model_dump_json())
 
     if gm_claimed:
-        await rm.broadcast(room, WireEvent(type="STATE_SYNC", payload=room.state.model_dump(exclude={"gm_key_hash"})))
+        await rm.broadcast_others(room, ws, WireEvent(type="STATE_SYNC", payload=room.state.model_dump(exclude={"gm_key_hash"})))
 
-    await rm.broadcast(room, WireEvent(type="HELLO", payload={"client_id": client_id, "room_id": room_id, "room_name": _room_display_name(room_id)}))
-    await rm.broadcast(room, rm.presence_event(room))
+    await rm.broadcast_others(room, ws, WireEvent(type="HELLO", payload={"client_id": client_id, "room_id": room_id, "room_name": _room_display_name(room_id)}))
+    await rm.broadcast_others(room, ws, rm.presence_event(room))
 
     move_times: deque[float] = deque()
     erase_times: deque[float] = deque()

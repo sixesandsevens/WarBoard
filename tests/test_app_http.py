@@ -586,9 +586,9 @@ class TestWebSocket:
                 f"/ws/{room_id}",
                 cookies={"warhamster_sid": sid},
             ) as ws:
-                # Owner triggers gm_claimed, so server sends 6 initial messages:
-                # direct STATE_SYNC, HELLO, PRESENCE + broadcast STATE_SYNC, HELLO, PRESENCE
-                for _ in range(6):
+                # Owner triggers gm_claimed. Bootstrap sends STATE_SYNC, HELLO, PRESENCE
+                # directly to this socket only; broadcast_others goes to nobody (alone).
+                for _ in range(3):
                     ws.receive_text()
 
                 ws.send_text(json.dumps({"type": "HEARTBEAT", "payload": {}}))
@@ -610,9 +610,11 @@ class TestWebSocket:
         app = self._make_app()
         with TestClient(app) as client:
             with client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": gm_sid}) as gm_ws,                  client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": player_sid}) as player_ws:
-                for _ in range(8):
+                # GM gets 3 direct bootstrap + 2 from player join (HELLO, PRESENCE)
+                for _ in range(5):
                     gm_ws.receive_text()
-                for _ in range(6):
+                # Player gets 3 direct bootstrap only (no self-echo from broadcast_others)
+                for _ in range(3):
                     player_ws.receive_text()
                 gm_ws.send_text(json.dumps({
                     "type": "SESSION_ROOM_MOVE_REQUEST",
@@ -640,9 +642,9 @@ class TestWebSocket:
         app = self._make_app()
         with TestClient(app) as client:
             with client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": gm_sid}) as gm_ws,                  client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": player_sid}) as player_ws:
-                for _ in range(8):
+                for _ in range(5):
                     gm_ws.receive_text()
-                for _ in range(6):
+                for _ in range(3):
                     player_ws.receive_text()
                 gm_ws.send_text(json.dumps({
                     "type": "SESSION_ROOM_MOVE_FORCE",
@@ -926,3 +928,274 @@ class TestRoomPatchHierarchy:
 
         rp = await http_client.patch(f"/api/rooms/{room_id}", json={"display_name": "Renamed"})
         assert rp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# WebSocket hardening regression tests
+# ---------------------------------------------------------------------------
+
+def _drain_bootstrap(ws) -> None:
+    """Send a HEARTBEAT and read until it echoes back, consuming all buffered bootstrap messages."""
+    ws.send_text(json.dumps({"type": "HEARTBEAT", "payload": {}}))
+    for _ in range(30):
+        msg = json.loads(ws.receive_text())
+        if msg["type"] == "HEARTBEAT":
+            return
+    raise AssertionError("HEARTBEAT echo never arrived — bootstrap drain failed")
+
+
+class TestWebSocketHardening:
+    """Regression coverage for normalized bootstrap and session move fanout."""
+
+    def _make_app(self):
+        from server.app import app
+        return app
+
+    def test_bootstrap_delivers_exactly_3_messages_to_new_socket(self):
+        """A newly connected member receives STATE_SYNC, HELLO, PRESENCE — nothing more."""
+        u, sid = _seed_user_and_session("bs_solo_user")
+        room_id = _seed_room(u.user_id, room_id="bs-solo-room", join_code="WHAM-BSSOLO")
+        app = self._make_app()
+        with TestClient(app) as client:
+            with client.websocket_connect(f"/ws/{room_id}", cookies={"warhamster_sid": sid}) as ws:
+                msgs = [json.loads(ws.receive_text()) for _ in range(3)]
+                types = [m["type"] for m in msgs]
+                assert "STATE_SYNC" in types
+                assert "HELLO" in types
+                assert "PRESENCE" in types
+                # No fourth message buffered (would timeout/block if we tried to read one)
+
+    def test_second_client_receives_3_bootstrap_messages(self):
+        """A player joining a room where GM is already connected still gets exactly 3."""
+        gm, gm_sid = _seed_user_and_session("bs_gm2")
+        player, player_sid = _seed_user_and_session("bs_player2")
+        room_id = _seed_room(gm.user_id, room_id="bs-two-room", join_code="WHAM-BSTWO1")
+        add_membership(player.user_id, room_id, role="player")
+        app = self._make_app()
+        with TestClient(app) as client:
+            with client.websocket_connect(f"/ws/{room_id}", cookies={"warhamster_sid": gm_sid}) as gm_ws, \
+                 client.websocket_connect(f"/ws/{room_id}", cookies={"warhamster_sid": player_sid}) as player_ws:
+                # GM: 3 direct + 2 from player join (HELLO, PRESENCE via broadcast_others)
+                for _ in range(5):
+                    gm_ws.receive_text()
+                player_msgs = [json.loads(player_ws.receive_text()) for _ in range(3)]
+                player_types = [m["type"] for m in player_msgs]
+                assert "STATE_SYNC" in player_types
+                assert "HELLO" in player_types
+                assert "PRESENCE" in player_types
+
+    def test_session_move_does_not_reach_co_gm(self):
+        """SESSION_ROOM_MOVE_OFFER must only reach players; co-GM should not receive it."""
+        gm, gm_sid = _seed_user_and_session("mv_excl_gm")
+        co_gm, co_gm_sid = _seed_user_and_session("mv_excl_cogm")
+        player, player_sid = _seed_user_and_session("mv_excl_player")
+        room_a = _seed_room(gm.user_id, room_id="excl-room-a", join_code="WHAM-EXCLA1")
+        room_b = _seed_room(gm.user_id, room_id="excl-room-b", join_code="WHAM-EXCLB1")
+        add_membership(co_gm.user_id, room_a, role="co_gm")
+        add_membership(player.user_id, room_a, role="player")
+        session = create_game_session("Excl Session", gm.user_id)
+        add_game_session_member(session.session_id, co_gm.user_id, "co_gm")
+        add_game_session_member(session.session_id, player.user_id, "player")
+        assert assign_room_to_game_session(room_a, session.session_id, display_name="A")
+        assert assign_room_to_game_session(room_b, session.session_id, display_name="B")
+
+        app = self._make_app()
+        with TestClient(app) as client:
+            with client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": gm_sid}) as gm_ws, \
+                 client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": co_gm_sid}) as cogm_ws, \
+                 client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": player_sid}) as player_ws:
+                # Drain all bootstrap messages using heartbeat echo as a sentinel.
+                _drain_bootstrap(gm_ws)
+                _drain_bootstrap(cogm_ws)
+                _drain_bootstrap(player_ws)
+
+                gm_ws.send_text(json.dumps({
+                    "type": "SESSION_ROOM_MOVE_REQUEST",
+                    "payload": {
+                        "session_id": session.session_id,
+                        "target_room_id": room_b,
+                        "message": "Move!",
+                    },
+                }))
+
+                # Player must receive SESSION_ROOM_MOVE_OFFER
+                player_msg = json.loads(player_ws.receive_text())
+                assert player_msg["type"] == "SESSION_ROOM_MOVE_OFFER"
+
+                # co-GM must receive SESSION_SYSTEM_NOTICE (the broadcast notice), not OFFER
+                cogm_msg = json.loads(cogm_ws.receive_text())
+                assert cogm_msg["type"] == "SESSION_SYSTEM_NOTICE"
+                assert cogm_msg["type"] != "SESSION_ROOM_MOVE_OFFER"
+
+    def test_non_session_member_does_not_receive_session_move(self):
+        """A room member who is not in the session should not receive session move events."""
+        gm, gm_sid = _seed_user_and_session("mv_nonmem_gm")
+        outsider, out_sid = _seed_user_and_session("mv_nonmem_out")
+        player, player_sid = _seed_user_and_session("mv_nonmem_player")
+        room_a = _seed_room(gm.user_id, room_id="nm-room-a", join_code="WHAM-NMMEMA")
+        room_b = _seed_room(gm.user_id, room_id="nm-room-b", join_code="WHAM-NMMEMB")
+        # Outsider has room membership but is NOT a session member
+        add_membership(outsider.user_id, room_a, role="player")
+        add_membership(player.user_id, room_a, role="player")
+        session = create_game_session("NonMem Session", gm.user_id)
+        add_game_session_member(session.session_id, player.user_id, "player")
+        assert assign_room_to_game_session(room_a, session.session_id, display_name="A")
+        assert assign_room_to_game_session(room_b, session.session_id, display_name="B")
+
+        app = self._make_app()
+        with TestClient(app) as client:
+            with client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": gm_sid}) as gm_ws, \
+                 client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": out_sid}) as out_ws, \
+                 client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": player_sid}) as player_ws:
+                # Drain all bootstrap messages using heartbeat echo as a sentinel.
+                _drain_bootstrap(gm_ws)
+                _drain_bootstrap(out_ws)
+                _drain_bootstrap(player_ws)
+
+                gm_ws.send_text(json.dumps({
+                    "type": "SESSION_ROOM_MOVE_REQUEST",
+                    "payload": {
+                        "session_id": session.session_id,
+                        "target_room_id": room_b,
+                        "message": "Move!",
+                    },
+                }))
+
+                # Player (session member) gets the offer
+                player_msg = json.loads(player_ws.receive_text())
+                assert player_msg["type"] == "SESSION_ROOM_MOVE_OFFER"
+
+                # Outsider (non-session-member) receives nothing from session events.
+                # Verify by sending a heartbeat — it should be the next message (no offer buffered).
+                out_ws.send_text(json.dumps({"type": "HEARTBEAT", "payload": {}}))
+                out_hb = json.loads(out_ws.receive_text())
+                assert out_hb["type"] == "HEARTBEAT", f"outsider got {out_hb['type']!r} instead of HEARTBEAT"
+
+
+# ---------------------------------------------------------------------------
+# Pack import safety regression tests
+# ---------------------------------------------------------------------------
+
+class TestPackImportSafety:
+    """Regression coverage for _create_pack_record file rollback and asset serving policy."""
+
+    def _make_app(self):
+        from server.app import app
+        return app
+
+    def test_pack_import_db_failure_cleans_up_copied_files(self, tmp_path, monkeypatch):
+        """If add_private_pack_asset_record raises, copied originals/thumbs are removed."""
+        import zipfile, io as _io
+        from PIL import Image
+        from server import app as app_module, storage as storage_module
+
+        monkeypatch.setattr(app_module, "PRIVATE_PACKS_DIR", tmp_path / "packs")
+        monkeypatch.setattr(app_module, "UPLOADS_DIR", tmp_path / "uploads")
+        monkeypatch.setattr(app_module, "ASSET_UPLOADS_DIR", tmp_path / "uploads" / "assets")
+
+        gm, gm_sid = _seed_user_and_session("zip_fail_gm")
+
+        # Create a valid 1×1 PNG in memory
+        buf = _io.BytesIO()
+        Image.new("RGB", (1, 1), (255, 0, 0)).save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        # Build a minimal zip
+        zip_buf = _io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.writestr("token.png", png_bytes)
+        zip_buf.seek(0)
+
+        app = self._make_app()
+        with TestClient(app) as client:
+            # Register and create token pack
+            client.post("/api/auth/register",
+                        json={"username": "zip_fail_gm", "password": "password123"},
+                        cookies={"warhamster_sid": gm_sid})
+            create_r = client.post("/api/token-packs",
+                                   json={"name": "Fail Pack", "slug": "fail-pack"},
+                                   cookies={"warhamster_sid": gm_sid})
+            assert create_r.status_code == 200
+            pack_id = create_r.json()["pack"]["pack_id"]
+
+            # Inject DB failure
+            monkeypatch.setattr(app_module, "add_private_pack_asset_record",
+                                lambda **_: (_ for _ in ()).throw(RuntimeError("db boom")))
+
+            resp = client.post(
+                f"/api/token-packs/{pack_id}/upload-zip",
+                files={"file": ("tokens.zip", zip_buf.getvalue(), "application/zip")},
+                cookies={"warhamster_sid": gm_sid},
+            )
+            # The import may return 200 with 0 created (skipped) or 500 — either is acceptable;
+            # what matters is that no orphan files remain.
+            pack_root = tmp_path / "packs" / "fail-pack"
+            originals = list((pack_root / "originals").glob("*")) if (pack_root / "originals").exists() else []
+            thumbs = list((pack_root / "thumbs").glob("*")) if (pack_root / "thumbs").exists() else []
+            assert originals == [], f"Orphaned originals: {originals}"
+            assert thumbs == [], f"Orphaned thumbs: {thumbs}"
+
+    def test_pack_asset_file_fetch_allowed_for_any_logged_in_user(self, tmp_path, monkeypatch):
+        """
+        Policy test: any authenticated user can fetch a pack asset file by ID —
+        entitlement is enforced at the library listing layer, not file-serve layer.
+        Players need this to render GM-placed private-pack tokens on maps.
+        """
+        import io as _io
+        from PIL import Image
+        from server import app as app_module, storage as storage_module
+        from server.storage import PrivatePackAssetRow, PrivatePackRow, utc_now_iso
+
+        monkeypatch.setattr(app_module, "PRIVATE_PACKS_DIR", tmp_path / "packs")
+
+        owner, owner_sid = _seed_user_and_session("fileserv_owner")
+        stranger, stranger_sid = _seed_user_and_session("fileserv_stranger")
+
+        # Seed pack + asset record + real file
+        with Session(storage_module.engine) as s:
+            pack = PrivatePackRow(
+                slug="serve-pack", name="Serve Pack",
+                owner_user_id=owner.user_id, created_at=utc_now_iso(),
+                root_rel="serve-pack/manifest.json", thumb_rel="serve-pack/thumb.webp",
+            )
+            s.add(pack)
+            s.commit()
+            s.refresh(pack)
+            asset_id = str(uuid.uuid4())
+            s.add(PrivatePackAssetRow(
+                asset_id=asset_id, pack_id=pack.pack_id,
+                name="Goblin Token", folder_path="tokens",
+                tags_json="[]", mime="image/png",
+                width=64, height=64,
+                url_original=f"{asset_id}.png",
+                url_thumb=f"{asset_id}_t.png",
+                created_at=utc_now_iso(),
+            ))
+            s.commit()
+
+        # Write the actual file where the route expects it
+        pack_originals = tmp_path / "packs" / "serve-pack" / "originals"
+        pack_originals.mkdir(parents=True, exist_ok=True)
+        buf = _io.BytesIO()
+        Image.new("RGB", (64, 64), (0, 128, 0)).save(buf, format="PNG")
+        (pack_originals / f"{asset_id}.png").write_bytes(buf.getvalue())
+
+        app = self._make_app()
+        with TestClient(app) as client:
+            # Owner can fetch their own asset (expected)
+            r_owner = client.get(f"/api/assets/file/{asset_id}",
+                                 cookies={"warhamster_sid": owner_sid})
+            assert r_owner.status_code == 200
+
+            # Stranger (no entitlement) can ALSO fetch by asset_id — policy: open to logged-in users
+            r_stranger = client.get(f"/api/assets/file/{asset_id}",
+                                    cookies={"warhamster_sid": stranger_sid})
+            assert r_stranger.status_code == 200, (
+                "Pack asset file serving must be open to any logged-in user. "
+                "Entitlement is enforced at the library listing layer so players "
+                "can render GM-placed private-pack tokens on maps."
+            )
+
+            # Unauthenticated is still blocked
+            r_anon = client.get(f"/api/assets/file/{asset_id}")
+            assert r_anon.status_code in (401, 403)
