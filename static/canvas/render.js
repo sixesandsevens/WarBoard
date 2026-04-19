@@ -62,8 +62,12 @@ function _getOrderedAssetIds() {
   return ids;
 }
 
+function canDrawImageSource(img) {
+  return !!(img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
+}
+
 function getTonedAssetImage(img) {
-  if (!img || !img.complete || img.naturalWidth <= 0 || img.naturalHeight <= 0) return img;
+  if (!canDrawImageSource(img)) return null;
 
   const tone = worldToneParams();
   const bucket = Math.round(tone.t * 16);
@@ -237,7 +241,7 @@ function drawBackground() {
     return;
   }
 
-  if (state.background_mode === "url" && bgImage) {
+  if (state.background_mode === "url" && canDrawImageSource(bgImage)) {
     const a = worldToScreen(0, 0);
     const b = worldToScreen(bgImage.naturalWidth, bgImage.naturalHeight);
     const w = b.x - a.x;
@@ -1104,8 +1108,9 @@ function drawDragSpawnGhost() {
     ctx.globalAlpha = 0.7;
     if (dragSpawn.url_original || dragSpawn.image_url) {
       const img = tokenImage(dragSpawn);
-      if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        ctx.drawImage(getTonedAssetImage(img), s.x - w / 2, s.y - h / 2, w, h);
+      const tonedImg = getTonedAssetImage(img);
+      if (tonedImg) {
+        ctx.drawImage(tonedImg, s.x - w / 2, s.y - h / 2, w, h);
       } else {
         ctx.fillStyle = "rgba(220,220,220,0.3)";
         ctx.fillRect(s.x - w / 2, s.y - h / 2, w, h);

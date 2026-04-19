@@ -152,6 +152,11 @@ function normalizeTokenPackDetail(raw = {}, requestedPackId = "") {
   return pack;
 }
 
+function isAuthRequiredError(err) {
+  const message = String(err?.message || err || "").toLowerCase();
+  return message.includes("login required") || message.includes("not authenticated") || message.includes("401");
+}
+
 function normalizeAssetSortMode(value, fallback = "newest") {
   const raw = String(value || fallback).trim().toLowerCase();
   if (raw === "recent") return "newest";
@@ -444,6 +449,11 @@ async function loadPack(packId) {
     packState.tokens = tokens;
     renderPackGrid();
   } catch (e) {
+    if (isAuthRequiredError(e)) {
+      packState.tokens = [];
+      packGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">Log in to load token packs.</div>`;
+      return;
+    }
     console.error("Failed to load pack contents", {
       endpoint: "/api/packs/:pack_id",
       packId: normalizedPackId,
@@ -483,6 +493,15 @@ async function refreshPacks() {
     packSelectEl.value = packState.selectedPackId || "";
     await loadPack(packState.selectedPackId);
   } catch (e) {
+    if (isAuthRequiredError(e)) {
+      packState.packs = [];
+      packState.tokens = [];
+      packState.selectedPackId = "";
+      packSelectEl.innerHTML = `<option value="">(log in to load packs)</option>`;
+      packGridEl.innerHTML = `<div style="opacity:.75; grid-column:1/-1;">Log in to browse token packs.</div>`;
+      saveSelectedTokenPackId("");
+      return;
+    }
     console.error("Failed to load token packs", {
       endpoint: "/api/packs",
       sessionId: currentAssetSessionId() || "",

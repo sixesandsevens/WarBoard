@@ -1165,6 +1165,13 @@ function initSessionBindings() {
         log(`Logged in as ${user.username}`);
         refreshSessionModalAuth();
         updateSessionPill();
+        if (typeof refreshPacks === "function") {
+          try {
+            await refreshPacks();
+          } catch (refreshErr) {
+            console.error("refreshPacks after login failed", refreshErr);
+          }
+        }
         await finishCanvasAuthFlow(user, { promptWhenNoRoom: true });
       }
     } catch (e) {
@@ -1182,6 +1189,13 @@ function initSessionBindings() {
         log(`Registered and logged in as ${user.username}`);
         refreshSessionModalAuth();
         updateSessionPill();
+        if (typeof refreshPacks === "function") {
+          try {
+            await refreshPacks();
+          } catch (refreshErr) {
+            console.error("refreshPacks after register failed", refreshErr);
+          }
+        }
         await finishCanvasAuthFlow(user, { promptWhenNoRoom: true });
       }
     } catch (e) {
