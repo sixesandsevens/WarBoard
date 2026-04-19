@@ -1939,6 +1939,11 @@
     for (const [id, edge] of Object.entries(s.interior_edges || {})) applyInteriorEdgeOverrideToState({ id, ...edge });
     state.interior_wall_cuts.clear();
     for (const [id, cut] of Object.entries(s.interior_wall_cuts || {})) state.interior_wall_cuts.set(id, normalizeInteriorWallCutRecord({ id, ...cut }));
+    state.geometry.clear();
+    for (const [id, raw] of Object.entries(s.geometry || {})) {
+      const obj = normalizeAndValidateGeometry({ id, ...raw });
+      if (obj) state.geometry.set(id, obj);
+    }
     state.draw_order = {
       strokes: Array.isArray(s.draw_order?.strokes) ? s.draw_order.strokes.filter((id) => state.strokes.has(id)) : [],
       shapes: Array.isArray(s.draw_order?.shapes) ? s.draw_order.shapes.filter((id) => state.shapes.has(id)) : [],
@@ -1969,6 +1974,7 @@
     if (selectedShapeId && !state.shapes.has(selectedShapeId)) selectedShapeId = null;
     if (selectedAssetId && !state.assets.has(selectedAssetId)) selectedAssetId = null;
     if (selectedInteriorId && !state.interiors.has(selectedInteriorId)) selectedInteriorId = null;
+    if (selectedGeometryId && !state.geometry.has(selectedGeometryId)) selectedGeometryId = null;
     setSelection(selectedIdsArray(), selectedTokenId);
     if (hoveredTokenId && !state.tokens.has(hoveredTokenId)) hoveredTokenId = null;
     if (hoveredInteriorId && !state.interiors.has(hoveredInteriorId)) hoveredInteriorId = null;

@@ -151,6 +151,7 @@ let selectedTokenId = null;
 let selectedAssetId = null;
 let selectedShapeId = null;
 let selectedInteriorId = null;
+let selectedGeometryId = null;
 let currentInteriorContextId = null;
 let currentInteriorEdge = null;
 let currentInteriorWallCutId = null;

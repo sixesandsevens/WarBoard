@@ -29,7 +29,9 @@ function pointAlongEdge(obj, edgeIndex, t) {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
-// Outward-facing normal (perpendicular, unit length, clockwise winding → left-hand normal).
+// Perpendicular unit normal to the edge segment.
+// Direction follows a left-hand rule relative to segment direction;
+// not guaranteed to face outward unless the polygon uses a known winding order.
 function getEdgeNormal(obj, edgeIndex) {
   const a = getEdgeStart(obj, edgeIndex);
   const b = getEdgeEnd(obj, edgeIndex);
@@ -160,6 +162,17 @@ function convertClosedWallPathToRoom(obj) {
   return next;
 }
 
+// ─── Shared Ordering ─────────────────────────────────────────────────────────
+
+// Returns geometry objects sorted by ascending zIndex (render order).
+// Pass { reverse: true } to get descending order for hit-testing (topmost first).
+function getSortedGeometryObjects({ reverse = false } = {}) {
+  const objs = [...state.geometry.values()].filter((obj) => obj.visible !== false);
+  objs.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+  if (reverse) objs.reverse();
+  return objs;
+}
+
 // ─── Hit Testing ─────────────────────────────────────────────────────────────
 
 function _pointInPolygon(px, py, polygon) {
@@ -190,12 +203,13 @@ function geometryContainsPoint(obj, wx, wy) {
   return false;
 }
 
-// Returns the id of the first geometry object at (wx,wy), or null.
+// Returns the id of the topmost visible geometry object at (wx, wy),
+// matching the object the user sees on top (reverse of render order).
 function hitTestGeometryObjects(wx, wy) {
   if (!state.geometry) return null;
-  for (const [id, obj] of state.geometry) {
-    if (obj.visible === false) continue;
-    if (geometryContainsPoint(obj, wx, wy)) return id;
+  const objs = getSortedGeometryObjects({ reverse: true });
+  for (const obj of objs) {
+    if (geometryContainsPoint(obj, wx, wy)) return obj.id;
   }
   return null;
 }

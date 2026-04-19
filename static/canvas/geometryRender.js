@@ -4,10 +4,7 @@
 
 function drawGeometry() {
   if (!state.geometry || !state.geometry.size) return;
-  // Render in zIndex order, ascending
-  const objs = [...state.geometry.values()].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
-  for (const obj of objs) {
-    if (obj.visible === false) continue;
+  for (const obj of getSortedGeometryObjects()) {
     drawGeometryObject(obj);
   }
 }

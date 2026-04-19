@@ -11,18 +11,27 @@ function normalizeGeometryObject(raw) {
   const defaultClosed = kind !== GEOMETRY_KIND.WALL_PATH;
   const closed = typeof raw.closed === "boolean" ? raw.closed : defaultClosed;
 
+  // Compute edge count before normalizing openings so we can validate edgeIndex.
+  const edgeCount = closed ? outer.length : Math.max(0, outer.length - 1);
+
   const openings = Array.isArray(raw.openings)
-    ? raw.openings.map((op) => ({
-        id: String(op.id || makeId()),
-        edgeIndex: Number(op.edgeIndex || 0),
-        t0: clamp(Number(op.t0 || 0), 0, 1),
-        t1: clamp(Number(op.t1 || 0), 0, 1),
-        kind: Object.values(OPENING_KIND).includes(op.kind) ? op.kind : OPENING_KIND.DOOR,
-        assetId: op.assetId || null,
-        swing: op.swing || null,
-        createdBy: String(op.createdBy || ""),
-        createdAt: Number(op.createdAt || Date.now()),
-      }))
+    ? raw.openings
+        .map((op) => {
+          const { t0, t1 } = clampOpeningRange(Number(op.t0 || 0), Number(op.t1 || 0));
+          return {
+            id: String(op.id || makeId()),
+            edgeIndex: Number(op.edgeIndex || 0),
+            t0,
+            t1,
+            kind: Object.values(OPENING_KIND).includes(op.kind) ? op.kind : OPENING_KIND.DOOR,
+            assetId: op.assetId || null,
+            swing: op.swing || null,
+            createdBy: String(op.createdBy || ""),
+            createdAt: Number(op.createdAt || Date.now()),
+          };
+        })
+        .filter((op) => op.edgeIndex >= 0 && op.edgeIndex < edgeCount)
+        .filter((op) => op.t1 > op.t0)
     : undefined;
 
   const edges = Array.isArray(raw.edges)
@@ -57,21 +66,34 @@ function normalizeGeometryObject(raw) {
   };
 }
 
+// Normalize, validate, and compute bounds in one step.
+// Returns a ready-to-store object or null if validation fails.
+// Use this at every insertion point so invalid geometry never enters state.
+function normalizeAndValidateGeometry(raw) {
+  const obj = normalizeGeometryObject(raw);
+  if (!obj) return null;
+  const { valid, errors } = validateGeometryObject(obj);
+  if (!valid) {
+    console.warn("[geometry] Invalid object rejected:", errors, raw);
+    return null;
+  }
+  obj.bounds = computeGeometryBounds(obj);
+  return obj;
+}
+
 // ─── Mutation Application ─────────────────────────────────────────────────────
 
 // Apply a geometry mutation transaction: { removed: [...], added: [...] }
 // removed entries may be full objects or bare id strings.
+// Incoming timestamps from authoritative payloads are preserved.
 function applyGeometryMutation(mutation) {
   for (const entry of (mutation.removed || [])) {
     const id = typeof entry === "string" ? entry : entry.id;
     if (id) state.geometry.delete(id);
   }
   for (const raw of (mutation.added || [])) {
-    const obj = normalizeGeometryObject(raw);
-    if (obj) {
-      obj.bounds = computeGeometryBounds(obj);
-      state.geometry.set(obj.id, obj);
-    }
+    const obj = normalizeAndValidateGeometry(raw);
+    if (obj) state.geometry.set(obj.id, obj);
   }
   requestRender();
 }
@@ -79,22 +101,23 @@ function applyGeometryMutation(mutation) {
 // ─── Convenience Helpers ──────────────────────────────────────────────────────
 
 function geometryAdd(raw) {
-  const obj = normalizeGeometryObject(raw);
+  const obj = normalizeAndValidateGeometry(raw);
   if (!obj) return null;
-  obj.bounds = computeGeometryBounds(obj);
   state.geometry.set(obj.id, obj);
   requestRender();
   return obj;
 }
 
+// Local edit: always refreshes updatedAt so the object is clearly newer than
+// any authoritative copy it was derived from.
 function geometryUpdate(id, changes) {
   const existing = state.geometry.get(id);
   if (!existing) return;
-  const merged = Object.assign({}, existing, changes, { id });
-  const updated = normalizeGeometryObject(merged);
-  if (updated) {
-    updated.bounds = computeGeometryBounds(updated);
-    state.geometry.set(id, updated);
+  // Inject a fresh updatedAt so local edits are always marked newer.
+  const merged = Object.assign({}, existing, changes, { id, updatedAt: Date.now() });
+  const obj = normalizeAndValidateGeometry(merged);
+  if (obj) {
+    state.geometry.set(id, obj);
     requestRender();
   }
 }
@@ -103,12 +126,12 @@ function geometryDelete(id) {
   if (state.geometry.delete(id)) requestRender();
 }
 
-// Apply a raw geometry object received from STATE_SYNC or a GEOMETRY_* event.
+// Apply a raw geometry object received from a GEOMETRY_* wire event.
+// Preserves authoritative timestamps from the payload.
 function applyGeometryEvent(type, payload) {
   if (type === "GEOMETRY_ADD" || type === "GEOMETRY_UPDATE") {
-    const obj = normalizeGeometryObject(payload);
+    const obj = normalizeAndValidateGeometry(payload);
     if (obj) {
-      obj.bounds = computeGeometryBounds(obj);
       state.geometry.set(obj.id, obj);
       requestRender();
     }
