@@ -1809,6 +1809,10 @@ async def create_token_pack_api(req: Request):
     return {"ok": True, "pack": _pack_public_payload(pack)}
 
 
+# /api/packs is the authoritative canvas-facing route. It merges the /api/token-packs
+# data with any legacy file-manifest packs so canvas consumers have one stable endpoint.
+# /api/token-packs is the management API used by the app UI for listing and mutating
+# user packs; it should NOT be used directly by canvas consumers.
 @app.get("/api/packs")
 def list_packs_api(req: Request, session_id: str = ""):
     payload = list_token_packs_api(req, session_id=session_id)
@@ -2197,6 +2201,45 @@ def get_pack_thumb_direct(pack_slug: str, filename: str, req: Request):
     )
 
 
+# ─── Upload helpers ───────────────────────────────────────────────────────────
+# Shared validation logic used by every file-upload route below.
+
+async def _read_and_validate_upload(file: UploadFile, max_bytes: int) -> bytes:
+    data = await file.read(max_bytes + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Asset too large (max {max_bytes // (1024 * 1024)}MB)")
+    return data
+
+
+def _require_zip_filename(file: UploadFile) -> None:
+    if not str(file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Expected a .zip file")
+
+
+async def _stream_upload_zip(file: UploadFile, max_bytes: int):
+    """Stream an uploaded zip into a seekable TemporaryFile. Caller must close it."""
+    tmp = tempfile.TemporaryFile()
+    bytes_written = 0
+    try:
+        while True:
+            chunk = await file.read(65536)
+            if not chunk:
+                break
+            bytes_written += len(chunk)
+            if bytes_written > max_bytes:
+                raise HTTPException(status_code=413, detail=f"ZIP too large (max {max_bytes // (1024 * 1024)}MB)")
+            tmp.write(chunk)
+        if bytes_written == 0:
+            raise HTTPException(status_code=400, detail="Empty upload")
+        tmp.seek(0)
+        return tmp
+    except Exception:
+        tmp.close()
+        raise
+
+
 if HAS_MULTIPART:
     @app.post("/api/assets/upload")
     async def upload_asset_api(
@@ -2209,11 +2252,7 @@ if HAS_MULTIPART:
         if user.user_id is None:
             raise HTTPException(status_code=500, detail="Invalid user record")
         ext = background_upload_ext(file)
-        data = await file.read(MAX_ASSET_UPLOAD_BYTES + 1)
-        if not data:
-            raise HTTPException(status_code=400, detail="Empty upload")
-        if len(data) > MAX_ASSET_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="Asset too large (max 20MB)")
+        data = await _read_and_validate_upload(file, MAX_ASSET_UPLOAD_BYTES)
         width, height, thumb_bytes, thumb_ext = asset_image_meta_and_thumb(data)
         aid = uuid.uuid4().hex
         url_path, thumb_url_path = save_asset_upload(
@@ -2261,39 +2300,27 @@ if HAS_MULTIPART:
         user = _require_user(req)
         if user.user_id is None:
             raise HTTPException(status_code=500, detail="Invalid user record")
-        fname = str(file.filename or "").lower()
-        if not fname.endswith(".zip"):
-            raise HTTPException(status_code=400, detail="Expected a .zip file")
+        _require_zip_filename(file)
         shared_tags = [t.strip() for t in tags.split(",") if t.strip()][:20]
+        tmp = await _stream_upload_zip(file, MAX_ZIP_UPLOAD_BYTES)
         try:
-            with tempfile.TemporaryFile() as tmp:
-                bytes_written = 0
-                while True:
-                    chunk = await file.read(65536)
-                    if not chunk:
-                        break
-                    bytes_written += len(chunk)
-                    if bytes_written > MAX_ZIP_UPLOAD_BYTES:
-                        raise HTTPException(status_code=413, detail=f"ZIP too large (max {MAX_ZIP_UPLOAD_BYTES // (1024 * 1024)}MB)")
-                    tmp.write(chunk)
-                if bytes_written == 0:
-                    raise HTTPException(status_code=400, detail="Empty upload")
-                tmp.seek(0)
-                created, skipped = import_asset_zip(
-                    fileobj=tmp,
-                    user_id=user.user_id,
-                    shared_tags=shared_tags,
-                    uploads_dir=UPLOADS_DIR,
-                    asset_uploads_dir=ASSET_UPLOADS_DIR,
-                    max_asset_upload_bytes=MAX_ASSET_UPLOAD_BYTES,
-                    max_zip_asset_files=MAX_ZIP_ASSET_FILES,
-                    max_zip_total_uncompressed_bytes=MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
-                    create_asset_record_fn=create_asset_record,
-                )
+            created, skipped = import_asset_zip(
+                fileobj=tmp,
+                user_id=user.user_id,
+                shared_tags=shared_tags,
+                uploads_dir=UPLOADS_DIR,
+                asset_uploads_dir=ASSET_UPLOADS_DIR,
+                max_asset_upload_bytes=MAX_ASSET_UPLOAD_BYTES,
+                max_zip_asset_files=MAX_ZIP_ASSET_FILES,
+                max_zip_total_uncompressed_bytes=MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
+                create_asset_record_fn=create_asset_record,
+            )
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid zip: {e}") from e
+        finally:
+            tmp.close()
         await file.close()
         if not created:
             raise HTTPException(status_code=400, detail="No supported image files found in zip")
@@ -2318,11 +2345,7 @@ if HAS_MULTIPART:
             raise HTTPException(status_code=500, detail="Invalid user record")
         pack = _require_pack_upload_access(actor, pack_id, content_type="asset_pack", official_only=True)
         ext = background_upload_ext(file)
-        data = await file.read(MAX_ASSET_UPLOAD_BYTES + 1)
-        if not data:
-            raise HTTPException(status_code=400, detail="Empty upload")
-        if len(data) > MAX_ASSET_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="Asset too large (max 20MB)")
+        data = await _read_and_validate_upload(file, MAX_ASSET_UPLOAD_BYTES)
         width, height, thumb_bytes, thumb_ext = asset_image_meta_and_thumb(data)
         asset_id = uuid.uuid4().hex
         original_name, thumb_name = _save_pack_asset_upload(
@@ -2361,35 +2384,23 @@ if HAS_MULTIPART:
         if actor.user_id is None:
             raise HTTPException(status_code=500, detail="Invalid user record")
         pack = _require_pack_upload_access(actor, pack_id, content_type="asset_pack", official_only=True)
-        fname = str(file.filename or "").lower()
-        if not fname.endswith(".zip"):
-            raise HTTPException(status_code=400, detail="Expected a .zip file")
+        _require_zip_filename(file)
         shared_tags = [t.strip() for t in tags.split(",") if t.strip()][:20]
+        tmp = await _stream_upload_zip(file, MAX_ZIP_UPLOAD_BYTES)
         try:
-            with tempfile.TemporaryFile() as tmp:
-                bytes_written = 0
-                while True:
-                    chunk = await file.read(65536)
-                    if not chunk:
-                        break
-                    bytes_written += len(chunk)
-                    if bytes_written > MAX_ZIP_UPLOAD_BYTES:
-                        raise HTTPException(status_code=413, detail=f"ZIP too large (max {MAX_ZIP_UPLOAD_BYTES // (1024 * 1024)}MB)")
-                    tmp.write(chunk)
-                if bytes_written == 0:
-                    raise HTTPException(status_code=400, detail="Empty upload")
-                tmp.seek(0)
-                created, skipped = _import_zip_into_pack(
-                    actor_user_id=actor.user_id,
-                    pack_id=pack_id,
-                    pack=pack,
-                    shared_tags=shared_tags,
-                    fileobj=tmp,
-                )
+            created, skipped = _import_zip_into_pack(
+                actor_user_id=actor.user_id,
+                pack_id=pack_id,
+                pack=pack,
+                shared_tags=shared_tags,
+                fileobj=tmp,
+            )
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid zip: {e}") from e
+        finally:
+            tmp.close()
         await file.close()
         if not created:
             raise HTTPException(status_code=400, detail="No supported image files found in zip")
@@ -2409,11 +2420,7 @@ if HAS_MULTIPART:
             raise HTTPException(status_code=500, detail="Invalid user record")
         pack = _require_pack_upload_access(actor, pack_id, content_type="token_pack")
         ext = background_upload_ext(file)
-        data = await file.read(MAX_ASSET_UPLOAD_BYTES + 1)
-        if not data:
-            raise HTTPException(status_code=400, detail="Empty upload")
-        if len(data) > MAX_ASSET_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="Asset too large (max 20MB)")
+        data = await _read_and_validate_upload(file, MAX_ASSET_UPLOAD_BYTES)
         width, height, thumb_bytes, thumb_ext = asset_image_meta_and_thumb(data)
         asset_id = uuid.uuid4().hex
         original_name, thumb_name = _save_pack_asset_upload(
@@ -2452,35 +2459,23 @@ if HAS_MULTIPART:
         if actor.user_id is None:
             raise HTTPException(status_code=500, detail="Invalid user record")
         pack = _require_pack_upload_access(actor, pack_id, content_type="token_pack")
-        fname = str(file.filename or "").lower()
-        if not fname.endswith(".zip"):
-            raise HTTPException(status_code=400, detail="Expected a .zip file")
+        _require_zip_filename(file)
         shared_tags = [t.strip() for t in tags.split(",") if t.strip()][:20]
+        tmp = await _stream_upload_zip(file, MAX_ZIP_UPLOAD_BYTES)
         try:
-            with tempfile.TemporaryFile() as tmp:
-                bytes_written = 0
-                while True:
-                    chunk = await file.read(65536)
-                    if not chunk:
-                        break
-                    bytes_written += len(chunk)
-                    if bytes_written > MAX_ZIP_UPLOAD_BYTES:
-                        raise HTTPException(status_code=413, detail=f"ZIP too large (max {MAX_ZIP_UPLOAD_BYTES // (1024 * 1024)}MB)")
-                    tmp.write(chunk)
-                if bytes_written == 0:
-                    raise HTTPException(status_code=400, detail="Empty upload")
-                tmp.seek(0)
-                created, skipped = _import_zip_into_pack(
-                    actor_user_id=actor.user_id,
-                    pack_id=pack_id,
-                    pack=pack,
-                    shared_tags=shared_tags,
-                    fileobj=tmp,
-                )
+            created, skipped = _import_zip_into_pack(
+                actor_user_id=actor.user_id,
+                pack_id=pack_id,
+                pack=pack,
+                shared_tags=shared_tags,
+                fileobj=tmp,
+            )
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid zip: {e}") from e
+        finally:
+            tmp.close()
         await file.close()
         if not created:
             raise HTTPException(status_code=400, detail="No supported image files found in zip")

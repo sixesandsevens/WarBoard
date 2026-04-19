@@ -1414,7 +1414,7 @@
             </div>
           </div>
           <div class="list-card">
-            <div class="list-head">Session Shared</div>
+            <div class="list-head">Shared via Session</div>
             <div class="list-body">
               ${locked ? `<div class="empty-state">Available again after your password is updated.</div>` : sessionSharedPacks.length ? sessionSharedPacks.map((pack) => `
                 <div class="list-row">
@@ -1424,7 +1424,7 @@
                   </div>
                   <div class="badge-row">${packContentBadge(pack.content_type)}${packAccessBadge(pack.access_source)}</div>
                 </div>
-              `).join('') : `<div class="empty-state">No session-shared packs in this view.</div>`}
+              `).join('') : `<div class="empty-state">No packs shared via session yet.</div>`}
             </div>
           </div>
         </div>
@@ -1498,15 +1498,15 @@
           </div>
           <div class="badge-row">
             ${roleBadge(room.actor_room_role || 'viewer')}
-            ${room.member_management_mode === 'session_inherited' ? `<span class="inline-badge warn">session-backed</span>` : `<span class="inline-badge good">direct members</span>`}
+            ${room.member_management_mode === 'session_inherited' ? `<span class="inline-badge warn">Session-backed</span>` : `<span class="inline-badge good">Standalone</span>`}
           </div>
-          ${room.member_management_mode === 'session_inherited' ? `<div class="hint" style="margin-top:8px;">This room belongs to a session. Ownership transfer is available, but member removal stays managed by session membership for now.</div>` : ''}
+          ${room.member_management_mode === 'session_inherited' ? `<div class="hint" style="margin-top:8px;">This room's membership is managed by its parent session. Use the Session view to add or remove members.</div>` : ''}
           <div class="detail-actions">
             <button id="closeRoomGovernanceBtn" class="btn-ghost btn-sm" type="button">Back to Lobby</button>
           </div>
         </div>
         <div class="list-card">
-          <div class="list-head">Members</div>
+          <div class="list-head">Room Members</div>
           <div class="list-body">
             ${members.length ? members.map((member) => `
               <div class="list-row">
@@ -1695,7 +1695,7 @@
                   </div>
                 <div class="detail-actions" style="margin-top:0;">
                   ${packContentBadge(p.content_type)}
-                  <span class="inline-badge">Shared to session</span>
+                  <span class="inline-badge">Shared via Session</span>
                   ${canManagePacks ? `<button class="btn-danger btn-sm" type="button" data-sess-revoke-pack="${escapeHtml(String(p.pack_id))}" data-sess-revoke-packname="${escapeHtml(p.name || p.slug || '')}">Revoke</button>` : ''}
                 </div>
               </div>

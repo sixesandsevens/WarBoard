@@ -461,8 +461,8 @@ async function loadPack(packId) {
       error: e,
     });
     packState.tokens = [];
-    packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Pack load failed</div>`;
-    toast("Failed to load pack contents.");
+    packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Couldn't load this pack.</div>`;
+    toast("Couldn't load this token pack.");
     log(`PACK LOAD ERROR: ${e.message || e}`);
   }
 }
@@ -511,8 +511,8 @@ async function refreshPacks() {
     packState.tokens = [];
     packState.selectedPackId = "";
     packSelectEl.innerHTML = `<option value="">(packs unavailable)</option>`;
-    packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Packs load failed</div>`;
-    toast("Failed to load token packs.");
+    packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Couldn't load token packs.</div>`;
+    toast("Couldn't load token packs.");
     saveSelectedTokenPackId("");
     log(`PACKS ERROR: ${e.message || e}`);
   }
