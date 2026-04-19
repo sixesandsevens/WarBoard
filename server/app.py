@@ -263,6 +263,42 @@ def _pack_public_payload(pack) -> dict:
     }
 
 
+def _token_pack_browser_payload(pack: dict) -> dict:
+    item = dict(pack or {})
+    item["pack_backend"] = "db"
+    return item
+
+
+def _legacy_manifest_pack_summary(manifest: dict) -> dict:
+    pack_id = str(manifest.get("pack_id") or "").strip()
+    return {
+        "pack_id": pack_id,
+        "slug": pack_id,
+        "name": str(manifest.get("name") or pack_id or "Legacy Pack"),
+        "description": str(manifest.get("description") or ""),
+        "author": str(manifest.get("author") or ""),
+        "license": str(manifest.get("license") or ""),
+        "version": str(manifest.get("version") or ""),
+        "token_count": len(manifest.get("tokens") or []),
+        "content_type": "token_pack",
+        "pack_scope": "official",
+        "pack_backend": "manifest",
+        "access_source": "official",
+        "access_sources": ["official"],
+        "globally_visible": True,
+        "archived": False,
+        "owner_user_id": None,
+        "owner_username": "",
+    }
+
+
+def _legacy_manifest_pack_detail_payload(manifest: dict) -> dict:
+    return {
+        **_legacy_manifest_pack_summary(manifest),
+        "tokens": list(manifest.get("tokens") or []),
+    }
+
+
 def _utc_now_text() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -1629,17 +1665,23 @@ def admin_get_official_import_job_api(job_id: str, req: Request):
 def list_token_packs_api(req: Request, session_id: str = ""):
     user = _require_user(req)
     if user.user_id is None:
+        logger.error("token pack list failed: invalid user record")
         raise HTTPException(status_code=500, detail="Invalid user record")
     current_session_id = str(session_id or "").strip() or None
     if current_session_id and not get_game_session_role(current_session_id, user.user_id):
+        logger.warning(
+            "token pack list denied: user_id=%s session_id=%s reason=not_session_member",
+            user.user_id,
+            current_session_id,
+        )
         raise HTTPException(status_code=403, detail="Not a member of this session")
     packs = list_token_packs_for_user(user.user_id, session_id=current_session_id)
     return {
         "packs": [
-            {
+            _token_pack_browser_payload({
                 **pack,
                 "token_count": count_private_pack_asset_rows(int(pack.get("pack_id") or 0)),
-            }
+            })
             for pack in packs
         ]
     }
@@ -1649,14 +1691,27 @@ def list_token_packs_api(req: Request, session_id: str = ""):
 def get_token_pack_api(pack_id: int, req: Request, session_id: str = ""):
     user = _require_user(req)
     if user.user_id is None:
+        logger.error("token pack load failed: invalid user record pack_id=%s", pack_id)
         raise HTTPException(status_code=500, detail="Invalid user record")
     current_session_id = str(session_id or "").strip() or None
     if current_session_id and not get_game_session_role(current_session_id, user.user_id):
+        logger.warning(
+            "token pack load denied: user_id=%s pack_id=%s session_id=%s reason=not_session_member",
+            user.user_id,
+            pack_id,
+            current_session_id,
+        )
         raise HTTPException(status_code=403, detail="Not a member of this session")
     pack = get_token_pack_for_user(user.user_id, pack_id, session_id=current_session_id)
     if not pack:
+        logger.warning(
+            "token pack load missing: user_id=%s pack_id=%s session_id=%s",
+            user.user_id,
+            pack_id,
+            current_session_id or "",
+        )
         raise HTTPException(status_code=404, detail="Token pack not found")
-    return pack
+    return _token_pack_browser_payload(pack)
 
 
 @app.post("/api/token-packs")
@@ -1708,23 +1763,14 @@ def list_packs_api(req: Request, session_id: str = ""):
                 continue
             try:
                 manifest = _load_pack_manifest(entry.name)
-            except HTTPException:
+            except HTTPException as e:
+                logger.warning(
+                    "legacy pack manifest skipped: pack_id=%s reason=%s",
+                    entry.name,
+                    getattr(e, "detail", str(e)),
+                )
                 continue
-            packs.append(
-                {
-                    "pack_id": manifest["pack_id"],
-                    "name": str(manifest.get("name") or manifest["pack_id"]),
-                    "author": str(manifest.get("author") or ""),
-                    "license": str(manifest.get("license") or ""),
-                    "version": str(manifest.get("version") or ""),
-                    "token_count": len(manifest.get("tokens") or []),
-                    "content_type": "token_pack",
-                    "pack_scope": "official",
-                    "access_source": "official",
-                    "access_sources": ["official"],
-                    "globally_visible": True,
-                }
-            )
+            packs.append(_legacy_manifest_pack_summary(manifest))
     packs.sort(key=lambda item: (str(item.get("name") or "").lower(), str(item.get("pack_id") or "")))
     return {"packs": packs}
 
@@ -1734,12 +1780,20 @@ def get_pack_api(pack_id: str, req: Request, session_id: str = ""):
     try:
         numeric_pack_id = int(pack_id)
     except ValueError:
-        manifest_path = _pack_manifest_path(pack_id)
+        try:
+            manifest_path = _pack_manifest_path(pack_id)
+        except HTTPException as e:
+            logger.warning(
+                "legacy pack load failed: pack_id=%s reason=%s",
+                pack_id,
+                getattr(e, "detail", str(e)),
+            )
+            raise
         etag = _manifest_etag(manifest_path)
         if req.headers.get("if-none-match") == etag:
             return Response(status_code=304, headers={**_pack_cache_headers(), "ETag": etag})
         manifest = _load_pack_manifest(pack_id)
-        return JSONResponse(manifest, headers={**_pack_cache_headers(), "ETag": etag})
+        return JSONResponse(_legacy_manifest_pack_detail_payload(manifest), headers={**_pack_cache_headers(), "ETag": etag})
     return get_token_pack_api(numeric_pack_id, req, session_id=session_id)
 
 

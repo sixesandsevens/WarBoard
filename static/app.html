@@ -1250,15 +1250,31 @@
     let uploads = [];
     let packs = [];
     let tokenPacks = [];
+    let accountLoadNotice = '';
     if(!locked){
-      const [uploadData, packData, tokenPackData] = await Promise.all([
+      const [uploadResult, packResult, tokenPackResult] = await Promise.allSettled([
         api('/api/assets?pack=upload&lite=1&limit=8'),
         api('/api/private-packs'),
         api('/api/token-packs'),
       ]);
-      uploads = Array.isArray(uploadData.assets) ? uploadData.assets : [];
-      packs = Array.isArray(packData.packs) ? packData.packs : [];
-      tokenPacks = Array.isArray(tokenPackData.packs) ? tokenPackData.packs : [];
+      if(uploadResult.status === 'fulfilled'){
+        uploads = Array.isArray(uploadResult.value.assets) ? uploadResult.value.assets : [];
+      }else{
+        console.error('Failed to load account uploads', {endpoint:'/api/assets?pack=upload&lite=1&limit=8', error: uploadResult.reason});
+        accountLoadNotice = accountLoadNotice || 'Some library data could not be loaded.';
+      }
+      if(packResult.status === 'fulfilled'){
+        packs = Array.isArray(packResult.value.packs) ? packResult.value.packs : [];
+      }else{
+        console.error('Failed to load private packs', {endpoint:'/api/private-packs', error: packResult.reason});
+        accountLoadNotice = accountLoadNotice || 'Some library data could not be loaded.';
+      }
+      if(tokenPackResult.status === 'fulfilled'){
+        tokenPacks = Array.isArray(tokenPackResult.value.packs) ? tokenPackResult.value.packs : [];
+      }else{
+        console.error('Failed to load token packs', {endpoint:'/api/token-packs', error: tokenPackResult.reason});
+        accountLoadNotice = accountLoadNotice || 'Some library data could not be loaded.';
+      }
     }
     const sessions = Array.isArray(sessionData.sessions) ? sessionData.sessions : [];
     const ownedPacks = packs.filter((pack) => Number(pack.owner_user_id || 0) === Number(me.user_id || 0) && String(pack.content_type || 'asset_pack') === 'asset_pack');
@@ -1269,6 +1285,7 @@
 
     accountPanel.innerHTML = `
       ${me.must_change_password ? `<div class="banner bad">Your account requires a password change before normal access continues. Lobby and admin tools stay locked until this is completed.</div>` : ''}
+      ${accountLoadNotice ? `<div class="banner warn">${escapeHtml(accountLoadNotice)}</div>` : ''}
       <div class="panel-grid">
         <div class="card">
           <div class="card-label">Profile</div>

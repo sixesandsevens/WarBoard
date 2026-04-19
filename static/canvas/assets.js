@@ -12,7 +12,7 @@
 
 const packState = {
   packs: [],
-  selectedPackId: "",
+  selectedPackId: loadSelectedTokenPackId(),
   tokens: [],
   search: "",
 };
@@ -23,6 +23,7 @@ const ASSET_FILTER_PRESET_KEY = "warhamster:v1:asset_filter_preset";
 const ASSET_DEBUG_NET_KEY = "warhamster:v1:asset_debug_net";
 const ASSET_SAVED_SETS_KEY = "warhamster:v1:asset_saved_sets";
 const ASSET_SCOPE_KEY = "warhamster:v1:asset_scope";
+const TOKEN_PACK_SELECTED_KEY = "warhamster:v1:selected_token_pack";
 
 function loadAssetRecentUsage() {
   try {
@@ -102,6 +103,53 @@ function saveAssetScope(value) {
   try {
     localStorage.setItem(ASSET_SCOPE_KEY, String(value || "all"));
   } catch (_) {}
+}
+
+function normalizeUiPackId(value) {
+  return String(value ?? "").trim();
+}
+
+function loadSelectedTokenPackId() {
+  try {
+    return normalizeUiPackId(localStorage.getItem(TOKEN_PACK_SELECTED_KEY) || "");
+  } catch (_) {
+    return "";
+  }
+}
+
+function saveSelectedTokenPackId(value) {
+  try {
+    const normalized = normalizeUiPackId(value);
+    if (normalized) localStorage.setItem(TOKEN_PACK_SELECTED_KEY, normalized);
+    else localStorage.removeItem(TOKEN_PACK_SELECTED_KEY);
+  } catch (_) {}
+}
+
+function normalizeTokenPackSummary(raw = {}) {
+  const packId = normalizeUiPackId(raw?.pack_id || raw?.slug || "");
+  const contentType = String(raw?.content_type || "token_pack").trim() || "token_pack";
+  const backend = String(raw?.pack_backend || (Number.isFinite(Number(packId)) ? "db" : "manifest")).trim() || "unknown";
+  return {
+    ...raw,
+    pack_id: packId,
+    name: String(raw?.name || packId || "Pack").trim() || "Pack",
+    slug: String(raw?.slug || packId || "").trim(),
+    content_type: contentType,
+    pack_backend: backend,
+    access_source: String(raw?.access_source || "").trim(),
+    access_sources: Array.isArray(raw?.access_sources) ? raw.access_sources.map((item) => String(item || "").trim()).filter(Boolean) : [],
+    token_count: Math.max(0, Number(raw?.token_count || 0) || 0),
+    pack_scope: String(raw?.pack_scope || "personal").trim() || "personal",
+    owner_username: String(raw?.owner_username || "").trim(),
+  };
+}
+
+function normalizeTokenPackDetail(raw = {}, requestedPackId = "") {
+  const pack = normalizeTokenPackSummary(raw);
+  const fallbackPackId = normalizeUiPackId(requestedPackId);
+  if (!pack.pack_id && fallbackPackId) pack.pack_id = fallbackPackId;
+  pack.tokens = Array.isArray(raw?.tokens) ? raw.tokens : [];
+  return pack;
 }
 
 function normalizeAssetSortMode(value, fallback = "newest") {
@@ -373,7 +421,10 @@ function renderPackGrid() {
 }
 
 async function loadPack(packId) {
-  if (!packId) {
+  const normalizedPackId = normalizeUiPackId(packId);
+  if (!normalizedPackId) {
+    packState.selectedPackId = "";
+    saveSelectedTokenPackId("");
     packState.tokens = [];
     renderPackGrid();
     return;
@@ -381,17 +432,27 @@ async function loadPack(packId) {
   try {
     const sessionId = currentAssetSessionId();
     const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
-    const manifest = await apiGet(`/api/packs/${encodeURIComponent(packId)}${qs}`);
+    const payload = await apiGet(`/api/packs/${encodeURIComponent(normalizedPackId)}${qs}`);
+    const manifest = normalizeTokenPackDetail(payload, normalizedPackId);
     const tokens = [];
     for (const token of (manifest.tokens || [])) {
-      const normalized = sanitizePackToken(token, packId);
+      const normalized = sanitizePackToken(token, manifest.pack_id || normalizedPackId);
       if (normalized) tokens.push(normalized);
     }
+    packState.selectedPackId = manifest.pack_id || normalizedPackId;
+    saveSelectedTokenPackId(packState.selectedPackId);
     packState.tokens = tokens;
     renderPackGrid();
   } catch (e) {
+    console.error("Failed to load pack contents", {
+      endpoint: "/api/packs/:pack_id",
+      packId: normalizedPackId,
+      sessionId: currentAssetSessionId() || "",
+      error: e,
+    });
     packState.tokens = [];
     packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Pack load failed</div>`;
+    toast("Failed to load pack contents.");
     log(`PACK LOAD ERROR: ${e.message || e}`);
   }
 }
@@ -401,12 +462,18 @@ async function refreshPacks() {
     const sessionId = currentAssetSessionId();
     const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
     const data = await apiGet(`/api/packs${qs}`);
-    const packs = Array.isArray(data.packs) ? data.packs : [];
+    const packs = (Array.isArray(data.packs) ? data.packs : [])
+      .map((pack) => normalizeTokenPackSummary(pack))
+      .filter((pack) => !!pack.pack_id);
     packState.packs = packs;
-    const existing = new Set(packs.map((p) => p.pack_id));
-    if (!existing.has(packState.selectedPackId)) {
+    const preferredPackId = normalizeUiPackId(packState.selectedPackId || loadSelectedTokenPackId());
+    const existing = new Set(packs.map((p) => normalizeUiPackId(p.pack_id)));
+    if (preferredPackId && existing.has(preferredPackId)) {
+      packState.selectedPackId = preferredPackId;
+    } else {
       packState.selectedPackId = packs[0]?.pack_id || "";
     }
+    saveSelectedTokenPackId(packState.selectedPackId);
     packSelectEl.innerHTML = packs.map((p) => {
       const typeLabel = String(p?.pack_scope || "") === "official" ? "Official" : assetPackAccessLabel(p?.access_source || "");
       return (
@@ -416,10 +483,18 @@ async function refreshPacks() {
     packSelectEl.value = packState.selectedPackId || "";
     await loadPack(packState.selectedPackId);
   } catch (e) {
+    console.error("Failed to load token packs", {
+      endpoint: "/api/packs",
+      sessionId: currentAssetSessionId() || "",
+      error: e,
+    });
     packState.packs = [];
     packState.tokens = [];
+    packState.selectedPackId = "";
     packSelectEl.innerHTML = `<option value="">(packs unavailable)</option>`;
     packGridEl.innerHTML = `<div style="color:#ffb3b3; grid-column:1/-1;">Packs load failed</div>`;
+    toast("Failed to load token packs.");
+    saveSelectedTokenPackId("");
     log(`PACKS ERROR: ${e.message || e}`);
   }
 }
@@ -2308,7 +2383,8 @@ function initAssetLibBindings() {
   renderAssetMode();
   renderAssetAdvancedFilters();
   if (packSelectEl) packSelectEl.addEventListener("change", async () => {
-    packState.selectedPackId = packSelectEl.value;
+    packState.selectedPackId = normalizeUiPackId(packSelectEl.value);
+    saveSelectedTokenPackId(packState.selectedPackId);
     await loadPack(packState.selectedPackId);
   });
   if (packSearchEl) packSearchEl.addEventListener("input", () => {
