@@ -57,7 +57,7 @@ async def apply_as_co_gm(rm, room, room_id, event_type, **payload):
 # ---------------------------------------------------------------------------
 
 def test_max_stroke_points_value():
-    assert MAX_STROKE_POINTS == 10_000
+    assert MAX_STROKE_POINTS == 25_000
 
 
 def test_max_canvas_coord_value():

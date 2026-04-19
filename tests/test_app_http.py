@@ -318,25 +318,27 @@ class TestGameplaySessionsApi:
         assert player_row["current_room_id"] == room_id
         assert player_row["current_room_name"] == "Session Delta"
 
-    async def test_gm_can_share_private_pack_to_session(self, auth_client):
+    async def test_gm_can_share_private_pack_to_session(self, auth_client, app):
         created = await auth_client.post("/api/rooms", json={"name": "Share Room"})
         room_id = created.json()["room_id"]
         attached = await auth_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Share Session"})
         session_id = attached.json()["id"]
 
         gm_user = create_user("share_owner", "hash")
-        add_game_session_member(session_id, gm_user.user_id, "co_gm")
+        add_game_session_member(session_id, gm_user.user_id, "gm")
         pack_id = _seed_private_pack(gm_user.user_id, slug="ghoul-pack", name="Ghoul Pack")
         sid = create_session(gm_user.user_id)
 
-        shared = await auth_client.post(
-            f"/api/sessions/{session_id}/shared-packs/{pack_id}",
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
             cookies={"warhamster_sid": sid},
-        )
+        ) as owner_client:
+            shared = await owner_client.post(f"/api/sessions/{session_id}/shared-packs/{pack_id}")
         assert shared.status_code == 200
         assert any(pack["pack_id"] == pack_id for pack in shared.json()["packs"])
 
-    async def test_player_sees_session_shared_pack_assets_in_library(self, auth_client, second_auth_client):
+    async def test_player_sees_session_shared_pack_assets_in_library(self, auth_client, second_auth_client, app):
         created = await auth_client.post("/api/rooms", json={"name": "Shared Assets Room"})
         room_id = created.json()["room_id"]
         join_code = created.json()["join_code"]
@@ -349,12 +351,14 @@ class TestGameplaySessionsApi:
         owner = create_user("shared_assets_owner", "hash")
         pack_id = _seed_private_pack(owner.user_id, slug="lantern-pack", name="Lantern Pack")
         owner_sid = create_session(owner.user_id)
-        add_game_session_member(session_id, owner.user_id, "co_gm")
+        add_game_session_member(session_id, owner.user_id, "gm")
 
-        shared = await auth_client.post(
-            f"/api/sessions/{session_id}/shared-packs/{pack_id}",
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
             cookies={"warhamster_sid": owner_sid},
-        )
+        ) as owner_client:
+            shared = await owner_client.post(f"/api/sessions/{session_id}/shared-packs/{pack_id}")
         assert shared.status_code == 200
 
         listing = await second_auth_client.get(f"/api/assets?session_id={session_id}")
@@ -366,7 +370,7 @@ class TestGameplaySessionsApi:
         assert shared_packs.status_code == 200
         assert any(pack["pack_id"] == pack_id for pack in shared_packs.json()["packs"])
 
-    async def test_non_member_cannot_query_session_scoped_assets(self, auth_client):
+    async def test_non_member_cannot_query_session_scoped_assets(self, auth_client, app):
         created = await auth_client.post("/api/rooms", json={"name": "Hidden Session Room"})
         room_id = created.json()["room_id"]
         attached = await auth_client.post(f"/api/rooms/{room_id}/attach-session", json={"name": "Hidden Session"})
@@ -375,10 +379,12 @@ class TestGameplaySessionsApi:
         outsider = create_user("outsider_assets", "hash")
         outsider_sid = create_session(outsider.user_id)
 
-        denied = await auth_client.get(
-            f"/api/assets?session_id={session_id}",
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
             cookies={"warhamster_sid": outsider_sid},
-        )
+        ) as outsider_client:
+            denied = await outsider_client.get(f"/api/assets?session_id={session_id}")
         assert denied.status_code == 403
 
 
@@ -604,9 +610,9 @@ class TestWebSocket:
         app = self._make_app()
         with TestClient(app) as client:
             with client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": gm_sid}) as gm_ws,                  client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": player_sid}) as player_ws:
-                for _ in range(6):
+                for _ in range(8):
                     gm_ws.receive_text()
-                for _ in range(5):
+                for _ in range(6):
                     player_ws.receive_text()
                 gm_ws.send_text(json.dumps({
                     "type": "SESSION_ROOM_MOVE_REQUEST",
@@ -634,9 +640,9 @@ class TestWebSocket:
         app = self._make_app()
         with TestClient(app) as client:
             with client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": gm_sid}) as gm_ws,                  client.websocket_connect(f"/ws/{room_a}", cookies={"warhamster_sid": player_sid}) as player_ws:
-                for _ in range(6):
+                for _ in range(8):
                     gm_ws.receive_text()
-                for _ in range(5):
+                for _ in range(6):
                     player_ws.receive_text()
                 gm_ws.send_text(json.dumps({
                     "type": "SESSION_ROOM_MOVE_FORCE",

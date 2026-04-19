@@ -8,7 +8,9 @@
       "Bash(.venv/bin/python -m pytest tests/test_rooms.py::TestTokenMove::test_gm_can_move_token -q)",
       "Bash(python3 -)",
       "Bash(python -m pytest tests/test_storage.py tests/test_rooms.py tests/test_app_http.py -q)",
-      "Bash(python3 -m py_compile server/app.py server/storage.py server/storage_rooms.py server/storage_models.py server/storage_admin.py)"
+      "Bash(python3 -m py_compile server/app.py server/storage.py server/storage_rooms.py server/storage_models.py server/storage_admin.py)",
+      "Bash(.venv/bin/python -m pytest tests/test_app_http.py tests/test_storage.py tests/test_rooms.py -q)",
+      "Bash(.venv/bin/pytest \"tests/test_app_http.py::TestGameplaySessionsApi::test_player_sees_session_shared_pack_assets_in_library\" -v -s)"
     ]
   }
 }

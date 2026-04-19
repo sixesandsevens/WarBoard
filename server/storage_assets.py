@@ -38,18 +38,19 @@ def _normalize_pack_scope(value: str, default: str = "personal") -> str:
 
 @contextmanager
 def _raw_conn_ctx():
-    """Raw SQLite connection with row_factory, derived from the SQLModel engine URL."""
-    url = str(engine.url)
-    if url.startswith("sqlite:///"):
-        path = url[len("sqlite:///"):]
-    else:
-        raise RuntimeError(f"Unexpected DB URL: {url}")
-    conn = sqlite3.connect(path, timeout=3.0)
+    """Raw SQLite connection with row_factory, checked out from the SQLAlchemy engine pool.
+
+    Using engine.raw_connection() avoids opening a second sqlite3.connect() which
+    would create a fresh empty database for :memory: URLs (used in tests).
+    driver_connection is the actual sqlite3.Connection; row_factory must be set there.
+    """
+    proxy = engine.raw_connection()
+    conn = proxy.driver_connection
     conn.row_factory = sqlite3.Row
     try:
         yield conn
     finally:
-        conn.close()
+        proxy.close()
 
 
 def set_engine(value) -> None:

@@ -626,6 +626,11 @@ def _can_view_session_members(actor, session_id: str) -> bool:
     return _get_session_actor_role(actor, session_id) in {"platform_admin", "gm", "co_gm"}
 
 
+def _can_view_session_packs(actor, session_id: str) -> bool:
+    """All session members (including players) may see what packs are shared."""
+    return _get_session_actor_role(actor, session_id) in {"platform_admin", "gm", "co_gm", "player"}
+
+
 def _can_manage_session_members(actor, session_id: str) -> bool:
     return _get_session_actor_role(actor, session_id) in {"platform_admin", "gm"}
 
@@ -1815,8 +1820,19 @@ async def create_token_pack_api(req: Request):
 # user packs; it should NOT be used directly by canvas consumers.
 @app.get("/api/packs")
 def list_packs_api(req: Request, session_id: str = ""):
-    payload = list_token_packs_api(req, session_id=session_id)
-    packs = list(payload.get("packs") or [])
+    user = _get_user_from_request(req)
+    packs: list = []
+    if user and user.user_id:
+        current_session_id = str(session_id or "").strip() or None
+        if current_session_id and not get_game_session_role(current_session_id, user.user_id):
+            raise HTTPException(status_code=403, detail="Not a member of this session")
+        packs = [
+            _token_pack_browser_payload({
+                **pack,
+                "token_count": count_private_pack_asset_rows(int(pack.get("pack_id") or 0)),
+            })
+            for pack in list_token_packs_for_user(user.user_id, session_id=current_session_id)
+        ]
     if PACKS_DIR.exists():
         for entry in sorted(PACKS_DIR.iterdir(), key=lambda p: p.name.lower()):
             if not entry.is_dir():
@@ -2753,7 +2769,7 @@ def get_session_shared_packs_api(session_id: str, req: Request):
     session = get_game_session(session_id)
     if not session or session.archived:
         raise HTTPException(status_code=404, detail="Session not found")
-    if not _can_view_session_members(actor, session_id):
+    if not _can_view_session_packs(actor, session_id):
         raise HTTPException(status_code=403, detail="Session member access required")
     packs = list_game_session_shared_packs(session_id)
     return {"session": _session_governance_payload(session, actor), "packs": packs}
