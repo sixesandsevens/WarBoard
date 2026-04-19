@@ -31,6 +31,7 @@
         <button id="toolBtnWallPunch" class="tool-btn gm-only" data-tool="wall_punch" data-tip="Carve a door or opening into a single interior wall (GM only)">🚪 Wall</button>
         <button id="toolBtnTerrainPaint" class="tool-btn gm-only" data-tool="terrain_paint" data-tip="Paint terrain overlays (GM only)">🖌 Terrain</button>
         <button id="toolBtnFogPaint" class="tool-btn gm-only" data-tool="fog_paint" data-tip="Paint fog of war (GM only)">🌫 Fog</button>
+        <button id="toolBtnCaveBrush" class="tool-btn gm-only" data-tool="cave_brush" data-tip="Paint cave regions (GM only)">🪨 Cave</button>
       </div>
       <span id="selectModeLabel" class="pill hidden">Select Mode</span>
       <button id="spawn" class="top-action-btn" data-tip="Place new token">Spawn Token</button>
@@ -442,6 +443,18 @@
         </div>
       </div>
     </div>
+    <div id="caveBrushPanel" class="ctx hidden" role="dialog" aria-label="Cave brush" style="min-width:200px;">
+      <div class="ctx-title">Cave Brush</div>
+      <div style="padding:8px 10px; display:flex; flex-direction:column; gap:8px;">
+        <div style="font-size:11px; opacity:.7;">Mode</div>
+        <div style="display:flex; gap:6px;">
+          <button id="caveBrushOpAdd"   class="ghost active" style="flex:1; font-size:12px; padding:4px 6px;">Add</button>
+          <button id="caveBrushOpErase" class="ghost"        style="flex:1; font-size:12px; padding:4px 6px;">Erase</button>
+        </div>
+        <div style="font-size:11px; opacity:.7; margin-top:2px;">Radius <span id="caveBrushRadiusVal">48</span></div>
+        <input id="caveBrushRadiusSlider" type="range" min="10" max="300" step="5" value="48">
+      </div>
+    </div>
     <div id="uiTooltip" class="ui-tooltip hidden"></div>
     <div id="roomsPanel" style="
       position:absolute; top:10px; left:10px;
@@ -728,6 +741,10 @@
 <script src="/static/canvas/geometryUtils.js"></script>
 <script src="/static/canvas/geometryRender.js"></script>
 <script src="/static/canvas/geometryMutations.js"></script>
+<script src="/static/canvas/caveMask.js"></script>
+<script src="/static/canvas/caveContour.js"></script>
+<script src="/static/canvas/caveGeometry.js"></script>
+<script src="/static/canvas/caveBrush.js"></script>
 <script src="/static/canvas/interiors.js"></script>
 <script src="/static/canvas/render.js"></script>
 <script src="/static/canvas.js"></script>

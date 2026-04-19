@@ -156,8 +156,10 @@
   const toolBtnInterior = document.getElementById("toolBtnInterior");
   const toolBtnTerrainPaint = document.getElementById("toolBtnTerrainPaint");
   const toolBtnFogPaint = document.getElementById("toolBtnFogPaint");
+  const toolBtnCaveBrush = document.getElementById("toolBtnCaveBrush");
   const terrainPaintPanel = document.getElementById("terrainPaintPanel");
   const fogPaintPanel = document.getElementById("fogPaintPanel");
+  const caveBrushPanel = document.getElementById("caveBrushPanel");
   const terrainMaterialPillsEl = document.getElementById("terrainMaterialPills");
   const terrainOpPaintBtn = document.getElementById("terrainOpPaint");
   const terrainOpEraseBtn = document.getElementById("terrainOpErase");

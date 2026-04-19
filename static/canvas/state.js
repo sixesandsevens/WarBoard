@@ -152,6 +152,13 @@ let selectedAssetId = null;
 let selectedShapeId = null;
 let selectedInteriorId = null;
 let selectedGeometryId = null;
+let caveBrush = {
+  active: false,
+  mode: "add",          // "add" | "erase"
+  brushRadius: 48,
+  strokePoints: [],
+  dirtyBounds: null,
+};
 let currentInteriorContextId = null;
 let currentInteriorEdge = null;
 let currentInteriorWallCutId = null;

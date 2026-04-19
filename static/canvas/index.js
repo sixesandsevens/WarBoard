@@ -1903,6 +1903,7 @@
     activeRuler = null;
     activePaintStroke = null;
     activeFogStroke = null;
+    cancelCaveStroke();
 
     state.room_id = s.room_id;
     state.gm_id = s.gm_id;
@@ -2660,7 +2661,7 @@
     log(`UI INIT ERROR: ${e?.message || e}`);
     toast(`UI init error: ${e?.message || e}`);
   }
-  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnInterior, toolBtnWallPunch, toolBtnTerrainPaint, toolBtnFogPaint].forEach((btn) => {
+  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnInterior, toolBtnWallPunch, toolBtnTerrainPaint, toolBtnFogPaint, toolBtnCaveBrush].forEach((btn) => {
     if (!btn) return;
     btn.onclick = () => setTool(btn.dataset.tool);
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
@@ -2671,6 +2672,8 @@
   initTerrainPanelBindings();
   // refreshFogPaintPanel, fog panel event bindings → static/canvas/fog.js
   initFogPanelBindings();
+  // caveBrush panel bindings → static/canvas/caveBrush.js
+  initCaveBrushPanelBindings();
   // Session auth/connect controls should stay available even if later UI panels fail.
   initSessionBindings();
   updateSessionPill();
@@ -2959,6 +2962,7 @@
     if (toolBtnWallPunch) toolBtnWallPunch.classList.toggle("active", t === "wall_punch");
     if (toolBtnTerrainPaint) toolBtnTerrainPaint.classList.toggle("active", t === "terrain_paint");
     if (toolBtnFogPaint) toolBtnFogPaint.classList.toggle("active", t === "fog_paint");
+    if (toolBtnCaveBrush) toolBtnCaveBrush.classList.toggle("active", t === "cave_brush");
     if (selectModeLabelEl) selectModeLabelEl.classList.toggle("hidden", t !== "move");
     if (terrainPaintPanel) {
       if (t === "terrain_paint") {
@@ -2978,18 +2982,31 @@
         fogPaintPanel.classList.add("hidden");
       }
     }
+    if (caveBrushPanel) {
+      if (t === "cave_brush") {
+        caveBrushPanel.classList.remove("hidden");
+        positionCaveBrushPanel();
+        refreshCaveBrushPanel();
+      } else {
+        caveBrushPanel.classList.add("hidden");
+      }
+    }
   }
 
   // positionTerrainPaintPanel → static/canvas/terrain.js
   // positionFogPaintPanel → static/canvas/fog.js
+  // positionCaveBrushPanel → static/canvas/caveBrush.js
   function setTool(next) {
-    if ((next === "terrain_paint" || next === "fog_paint" || next === "interior" || next === "wall_punch") && !isGM()) return;
+    if ((next === "terrain_paint" || next === "fog_paint" || next === "interior" || next === "wall_punch" || next === "cave_brush") && !isGM()) return;
     const prev = tool();
     if (prev === "terrain_paint" && next !== "terrain_paint" && activePaintStroke && isGM()) {
       commitActiveTerrainStroke();
     }
     if (prev === "fog_paint" && next !== "fog_paint" && activeFogStroke && isGM()) {
       commitActiveFogStroke();
+    }
+    if (prev === "cave_brush" && next !== "cave_brush" && caveBrush.active && isGM()) {
+      cancelCaveStroke();
     }
     if (next === "shape") {
       const restore = isShapeTool(toolEl.value) ? toolEl.value : lastShapeTool;
@@ -3017,6 +3034,7 @@
       else if (current === "wall_punch" && toolBtnWallPunch) flashToolActivate(toolBtnWallPunch);
       else if (current === "terrain_paint" && toolBtnTerrainPaint) flashToolActivate(toolBtnTerrainPaint);
       else if (current === "fog_paint" && toolBtnFogPaint) flashToolActivate(toolBtnFogPaint);
+      else if (current === "cave_brush" && toolBtnCaveBrush) flashToolActivate(toolBtnCaveBrush);
     }
     refreshToolButtons();
     updateCanvasCursor();
@@ -3072,6 +3090,11 @@
       dragSpawn = null;
       dragSpawnWorld = null;
       dragSpawnOverCanvas = false;
+      requestRender();
+      return;
+    }
+    if (e.key === "Escape" && caveBrush.active) {
+      cancelCaveStroke();
       requestRender();
       return;
     }
@@ -3695,6 +3718,12 @@
       return;
     }
 
+    if (t === "cave_brush" && isGM()) {
+      beginCaveStroke(wpos.x, wpos.y);
+      requestRender();
+      return;
+    }
+
     if (t === "eraser") {
       activeStroke = null;
       activeShapePreview = null;
@@ -4054,7 +4083,13 @@
       return;
     }
 
-    if (t === "terrain_paint" || t === "fog_paint") requestRender();
+    if (t === "cave_brush" && caveBrush.active && isGM()) {
+      updateCaveStroke(wpos.x, wpos.y);
+      requestRender();
+      return;
+    }
+
+    if (t === "terrain_paint" || t === "fog_paint" || t === "cave_brush") requestRender();
   });
 
   canvas.addEventListener("pointerleave", () => {
@@ -4330,6 +4365,7 @@
     // Commit terrain stroke even if tool changed before release.
     if (activePaintStroke && isGM()) commitActiveTerrainStroke();
     if (activeFogStroke && isGM()) commitActiveFogStroke();
+    if (caveBrush.active && isGM()) endCaveStroke(myId());
 
     if (t === "pen" && activeStroke) {
       if (activeStroke.points.length >= 2) {

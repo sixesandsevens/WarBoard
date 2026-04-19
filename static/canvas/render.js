@@ -1213,6 +1213,16 @@ function activeBrushPreviewSpec() {
       center: fogBrush.op === "cover" ? "rgba(160,210,255,0.80)" : "rgba(210,255,255,0.72)",
     };
   }
+  if (currentTool === "cave_brush") {
+    return {
+      x: hoverWorldPos.x,
+      y: hoverWorldPos.y,
+      radius: Math.max(1, Number(caveBrush.brushRadius || 0)),
+      stroke: caveBrush.mode === "erase" ? "rgba(220,120,60,0.95)" : "rgba(180,150,100,0.95)",
+      fill:   caveBrush.mode === "erase" ? "rgba(200,80,40,0.12)"  : "rgba(100,80,50,0.14)",
+      center: caveBrush.mode === "erase" ? "rgba(220,120,60,0.80)" : "rgba(180,150,100,0.78)",
+    };
+  }
   return null;
 }
 
@@ -1294,6 +1304,7 @@ function render() {
   drawGrid();
   drawInteriors();
   drawGeometry();
+  drawCaveBrushOverlay();
   drawStrokes("below_assets");
   drawShapes("below_assets");
   drawAssets();
