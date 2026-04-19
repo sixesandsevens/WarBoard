@@ -126,6 +126,44 @@ function geometryDelete(id) {
   if (state.geometry.delete(id)) requestRender();
 }
 
+// ─── Z-Order Helpers ──────────────────────────────────────────────────────────
+
+function getGeometryMaxZ() {
+  let maxZ = 0, seen = false;
+  for (const obj of state.geometry.values()) {
+    const z = Number(obj?.zIndex || 0);
+    if (!seen || z > maxZ) { maxZ = z; seen = true; }
+  }
+  return seen ? maxZ : 0;
+}
+
+function getGeometryMinZ() {
+  let minZ = 0, seen = false;
+  for (const obj of state.geometry.values()) {
+    const z = Number(obj?.zIndex || 0);
+    if (!seen || z < minZ) { minZ = z; seen = true; }
+  }
+  return seen ? minZ : 0;
+}
+
+function bringGeometryToFront(id) {
+  const obj = state.geometry.get(id);
+  if (!obj) return false;
+  const nextZ = getGeometryMaxZ() + 1;
+  if (Number(obj.zIndex || 0) === nextZ) return false;
+  geometryUpdate(id, { zIndex: nextZ });
+  return true;
+}
+
+function sendGeometryToBack(id) {
+  const obj = state.geometry.get(id);
+  if (!obj) return false;
+  const nextZ = getGeometryMinZ() - 1;
+  if (Number(obj.zIndex || 0) === nextZ) return false;
+  geometryUpdate(id, { zIndex: nextZ });
+  return true;
+}
+
 // Apply a raw geometry object received from a GEOMETRY_* wire event.
 // Preserves authoritative timestamps from the payload.
 function applyGeometryEvent(type, payload) {

@@ -1145,6 +1145,33 @@
         if (Number(a.layer || 0) !== nextLayer) applyAssetUpdate(a.id, { layer: nextLayer }, true);
         break;
       }
+      case "geometry_layer_front": {
+        const id = selectedGeometryId;
+        if (!id) break;
+        const obj = state.geometry.get(id);
+        if (!obj) break;
+        if (obj.kind !== GEOMETRY_KIND.ROOM && obj.kind !== GEOMETRY_KIND.CAVE && obj.kind !== GEOMETRY_KIND.WALL_PATH) break;
+        bringGeometryToFront(id);
+        break;
+      }
+      case "geometry_layer_back": {
+        const id = selectedGeometryId;
+        if (!id) break;
+        const obj = state.geometry.get(id);
+        if (!obj) break;
+        if (obj.kind !== GEOMETRY_KIND.ROOM && obj.kind !== GEOMETRY_KIND.CAVE && obj.kind !== GEOMETRY_KIND.WALL_PATH) break;
+        sendGeometryToBack(id);
+        break;
+      }
+      case "geometry_delete": {
+        const id = selectedGeometryId;
+        if (!id) break;
+        if (!isGM()) break;
+        if (!confirm("Delete this geometry object?")) break;
+        geometryDelete(id);
+        selectedGeometryId = null;
+        break;
+      }
       case "asset_flip_y": {
         const a = state.assets.get(selectedAssetId || "");
         if (!a || !canEditAssetLocal(a)) break;
@@ -3310,6 +3337,19 @@
       requestRender();
       return;
     }
+    if (isGM()) {
+      const geomHit = hitTestGeometryObjects(wpos.x, wpos.y);
+      if (geomHit) {
+        selectedGeometryId = geomHit;
+        selectedShapeId = null;
+        selectedTokenId = null;
+        selectedInteriorId = null;
+        closeTokenMenu();
+        showContextMenu(geometryCtx, e.clientX, e.clientY);
+        requestRender();
+        return;
+      }
+    }
     closeTokenMenu();
     mapCtxWorld = { x: wpos.x, y: wpos.y };
     showMapMenu(e.clientX, e.clientY);
@@ -3401,6 +3441,18 @@
         selectedTokenId = null;
         requestRender();
         return;
+      }
+      if (isGM()) {
+        const geomHit = hitTestGeometryObjects(wpos.x, wpos.y);
+        if (geomHit) {
+          selectedGeometryId = geomHit;
+          selectedShapeId = null;
+          selectedTokenId = null;
+          selectedInteriorId = null;
+          showContextMenu(geometryCtx, e.clientX, e.clientY);
+          requestRender();
+          return;
+        }
       }
       isPanning = true;
       panStart = { sx: e.clientX, sy: e.clientY, camX: cam.x, camY: cam.y };

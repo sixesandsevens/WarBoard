@@ -456,6 +456,13 @@
         <input id="caveBrushRadiusSlider" type="range" min="10" max="300" step="5" value="48">
       </div>
     </div>
+    <div id="geometryCtx" class="ctx hidden" role="menu" aria-label="Geometry menu">
+      <div class="ctx-title">Geometry</div>
+      <div class="ctx-item" data-action="geometry_layer_front">Bring to Front</div>
+      <div class="ctx-item" data-action="geometry_layer_back">Send to Back</div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-item danger" data-action="geometry_delete">Delete</div>
+    </div>
     <div id="uiTooltip" class="ui-tooltip hidden"></div>
     <div id="roomsPanel" style="
       position:absolute; top:10px; left:10px;
