@@ -106,6 +106,7 @@ const state = {
   interiors: new Map(),
   interior_edges: new Map(),
   interior_wall_cuts: new Map(),
+  geometry: new Map(),
   terrain_paint: {
     materials: {
       mud:       { id: "mud",       label: "Mud",       style: "dirt",      seedOfs: 101, mode: "mud",        scale: 1.0, zOrder: 0 },

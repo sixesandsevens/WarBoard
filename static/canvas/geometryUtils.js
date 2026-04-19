@@ -1,0 +1,201 @@
+"use strict";
+
+// ─── Edge Access ──────────────────────────────────────────────────────────────
+
+function getEdgeCount(obj) {
+  const n = (obj.outer || []).length;
+  if (n < 2) return 0;
+  return obj.closed ? n : n - 1;
+}
+
+function getEdgeStart(obj, edgeIndex) {
+  return obj.outer[edgeIndex];
+}
+
+function getEdgeEnd(obj, edgeIndex) {
+  const n = obj.outer.length;
+  return obj.outer[(edgeIndex + 1) % n];
+}
+
+function getEdgeLength(obj, edgeIndex) {
+  const a = getEdgeStart(obj, edgeIndex);
+  const b = getEdgeEnd(obj, edgeIndex);
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+function pointAlongEdge(obj, edgeIndex, t) {
+  const a = getEdgeStart(obj, edgeIndex);
+  const b = getEdgeEnd(obj, edgeIndex);
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+// Outward-facing normal (perpendicular, unit length, clockwise winding → left-hand normal).
+function getEdgeNormal(obj, edgeIndex) {
+  const a = getEdgeStart(obj, edgeIndex);
+  const b = getEdgeEnd(obj, edgeIndex);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return { x: 0, y: -1 };
+  return { x: dy / len, y: -dx / len };
+}
+
+// Build a default edge array aligned to outer segments, using the kind's preset defaults.
+function buildDefaultEdges(obj) {
+  const count = getEdgeCount(obj);
+  const preset = GEOMETRY_STYLE_PRESETS[obj.kind] || {};
+  const role = preset.edgeDefaultRole || EDGE_ROLE.WALL;
+  const renderMode = preset.edgeDefaultRenderMode || EDGE_RENDER_MODE.CLEAN_STROKE;
+  const edges = [];
+  for (let i = 0; i < count; i++) {
+    edges.push({ index: i, role, renderMode });
+  }
+  return edges;
+}
+
+// ─── Bounds ───────────────────────────────────────────────────────────────────
+
+function computeGeometryBounds(obj) {
+  const pts = obj.outer || [];
+  if (!pts.length) return { x: 0, y: 0, width: 0, height: 0 };
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+// ─── Validation ───────────────────────────────────────────────────────────────
+
+function validateGeometryObject(obj) {
+  const errors = [];
+  if (!obj || typeof obj !== "object") return { valid: false, errors: ["Not an object"] };
+  if (!obj.id) errors.push("Missing id");
+  if (obj.type !== "geometry") errors.push("type must be 'geometry'");
+  if (!Object.values(GEOMETRY_KIND).includes(obj.kind)) errors.push(`Invalid kind: ${obj.kind}`);
+  if (!Array.isArray(obj.outer)) {
+    errors.push("outer must be an array");
+  } else {
+    const minLen = obj.closed ? 3 : 2;
+    if (obj.outer.length < minLen) {
+      errors.push(`outer needs at least ${minLen} points (closed=${obj.closed})`);
+    }
+    for (const p of obj.outer) {
+      if (isNaN(p.x) || isNaN(p.y)) { errors.push("NaN coordinate in outer"); break; }
+    }
+  }
+  if (Array.isArray(obj.openings)) {
+    const count = getEdgeCount(obj);
+    for (const op of obj.openings) {
+      if (op.edgeIndex < 0 || op.edgeIndex >= count) {
+        errors.push(`Opening edgeIndex ${op.edgeIndex} out of range (0..${count - 1})`);
+      }
+      if (!(op.t0 >= 0 && op.t0 < op.t1 && op.t1 <= 1)) {
+        errors.push(`Opening t0/t1 invalid: ${op.t0}..${op.t1}`);
+      }
+    }
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+// ─── Opening Helpers ──────────────────────────────────────────────────────────
+
+function clampOpeningRange(t0, t1) {
+  const a = clamp(Number(t0), 0, 1);
+  const b = clamp(Number(t1), 0, 1);
+  return { t0: Math.min(a, b), t1: Math.max(a, b) };
+}
+
+function openingWorldSpan(obj, opening) {
+  return {
+    start: pointAlongEdge(obj, opening.edgeIndex, opening.t0),
+    end: pointAlongEdge(obj, opening.edgeIndex, opening.t1),
+  };
+}
+
+function openingCenterPoint(obj, opening) {
+  return pointAlongEdge(obj, opening.edgeIndex, (opening.t0 + opening.t1) / 2);
+}
+
+function openingRotationRadians(obj, opening) {
+  const a = getEdgeStart(obj, opening.edgeIndex);
+  const b = getEdgeEnd(obj, opening.edgeIndex);
+  return Math.atan2(b.y - a.y, b.x - a.x);
+}
+
+function addOpening(obj, opening) {
+  return Object.assign({}, obj, {
+    openings: [...(obj.openings || []), opening],
+    updatedAt: Date.now(),
+  });
+}
+
+function removeOpening(obj, openingId) {
+  return Object.assign({}, obj, {
+    openings: (obj.openings || []).filter((op) => op.id !== openingId),
+    updatedAt: Date.now(),
+  });
+}
+
+// Returns the opening id whose center is closest to the given world point, or null.
+function openingHitTest(obj, worldX, worldY) {
+  const tolWorld = Math.max(8, 12 / (typeof cam !== "undefined" ? cam.z : 1));
+  for (const op of (obj.openings || [])) {
+    const center = openingCenterPoint(obj, op);
+    if (Math.hypot(worldX - center.x, worldY - center.y) <= tolWorld) return op.id;
+  }
+  return null;
+}
+
+// ─── Conversion ───────────────────────────────────────────────────────────────
+
+function convertClosedWallPathToRoom(obj) {
+  const next = Object.assign({}, obj, { kind: GEOMETRY_KIND.ROOM, closed: true });
+  next.style = Object.assign({}, GEOMETRY_STYLE_PRESETS.room, obj.style || {});
+  next.edges = buildDefaultEdges(next);
+  next.updatedAt = Date.now();
+  return next;
+}
+
+// ─── Hit Testing ─────────────────────────────────────────────────────────────
+
+function _pointInPolygon(px, py, polygon) {
+  let inside = false;
+  const n = polygon.length;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+    if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function geometryContainsPoint(obj, wx, wy) {
+  if (!obj.outer || obj.outer.length < 2) return false;
+  if (obj.closed && obj.outer.length >= 3) {
+    return _pointInPolygon(wx, wy, obj.outer);
+  }
+  // Open path: proximity to any segment
+  const tol = Math.max(8, 8 / (typeof cam !== "undefined" ? cam.z : 1));
+  const n = obj.outer.length;
+  for (let i = 0; i < n - 1; i++) {
+    const a = obj.outer[i], b = obj.outer[i + 1];
+    if (pointToSegmentDistance(wx, wy, a.x, a.y, b.x, b.y) <= tol) return true;
+  }
+  return false;
+}
+
+// Returns the id of the first geometry object at (wx,wy), or null.
+function hitTestGeometryObjects(wx, wy) {
+  if (!state.geometry) return null;
+  for (const [id, obj] of state.geometry) {
+    if (obj.visible === false) continue;
+    if (geometryContainsPoint(obj, wx, wy)) return id;
+  }
+  return null;
+}
