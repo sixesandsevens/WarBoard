@@ -536,6 +536,8 @@
   let currentGovernanceSessionId = '';
   let currentAdminUserId = null;
   let currentAdminOfficialPackId = null;
+  let currentOfficialImportJobId = '';
+  let currentOfficialImportPollTimer = 0;
   let adminSearchQuery = '';
   let adminRoomLookupId = '';
   let adminUsers = [];
@@ -609,6 +611,87 @@
     const extras = sources.filter((source) => source && source !== primary);
     if(!extras.length) return '';
     return 'Also ' + extras.map((source) => packAccessLabel(source)).join(' · ');
+  }
+
+  function stopOfficialImportPolling(){
+    if(currentOfficialImportPollTimer){
+      clearTimeout(currentOfficialImportPollTimer);
+      currentOfficialImportPollTimer = 0;
+    }
+  }
+
+  function setOfficialImportStatus(message, tone = ''){
+    const el = document.getElementById('officialImportStatus');
+    if(!el) return;
+    el.textContent = String(message || '');
+    el.style.color = tone === 'bad' ? '#d47070' : (tone === 'good' ? '#8dd0a6' : 'rgba(238,238,236,0.7)');
+  }
+
+  async function pollOfficialImportJob(jobId){
+    if(!jobId) return;
+    try{
+      const data = await api(`/api/admin/official-import-jobs/${encodeURIComponent(jobId)}`);
+      const job = data.job || {};
+      const phase = String(job.phase || '');
+      if(phase === 'queued' || phase === 'importing'){
+        setOfficialImportStatus(`Importing ${job.filename || 'ZIP'} into ${job.pack_name || 'official pack'}...`);
+        currentOfficialImportPollTimer = window.setTimeout(() => { void pollOfficialImportJob(jobId); }, 1200);
+        return;
+      }
+      if(phase === 'completed'){
+        setOfficialImportStatus(`Import complete: ${Number(job.created_count || 0)} imported, ${Number(job.skipped_count || 0)} skipped.`, 'good');
+        currentOfficialImportJobId = '';
+        stopOfficialImportPolling();
+        await refreshAdmin();
+        return;
+      }
+      if(phase === 'failed'){
+        setOfficialImportStatus(job.error || 'Official import failed.', 'bad');
+        currentOfficialImportJobId = '';
+        stopOfficialImportPolling();
+        return;
+      }
+      setOfficialImportStatus(`Import status: ${phase || 'unknown'}`);
+    }catch(e){
+      setOfficialImportStatus(e.message || 'Could not refresh import status.', 'bad');
+      stopOfficialImportPolling();
+    }
+  }
+
+  async function uploadOfficialZipInChunks(packId, file){
+    const initData = await api(`/api/admin/official-packs/${encodeURIComponent(packId)}/imports/init`, {
+      method: 'POST',
+      body: JSON.stringify({filename: file.name, size: Number(file.size || 0)}),
+    });
+    const upload = initData.upload || {};
+    const uploadId = String(upload.upload_id || '');
+    const chunkSize = Number(upload.chunk_size || (8 * 1024 * 1024));
+    if(!uploadId || !chunkSize) throw new Error('Import session failed to start.');
+    let offset = 0;
+    while(offset < file.size){
+      const chunk = file.slice(offset, offset + chunkSize);
+      const fd = new FormData();
+      fd.set('file', chunk, file.name);
+      fd.set('offset', String(offset));
+      const res = await fetch(`/api/admin/official-imports/${encodeURIComponent(uploadId)}/chunk`, {
+        method: 'POST',
+        body: fd,
+        credentials: 'same-origin',
+      });
+      const data = await res.json().catch(() => ({}));
+      if(!res.ok) throw new Error(data.detail || (`HTTP ${res.status}`));
+      offset += chunk.size;
+      const pct = Math.min(100, Math.round((offset / Math.max(1, file.size)) * 100));
+      setOfficialImportStatus(`Uploading ${file.name}... ${pct}%`);
+    }
+    const finishData = await api(`/api/admin/official-imports/${encodeURIComponent(uploadId)}/finish`, {method:'POST'});
+    const job = finishData.job || {};
+    currentOfficialImportJobId = String(job.job_id || '');
+    setOfficialImportStatus(`Upload complete. Queued import for ${file.name}...`);
+    stopOfficialImportPolling();
+    if(currentOfficialImportJobId){
+      void pollOfficialImportJob(currentOfficialImportJobId);
+    }
   }
 
   function canViewAdmin(){
@@ -1772,30 +1855,32 @@
       uploadOfficialPackBtn.onclick = async () => {
         const select = document.getElementById('officialPackSelect');
         const packId = select?.value || '';
-        const contentType = select?.selectedOptions?.[0]?.getAttribute('data-content-type') || 'asset_pack';
         const fileInput = document.getElementById('officialPackFile');
         const file = fileInput?.files?.[0];
         if(!packId || !file) return;
-        const fd = new FormData();
-        fd.set('file', file);
         const isZip = /\.zip$/i.test(String(file.name || ''));
         uploadOfficialPackBtn.disabled = true;
+        setOfficialImportStatus('');
         try{
-          const url = contentType === 'token_pack'
-            ? (isZip
-              ? `/api/token-packs/${encodeURIComponent(packId)}/upload-zip`
-              : `/api/token-packs/${encodeURIComponent(packId)}/upload`)
-            : (isZip
-              ? `/api/admin/official-packs/${encodeURIComponent(packId)}/assets/upload-zip`
-              : `/api/admin/official-packs/${encodeURIComponent(packId)}/assets/upload`);
-          const res = await fetch(url, {
-            method:'POST', body: fd, credentials:'same-origin'
-          });
-          const data = await res.json().catch(()=>({}));
-          if(!res.ok) throw new Error(data.detail || (`HTTP ${res.status}`));
-          await refreshAdmin();
+          if(isZip){
+            await uploadOfficialZipInChunks(packId, file);
+          }else{
+            const contentType = select?.selectedOptions?.[0]?.getAttribute('data-content-type') || 'asset_pack';
+            const fd = new FormData();
+            fd.set('file', file);
+            const url = contentType === 'token_pack'
+              ? `/api/token-packs/${encodeURIComponent(packId)}/upload`
+              : `/api/admin/official-packs/${encodeURIComponent(packId)}/assets/upload`;
+            const res = await fetch(url, {
+              method:'POST', body: fd, credentials:'same-origin'
+            });
+            const data = await res.json().catch(()=>({}));
+            if(!res.ok) throw new Error(data.detail || (`HTTP ${res.status}`));
+            setOfficialImportStatus(`Uploaded ${file.name}.`, 'good');
+            await refreshAdmin();
+          }
         }catch(e){
-          alert(e.message);
+          setOfficialImportStatus(e.message || 'Upload failed.', 'bad');
         }finally{
           uploadOfficialPackBtn.disabled = false;
         }
@@ -2050,6 +2135,7 @@
               </select>
               <input id="officialPackFile" type="file" accept="image/*,.zip,application/zip"/>
               <button id="uploadOfficialPackBtn" class="btn-ghost" type="button" ${adminOfficialPacks.some((pack) => !pack.archived) ? '' : 'disabled'}>Upload File or ZIP</button>
+              <div id="officialImportStatus" class="hint">${escapeHtml(currentOfficialImportJobId ? 'Import in progress...' : '')}</div>
             </div>
           </div>
           <div class="list-card">
@@ -2125,6 +2211,10 @@
       </div>
     `;
     bindAdminPanel();
+    if(currentOfficialImportJobId){
+      stopOfficialImportPolling();
+      currentOfficialImportPollTimer = window.setTimeout(() => { void pollOfficialImportJob(currentOfficialImportJobId); }, 400);
+    }
   }
 
   async function switchView(next){

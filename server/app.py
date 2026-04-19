@@ -176,6 +176,8 @@ def _env_int(name: str, default: int) -> int:
 MAX_ZIP_UPLOAD_BYTES = _env_int("MAX_ZIP_UPLOAD_BYTES", 512 * 1024 * 1024)
 MAX_ZIP_ASSET_FILES = _env_int("MAX_ZIP_ASSET_FILES", 2000)
 MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = _env_int("MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES", 1024 * 1024 * 1024)
+MAX_OFFICIAL_IMPORT_UPLOAD_BYTES = _env_int("MAX_OFFICIAL_IMPORT_UPLOAD_BYTES", 8 * 1024 * 1024 * 1024)
+OFFICIAL_IMPORT_CHUNK_BYTES = _env_int("OFFICIAL_IMPORT_CHUNK_BYTES", 8 * 1024 * 1024)
 
 # Static assets (still routed through FastAPI so middleware can protect them)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
@@ -186,6 +188,9 @@ rm = RoomManager()
 HEARTBEAT_TIMEOUT_SECONDS = 35.0
 LOG = logging.getLogger("warhamster.ws")
 HAS_MULTIPART = importlib.util.find_spec("multipart") is not None
+OFFICIAL_IMPORTS_DIR = PRIVATE_PACKS_DIR / "_imports"
+_official_import_uploads: dict[str, dict] = {}
+_official_import_jobs: dict[str, dict] = {}
 
 
 def _hash_key(raw: str) -> str:
@@ -254,6 +259,10 @@ def _pack_public_payload(pack) -> dict:
         "owner_user_id": getattr(pack, "owner_user_id", None),
         "created_at": getattr(pack, "created_at", ""),
     }
+
+
+def _utc_now_text() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _can_manage_pack(actor, pack) -> bool:
@@ -787,6 +796,88 @@ def _import_zip_into_pack(*, actor_user_id: int, pack_id: int, pack, shared_tags
         max_zip_total_uncompressed_bytes=MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
         create_asset_record_fn=_create_pack_record,
     )
+
+
+def _official_import_job_payload(job: dict | None) -> dict:
+    item = dict(job or {})
+    return {
+        "job_id": str(item.get("job_id") or ""),
+        "upload_id": str(item.get("upload_id") or ""),
+        "pack_id": int(item.get("pack_id") or 0),
+        "pack_name": str(item.get("pack_name") or ""),
+        "filename": str(item.get("filename") or ""),
+        "phase": str(item.get("phase") or "unknown"),
+        "bytes_received": int(item.get("bytes_received") or 0),
+        "total_bytes": int(item.get("total_bytes") or 0),
+        "created_count": int(item.get("created_count") or 0),
+        "skipped_count": int(item.get("skipped_count") or 0),
+        "error": str(item.get("error") or ""),
+        "started_at": str(item.get("started_at") or ""),
+        "finished_at": str(item.get("finished_at") or ""),
+    }
+
+
+def _official_upload_payload(upload: dict | None) -> dict:
+    item = dict(upload or {})
+    return {
+        "upload_id": str(item.get("upload_id") or ""),
+        "pack_id": int(item.get("pack_id") or 0),
+        "pack_name": str(item.get("pack_name") or ""),
+        "filename": str(item.get("filename") or ""),
+        "phase": str(item.get("phase") or "uploading"),
+        "bytes_received": int(item.get("bytes_received") or 0),
+        "total_bytes": int(item.get("total_bytes") or 0),
+        "chunk_size": int(item.get("chunk_size") or OFFICIAL_IMPORT_CHUNK_BYTES),
+        "started_at": str(item.get("started_at") or ""),
+    }
+
+
+async def _run_official_import_job(job_id: str) -> None:
+    job = _official_import_jobs.get(job_id)
+    if not job:
+        return
+    upload_id = str(job.get("upload_id") or "")
+    upload = _official_import_uploads.get(upload_id)
+    if not upload:
+        job["phase"] = "failed"
+        job["error"] = "Upload session not found"
+        job["finished_at"] = _utc_now_text()
+        return
+    pack = get_private_pack_by_id(int(upload.get("pack_id") or 0))
+    if not pack:
+        job["phase"] = "failed"
+        job["error"] = "Pack not found"
+        job["finished_at"] = _utc_now_text()
+        return
+    zip_path = Path(str(upload.get("tmp_path") or ""))
+    job["phase"] = "importing"
+    try:
+        def _do_import():
+            with zip_path.open("rb") as handle:
+                return _import_zip_into_pack(
+                    actor_user_id=int(upload.get("actor_user_id") or 0),
+                    pack_id=int(upload.get("pack_id") or 0),
+                    pack=pack,
+                    shared_tags=list(upload.get("shared_tags") or []),
+                    fileobj=handle,
+                )
+
+        created, skipped = await asyncio.to_thread(_do_import)
+        job["phase"] = "completed"
+        job["created_count"] = len(created)
+        job["skipped_count"] = len(skipped)
+        job["finished_at"] = _utc_now_text()
+    except Exception as e:
+        job["phase"] = "failed"
+        job["error"] = str(getattr(e, "detail", "") or str(e) or "Import failed")
+        job["finished_at"] = _utc_now_text()
+    finally:
+        try:
+            if zip_path.exists():
+                zip_path.unlink()
+        except OSError:
+            pass
+        _official_import_uploads.pop(upload_id, None)
 
 
 async def _handle_session_control_event(event: WireEvent, user, client_id: str) -> WireEvent | None:
@@ -1410,6 +1501,124 @@ async def admin_archive_official_pack_api(pack_id: int, req: Request):
         after=_pack_public_payload(updated),
     )
     return {"ok": True, "pack": _pack_public_payload(updated)}
+
+
+@app.post("/api/admin/official-packs/{pack_id}/imports/init")
+async def admin_init_official_import_api(pack_id: int, req: Request):
+    actor = _require_site_admin(req)
+    if actor.user_id is None:
+        raise HTTPException(status_code=500, detail="Invalid user record")
+    pack = _require_pack_upload_access(actor, pack_id, official_only=True)
+    body = await req.json()
+    filename = str(body.get("filename") or "").strip() or "import.zip"
+    total_bytes = int(body.get("size") or 0)
+    if total_bytes <= 0:
+        raise HTTPException(status_code=400, detail="Valid file size required")
+    if total_bytes > MAX_OFFICIAL_IMPORT_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Official import too large (max {MAX_OFFICIAL_IMPORT_UPLOAD_BYTES // (1024 * 1024 * 1024)}GB)",
+        )
+    if not filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Expected a .zip file")
+    OFFICIAL_IMPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    upload_id = uuid.uuid4().hex
+    tmp_path = OFFICIAL_IMPORTS_DIR / f"{upload_id}.zip"
+    try:
+        with tmp_path.open("wb"):
+            pass
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not start import: {e}") from e
+    upload = {
+        "upload_id": upload_id,
+        "pack_id": int(pack_id),
+        "pack_name": str(getattr(pack, "name", "") or ""),
+        "actor_user_id": int(actor.user_id),
+        "filename": filename[:255],
+        "shared_tags": [str(tag).strip() for tag in list(body.get("tags") or []) if str(tag).strip()][:20],
+        "tmp_path": str(tmp_path),
+        "bytes_received": 0,
+        "total_bytes": total_bytes,
+        "chunk_size": OFFICIAL_IMPORT_CHUNK_BYTES,
+        "phase": "uploading",
+        "started_at": _utc_now_text(),
+    }
+    _official_import_uploads[upload_id] = upload
+    return {"ok": True, "upload": _official_upload_payload(upload)}
+
+
+@app.post("/api/admin/official-imports/{upload_id}/chunk")
+async def admin_upload_official_import_chunk_api(
+    upload_id: str,
+    req: Request,
+    file: UploadFile = File(...),
+    offset: int = Form(0),
+):
+    actor = _require_site_admin(req)
+    upload = _official_import_uploads.get(str(upload_id or "").strip())
+    if not upload:
+        raise HTTPException(status_code=404, detail="Import upload not found")
+    if int(upload.get("actor_user_id") or 0) != int(actor.user_id or 0):
+        raise HTTPException(status_code=403, detail="Upload owner required")
+    expected_offset = int(upload.get("bytes_received") or 0)
+    if int(offset or 0) != expected_offset:
+        raise HTTPException(status_code=409, detail="Chunk offset mismatch")
+    chunk = await file.read(OFFICIAL_IMPORT_CHUNK_BYTES + 1)
+    if not chunk:
+        raise HTTPException(status_code=400, detail="Empty chunk")
+    if len(chunk) > OFFICIAL_IMPORT_CHUNK_BYTES:
+        raise HTTPException(status_code=413, detail="Chunk too large")
+    tmp_path = Path(str(upload.get("tmp_path") or ""))
+    try:
+        with tmp_path.open("ab") as handle:
+            handle.write(chunk)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not write chunk: {e}") from e
+    upload["bytes_received"] = expected_offset + len(chunk)
+    if int(upload["bytes_received"]) > int(upload.get("total_bytes") or 0):
+        raise HTTPException(status_code=400, detail="Upload exceeds declared size")
+    return {"ok": True, "upload": _official_upload_payload(upload)}
+
+
+@app.post("/api/admin/official-imports/{upload_id}/finish")
+async def admin_finish_official_import_api(upload_id: str, req: Request):
+    actor = _require_site_admin(req)
+    upload = _official_import_uploads.get(str(upload_id or "").strip())
+    if not upload:
+        raise HTTPException(status_code=404, detail="Import upload not found")
+    if int(upload.get("actor_user_id") or 0) != int(actor.user_id or 0):
+        raise HTTPException(status_code=403, detail="Upload owner required")
+    if int(upload.get("bytes_received") or 0) != int(upload.get("total_bytes") or 0):
+        raise HTTPException(status_code=400, detail="Upload is not complete yet")
+    upload["phase"] = "queued"
+    job_id = uuid.uuid4().hex
+    job = {
+        "job_id": job_id,
+        "upload_id": str(upload_id),
+        "pack_id": int(upload.get("pack_id") or 0),
+        "pack_name": str(upload.get("pack_name") or ""),
+        "filename": str(upload.get("filename") or ""),
+        "phase": "queued",
+        "bytes_received": int(upload.get("bytes_received") or 0),
+        "total_bytes": int(upload.get("total_bytes") or 0),
+        "created_count": 0,
+        "skipped_count": 0,
+        "error": "",
+        "started_at": _utc_now_text(),
+        "finished_at": "",
+    }
+    _official_import_jobs[job_id] = job
+    asyncio.create_task(_run_official_import_job(job_id))
+    return {"ok": True, "job": _official_import_job_payload(job)}
+
+
+@app.get("/api/admin/official-import-jobs/{job_id}")
+def admin_get_official_import_job_api(job_id: str, req: Request):
+    _require_site_admin(req)
+    job = _official_import_jobs.get(str(job_id or "").strip())
+    if not job:
+        raise HTTPException(status_code=404, detail="Import job not found")
+    return {"job": _official_import_job_payload(job)}
 
 
 # ----------------------------- Packs API --------------------------------------
@@ -2181,6 +2390,11 @@ else:
     async def upload_official_pack_asset_zip_unavailable(pack_id: int, req: Request):
         _ = (pack_id, req)
         raise HTTPException(status_code=503, detail="Asset zip upload unavailable: python-multipart not installed")
+
+    @app.post("/api/admin/official-imports/{upload_id}/chunk")
+    async def upload_official_import_chunk_unavailable(upload_id: str, req: Request):
+        _ = (upload_id, req)
+        raise HTTPException(status_code=503, detail="Chunk upload unavailable: python-multipart not installed")
 
     @app.post("/api/token-packs/{pack_id}/upload")
     async def upload_token_pack_unavailable(pack_id: int, req: Request):
