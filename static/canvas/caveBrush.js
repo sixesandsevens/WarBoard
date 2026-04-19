@@ -79,52 +79,57 @@ function cancelCaveStroke() {
 
 // Full commit pipeline: rasterize → extract → clean → mutate.
 // createdBy is passed from the IIFE scope (e.g. myId()).
+// Always calls cancelCaveStroke() at the end, even on error.
 function commitCaveStroke(createdBy) {
-  const pts = caveBrush.strokePoints;
-  if (!pts.length) { cancelCaveStroke(); return; }
+  try {
+    const pts = caveBrush.strokePoints;
+    if (!pts.length) return;
 
-  const strokeBounds = boundsFromPoints(pts, caveBrush.brushRadius);
-  if (!strokeBounds) { cancelCaveStroke(); return; }
+    const strokeBounds = boundsFromPoints(pts, caveBrush.brushRadius);
+    if (!strokeBounds) return;
 
-  const dirtyBounds = expandWorldBounds(strokeBounds, CAVE_DIRTY_PADDING);
+    const dirtyBounds = expandWorldBounds(strokeBounds, CAVE_DIRTY_PADDING);
 
-  // Gather existing caves whose bounds overlap the dirty region.
-  const affected = getIntersectingCaveGeometry(dirtyBounds);
+    // Gather existing caves whose bounds overlap the dirty region.
+    const affected = getIntersectingCaveGeometry(dirtyBounds);
 
-  // Union the dirty bounds with every affected cave's bounds so the mask is big
-  // enough to hold all existing cave pixels that might be merged or split.
-  let workBounds = dirtyBounds;
-  for (const obj of affected) {
-    const gb = geometryBoundsToWorldBounds(obj.bounds);
-    if (gb) workBounds = unionWorldBounds(workBounds, gb);
+    // Union the dirty bounds with every affected cave's bounds so the mask is big
+    // enough to hold all existing cave pixels that might be merged or split.
+    let workBounds = dirtyBounds;
+    for (const obj of affected) {
+      const gb = geometryBoundsToWorldBounds(obj.bounds);
+      if (gb) workBounds = unionWorldBounds(workBounds, gb);
+    }
+    workBounds = expandWorldBounds(workBounds, CAVE_MASK_CELL_SIZE * 2);
+
+    // Build and populate the working mask.
+    const mask = createBinaryMask(workBounds, CAVE_MASK_CELL_SIZE);
+    for (const obj of affected) rasterizeCaveIntoMask(mask, obj);
+
+    // Apply stroke stamps (add or erase).
+    const fill = caveBrush.mode === "add";
+    for (const pt of pts) stampCircleOnMask(mask, pt.x, pt.y, caveBrush.brushRadius, fill);
+
+    // Extract → convert → filter → simplify → smooth → filter again.
+    let contours = extractContoursFromMask(mask);
+    contours = contours.map(c => maskContourToWorldPoints(c, mask));
+    contours = filterSmallContours(contours);
+    contours = contours.map(c => simplifyContour(c, CAVE_SIMPLIFY_TOLERANCE));
+    contours = contours.map(c => smoothContour(c, CAVE_SMOOTHING_ITERATIONS));
+    contours = filterSmallContours(contours);
+
+    const newCaves = buildCaveGeometryObjectsFromContours(contours, createdBy);
+
+    // One atomic mutation: remove affected old caves, add replacement caves.
+    applyGeometryMutation({
+      removed: affected.map(o => o.id),
+      added:   newCaves,
+    });
+  } catch (err) {
+    console.error("[caveBrush] commit failed:", err);
+  } finally {
+    cancelCaveStroke();
   }
-  workBounds = expandWorldBounds(workBounds, CAVE_MASK_CELL_SIZE * 2);
-
-  // Build and populate the working mask.
-  const mask = createBinaryMask(workBounds, CAVE_MASK_CELL_SIZE);
-  for (const obj of affected) rasterizeCaveIntoMask(mask, obj);
-
-  // Apply stroke stamps (add or erase).
-  const fill = caveBrush.mode === "add";
-  for (const pt of pts) stampCircleOnMask(mask, pt.x, pt.y, caveBrush.brushRadius, fill);
-
-  // Extract → convert → filter → simplify → smooth → filter again.
-  let contours = extractContoursFromMask(mask);
-  contours = contours.map(c => maskContourToWorldPoints(c, mask));
-  contours = filterSmallContours(contours);
-  contours = contours.map(c => simplifyContour(c, CAVE_SIMPLIFY_TOLERANCE));
-  contours = contours.map(c => smoothContour(c, CAVE_SMOOTHING_ITERATIONS));
-  contours = filterSmallContours(contours);
-
-  const newCaves = buildCaveGeometryObjectsFromContours(contours, createdBy);
-
-  // One atomic mutation: remove affected old caves, add replacement caves.
-  applyGeometryMutation({
-    removed: affected.map(o => o.id),
-    added:   newCaves,
-  });
-
-  cancelCaveStroke();
 }
 
 function endCaveStroke(createdBy) {

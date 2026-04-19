@@ -49,12 +49,6 @@ function simplifyContour(points, tolerance) {
   keep[n - 1] = 1;
   _rdp(points, 0, n - 1, tol, keep);
 
-  // Also run RDP on the wrap-around arc (last point back to first via the
-  // midpoint of the array) to avoid losing detail on the "seam".
-  const mid = Math.floor(n / 2);
-  keep[mid] = 1;
-  _rdp(points, n - 1, n + mid, tol, keep); // conceptually; just mark mid kept
-
   return points.filter((_, i) => keep[i]);
 }
 
