@@ -203,6 +203,86 @@ function geometryContainsPoint(obj, wx, wy) {
   return false;
 }
 
+// ─── Edge Hit-Testing ─────────────────────────────────────────────────────────
+
+// Project a point onto a segment, returning t ∈ [0,1], the foot point, and distance.
+function projectPointToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 <= 0) return { t: 0, x: ax, y: ay, distance: Math.hypot(px - ax, py - ay) };
+  const t = clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1);
+  const x = ax + t * dx, y = ay + t * dy;
+  return { t, x, y, distance: Math.hypot(px - x, py - y) };
+}
+
+// Find nearest geometry edge to (worldX, worldY).
+// Returns { geometryId, edgeIndex, distance, t, point, edgeStart, edgeEnd } or null.
+// options.tolerance: world-unit snap distance (default: 24 / zoom, min 24).
+function hitTestGeometryEdge(worldX, worldY, options = {}) {
+  const z = typeof cam !== "undefined" ? cam.z : 1;
+  const tolerance = options.tolerance != null ? options.tolerance : Math.max(24, 24 / z);
+  const objs = getSortedGeometryObjects({ reverse: true });
+  let best = null;
+  for (const obj of objs) {
+    if (obj.kind !== GEOMETRY_KIND.ROOM && obj.kind !== GEOMETRY_KIND.CAVE) continue;
+    const edgeCount = getEdgeCount(obj);
+    for (let i = 0; i < edgeCount; i++) {
+      const a = getEdgeStart(obj, i);
+      const b = getEdgeEnd(obj, i);
+      const proj = projectPointToSegment(worldX, worldY, a.x, a.y, b.x, b.y);
+      if (proj.distance > tolerance) continue;
+      if (!best || proj.distance < best.distance) {
+        best = {
+          geometryId: obj.id,
+          edgeIndex: i,
+          distance: proj.distance,
+          t: proj.t,
+          point: { x: proj.x, y: proj.y },
+          edgeStart: { x: a.x, y: a.y },
+          edgeEnd: { x: b.x, y: b.y },
+        };
+      }
+    }
+  }
+  return best;
+}
+
+// ─── Opening Span Helpers ─────────────────────────────────────────────────────
+
+// Collect openings on a specific edge.
+function getOpeningsForEdge(obj, edgeIndex) {
+  return (obj.openings || []).filter((op) => op.edgeIndex === edgeIndex);
+}
+
+// Return true if [t0, t1) overlaps any existing opening on edgeIndex.
+function openingOverlapsExisting(obj, edgeIndex, t0, t1, ignoreOpeningId = null) {
+  for (const op of getOpeningsForEdge(obj, edgeIndex)) {
+    if (ignoreOpeningId && op.id === ignoreOpeningId) continue;
+    if (!(t1 <= op.t0 || t0 >= op.t1)) return true;
+  }
+  return false;
+}
+
+// Convert a desired world-unit width into a normalized [t0, t1] span centered on centerT.
+// Returns { t0, t1 } or null if the edge is degenerate.
+function openingSpanForWidth(obj, edgeIndex, centerT, widthWorld) {
+  const len = getEdgeLength(obj, edgeIndex);
+  if (len <= 0) return null;
+  const half = widthWorld / 2 / len;
+  const { t0, t1 } = clampOpeningRange(centerT - half, centerT + half);
+  return t1 > t0 ? { t0, t1 } : null;
+}
+
+// Shrink [t0, t1] away from edge endpoints by marginWorld world units.
+// Returns clamped { t0, t1 } or null if the edge is too short.
+function clampOpeningToEdgeMargin(t0, t1, edgeLength, marginWorld) {
+  if (edgeLength <= 0) return null;
+  const m = marginWorld / edgeLength;
+  const nt0 = Math.max(t0, m);
+  const nt1 = Math.min(t1, 1 - m);
+  return nt1 > nt0 ? { t0: nt0, t1: nt1 } : null;
+}
+
 // Returns the id of the topmost visible geometry object at (wx, wy),
 // matching the object the user sees on top (reverse of render order).
 function hitTestGeometryObjects(wx, wy) {

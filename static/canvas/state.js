@@ -159,6 +159,10 @@ let caveBrush = {
   strokePoints: [],
   dirtyBounds: null,
 };
+let doorPunch = {
+  openingKind: "door",  // "door" | "gap"
+  openingWidth: 48,
+};
 let currentInteriorContextId = null;
 let currentInteriorEdge = null;
 let currentInteriorWallCutId = null;

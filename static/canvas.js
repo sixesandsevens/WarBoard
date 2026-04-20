@@ -161,6 +161,7 @@
   const terrainPaintPanel = document.getElementById("terrainPaintPanel");
   const fogPaintPanel = document.getElementById("fogPaintPanel");
   const caveBrushPanel = document.getElementById("caveBrushPanel");
+  const doorPunchPanel = document.getElementById("doorPunchPanel");
   const terrainMaterialPillsEl = document.getElementById("terrainMaterialPills");
   const terrainOpPaintBtn = document.getElementById("terrainOpPaint");
   const terrainOpEraseBtn = document.getElementById("terrainOpErase");

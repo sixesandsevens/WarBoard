@@ -456,6 +456,18 @@
         <input id="caveBrushRadiusSlider" type="range" min="10" max="300" step="5" value="48">
       </div>
     </div>
+    <div id="doorPunchPanel" class="ctx hidden" role="dialog" aria-label="Door punch" style="min-width:200px;">
+      <div class="ctx-title">Door Punch</div>
+      <div style="padding:8px 10px; display:flex; flex-direction:column; gap:8px;">
+        <div style="font-size:11px; opacity:.7;">Opening Type</div>
+        <div style="display:flex; gap:6px;">
+          <button id="doorPunchKindDoor" class="ghost active" style="flex:1; font-size:12px; padding:4px 6px;">Door</button>
+          <button id="doorPunchKindGap"  class="ghost"        style="flex:1; font-size:12px; padding:4px 6px;">Gap</button>
+        </div>
+        <div style="font-size:11px; opacity:.7; margin-top:2px;">Width <span id="doorPunchWidthVal">48</span></div>
+        <input id="doorPunchWidthSlider" type="range" min="16" max="200" step="4" value="48">
+      </div>
+    </div>
     <div id="geometryCtx" class="ctx hidden" role="menu" aria-label="Geometry menu">
       <div class="ctx-title">Geometry</div>
       <div class="ctx-item" data-action="geometry_layer_front">Bring to Front</div>

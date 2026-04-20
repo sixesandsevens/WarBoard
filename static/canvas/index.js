@@ -2701,6 +2701,7 @@
   initFogPanelBindings();
   // caveBrush panel bindings → static/canvas/caveBrush.js
   initCaveBrushPanelBindings();
+  initDoorPunchPanelBindings();
   // Session auth/connect controls should stay available even if later UI panels fail.
   initSessionBindings();
   updateSessionPill();
@@ -3018,11 +3019,86 @@
         caveBrushPanel.classList.add("hidden");
       }
     }
+    if (doorPunchPanel) {
+      if (t === "wall_punch") {
+        doorPunchPanel.classList.remove("hidden");
+        positionDoorPunchPanel();
+        refreshDoorPunchPanel();
+      } else {
+        doorPunchPanel.classList.add("hidden");
+      }
+    }
   }
 
   // positionTerrainPaintPanel → static/canvas/terrain.js
   // positionFogPaintPanel → static/canvas/fog.js
   // positionCaveBrushPanel → static/canvas/caveBrush.js
+
+  // ─── Door Punch Panel ────────────────────────────────────────────────────────
+
+  function positionDoorPunchPanel() {
+    if (!doorPunchPanel) return;
+    const topEl = document.getElementById("top");
+    const topRect = topEl ? topEl.getBoundingClientRect() : { bottom: 56 };
+    const x = window.innerWidth - doorPunchPanel.offsetWidth - 10;
+    const y = topRect.bottom + 8;
+    clampMenuToViewport(doorPunchPanel, x, y);
+  }
+
+  function refreshDoorPunchPanel() {
+    const doorBtn  = document.getElementById("doorPunchKindDoor");
+    const gapBtn   = document.getElementById("doorPunchKindGap");
+    const valEl    = document.getElementById("doorPunchWidthVal");
+    const slider   = document.getElementById("doorPunchWidthSlider");
+    if (doorBtn)  doorBtn.classList.toggle("active",  doorPunch.openingKind === "door");
+    if (gapBtn)   gapBtn.classList.toggle("active",   doorPunch.openingKind === "gap");
+    if (valEl)    valEl.textContent = String(Math.round(doorPunch.openingWidth));
+    if (slider)   slider.value = String(doorPunch.openingWidth);
+  }
+
+  function initDoorPunchPanelBindings() {
+    const doorBtn  = document.getElementById("doorPunchKindDoor");
+    const gapBtn   = document.getElementById("doorPunchKindGap");
+    const slider   = document.getElementById("doorPunchWidthSlider");
+    if (doorBtn) doorBtn.addEventListener("click", () => {
+      doorPunch.openingKind = "door";
+      refreshDoorPunchPanel();
+    });
+    if (gapBtn) gapBtn.addEventListener("click", () => {
+      doorPunch.openingKind = "gap";
+      refreshDoorPunchPanel();
+    });
+    if (slider) slider.addEventListener("input", () => {
+      doorPunch.openingWidth = clamp(Number(slider.value), 16, 200);
+      refreshDoorPunchPanel();
+    });
+  }
+
+  // Single-click geometry door punch: find edge hit, validate, insert opening.
+  function _punchGeometryOpening(hit) {
+    const obj = state.geometry.get(hit.geometryId);
+    if (!obj) return;
+
+    const edgeLen = getEdgeLength(obj, hit.edgeIndex);
+    const MARGIN = 10; // world units from edge endpoints
+
+    const span = openingSpanForWidth(obj, hit.edgeIndex, hit.t, doorPunch.openingWidth);
+    if (!span) return;
+
+    const clamped = clampOpeningToEdgeMargin(span.t0, span.t1, edgeLen, MARGIN);
+    if (!clamped) return; // edge too short
+
+    if (openingOverlapsExisting(obj, hit.edgeIndex, clamped.t0, clamped.t1)) return;
+
+    const opening = createOpening(
+      hit.edgeIndex, clamped.t0, clamped.t1,
+      doorPunch.openingKind,
+      { createdBy: myId() }
+    );
+    const newOpenings = [...(obj.openings || []), opening];
+    geometryUpdate(hit.geometryId, { openings: newOpenings });
+  }
+
   function setTool(next) {
     if ((next === "terrain_paint" || next === "fog_paint" || next === "interior" || next === "wall_punch" || next === "cave_brush") && !isGM()) return;
     const prev = tool();
@@ -3664,6 +3740,12 @@
     }
 
     if (t === "wall_punch" && isGM()) {
+      // Geometry punch takes priority over interior wall cuts.
+      const geomEdgeHit = hitTestGeometryEdge(wpos.x, wpos.y);
+      if (geomEdgeHit) {
+        _punchGeometryOpening(geomEdgeHit);
+        return;
+      }
       const wall = hitTestInteriorWall(wpos.x, wpos.y);
       if (wall && canEditInterior(wall.roomId)) {
         const room = state.interiors.get(wall.roomId);
