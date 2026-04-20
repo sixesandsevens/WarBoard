@@ -62,8 +62,8 @@ function rasterizeCaveIntoMask(mask, obj) {
     }
     xs.sort((a, b) => a - b);
     for (let k = 0; k + 1 < xs.length; k += 2) {
-      const cx0 = Math.max(0, Math.floor((xs[k] - originX) / cellSize));
-      const cx1 = Math.min(width - 1, Math.floor((xs[k + 1] - originX) / cellSize));
+      const cx0 = Math.max(0, Math.ceil( (xs[k]     - originX) / cellSize - 0.5));
+      const cx1 = Math.min(width - 1, Math.floor((xs[k + 1] - originX) / cellSize - 0.5));
       for (let cx = cx0; cx <= cx1; cx++) {
         mask.data[cy * width + cx] = 1;
       }
