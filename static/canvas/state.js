@@ -163,6 +163,13 @@ let doorPunch = {
   openingKind: "door",  // "door" | "gap"
   openingWidth: 48,
 };
+let wallLine = {
+  active: false,
+  points: [],
+  hoverWorldX: 0,
+  hoverWorldY: 0,
+  previewClosed: false,
+};
 let currentInteriorContextId = null;
 let currentInteriorEdge = null;
 let currentInteriorWallCutId = null;

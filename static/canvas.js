@@ -158,6 +158,7 @@
   const toolBtnTerrainPaint = document.getElementById("toolBtnTerrainPaint");
   const toolBtnFogPaint = document.getElementById("toolBtnFogPaint");
   const toolBtnCaveBrush = document.getElementById("toolBtnCaveBrush");
+  const toolBtnWallLine = document.getElementById("toolBtnWallLine");
   const terrainPaintPanel = document.getElementById("terrainPaintPanel");
   const fogPaintPanel = document.getElementById("fogPaintPanel");
   const caveBrushPanel = document.getElementById("caveBrushPanel");

@@ -32,6 +32,7 @@
         <button id="toolBtnTerrainPaint" class="tool-btn gm-only" data-tool="terrain_paint" data-tip="Paint terrain overlays (GM only)">🖌 Terrain</button>
         <button id="toolBtnFogPaint" class="tool-btn gm-only" data-tool="fog_paint" data-tip="Paint fog of war (GM only)">🌫 Fog</button>
         <button id="toolBtnCaveBrush" class="tool-btn gm-only" data-tool="cave_brush" data-tip="Paint cave regions (GM only)">🪨 Cave</button>
+        <button id="toolBtnWallLine" class="tool-btn gm-only" data-tool="wall_line" data-tip="Draw connected wall segments; close the loop to make a room (GM only)">📐 Wall Line</button>
       </div>
       <span id="selectModeLabel" class="pill hidden">Select Mode</span>
       <button id="spawn" class="top-action-btn" data-tip="Place new token">Spawn Token</button>
@@ -96,6 +97,7 @@
         <option value="terrain_paint">Terrain Paint</option>
         <option value="fog_paint">Fog Paint</option>
         <option value="cave_brush">Cave Brush</option>
+        <option value="wall_line">Wall Line</option>
       </select>
     </label>
 
@@ -765,6 +767,7 @@
 <script src="/static/canvas/caveContour.js"></script>
 <script src="/static/canvas/caveGeometry.js"></script>
 <script src="/static/canvas/caveBrush.js"></script>
+<script src="/static/canvas/wallLine.js"></script>
 <script src="/static/canvas/interiors.js"></script>
 <script src="/static/canvas/render.js"></script>
 <script src="/static/canvas.js"></script>

@@ -374,6 +374,7 @@
       <div><b>E</b> Eraser tool</div>
       <div><b>R</b> Ruler tool</div>
       <div><b>I</b> Interior tool (GM)</div>
+      <div><b>W</b> Wall Line tool (GM)</div>
       <div><b>Shift+Drag</b> Marquee select tokens</div>
       <div><b>G / U</b> Group / Ungroup selected (GM)</div>
       <div><b>D</b> Toggle Downed badge (GM, selected token)</div>
@@ -1710,6 +1711,10 @@
       canvas.style.cursor = isGM() ? "crosshair" : "default";
       return;
     }
+    if (t === "wall_line") {
+      canvas.style.cursor = isGM() ? "crosshair" : "default";
+      return;
+    }
     if (t === "pen" || t === "rect" || t === "circle" || t === "line" || t === "arrow" || t === "text" || t === "ruler") {
       canvas.style.cursor = "crosshair";
       return;
@@ -2688,7 +2693,7 @@
     log(`UI INIT ERROR: ${e?.message || e}`);
     toast(`UI init error: ${e?.message || e}`);
   }
-  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnInterior, toolBtnWallPunch, toolBtnTerrainPaint, toolBtnFogPaint, toolBtnCaveBrush].forEach((btn) => {
+  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnInterior, toolBtnWallPunch, toolBtnTerrainPaint, toolBtnFogPaint, toolBtnCaveBrush, toolBtnWallLine].forEach((btn) => {
     if (!btn) return;
     btn.onclick = () => setTool(btn.dataset.tool);
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
@@ -2991,6 +2996,7 @@
     if (toolBtnTerrainPaint) toolBtnTerrainPaint.classList.toggle("active", t === "terrain_paint");
     if (toolBtnFogPaint) toolBtnFogPaint.classList.toggle("active", t === "fog_paint");
     if (toolBtnCaveBrush) toolBtnCaveBrush.classList.toggle("active", t === "cave_brush");
+    if (toolBtnWallLine) toolBtnWallLine.classList.toggle("active", t === "wall_line");
     if (selectModeLabelEl) selectModeLabelEl.classList.toggle("hidden", t !== "move");
     if (terrainPaintPanel) {
       if (t === "terrain_paint") {
@@ -3100,7 +3106,7 @@
   }
 
   function setTool(next) {
-    if ((next === "terrain_paint" || next === "fog_paint" || next === "interior" || next === "wall_punch" || next === "cave_brush") && !isGM()) return;
+    if ((next === "terrain_paint" || next === "fog_paint" || next === "interior" || next === "wall_punch" || next === "cave_brush" || next === "wall_line") && !isGM()) return;
     const prev = tool();
     if (prev === "terrain_paint" && next !== "terrain_paint" && activePaintStroke && isGM()) {
       commitActiveTerrainStroke();
@@ -3110,6 +3116,9 @@
     }
     if (prev === "cave_brush" && next !== "cave_brush" && caveBrush.active && isGM()) {
       cancelCaveStroke();
+    }
+    if (prev === "wall_line" && next !== "wall_line" && wallLine.active && isGM()) {
+      cancelWallLine();
     }
     if (next === "shape") {
       const restore = isShapeTool(toolEl.value) ? toolEl.value : lastShapeTool;
@@ -3138,6 +3147,7 @@
       else if (current === "terrain_paint" && toolBtnTerrainPaint) flashToolActivate(toolBtnTerrainPaint);
       else if (current === "fog_paint" && toolBtnFogPaint) flashToolActivate(toolBtnFogPaint);
       else if (current === "cave_brush" && toolBtnCaveBrush) flashToolActivate(toolBtnCaveBrush);
+      else if (current === "wall_line" && toolBtnWallLine) flashToolActivate(toolBtnWallLine);
     }
     refreshToolButtons();
     updateCanvasCursor();
@@ -3167,6 +3177,7 @@
       if (k === "e") { setTool("eraser"); e.preventDefault(); return; }
       if (k === "r") { setTool("ruler"); e.preventDefault(); return; }
       if (k === "i" && isGM()) { setTool("interior"); e.preventDefault(); return; }
+      if (k === "w" && isGM()) { setTool("wall_line"); e.preventDefault(); return; }
       if (k === "f" && isGM()) { setTool("terrain_paint"); e.preventDefault(); return; }
       if (k === "h" && isGM()) { setTool("fog_paint"); e.preventDefault(); return; }
       if (k === "z" && e.ctrlKey && tool() === "terrain_paint" && isGM()) {
@@ -3201,6 +3212,11 @@
       requestRender();
       return;
     }
+    if (e.key === "Escape" && wallLine.active) {
+      cancelWallLine();
+      requestRender();
+      return;
+    }
     if (e.key === "Escape" && (draggingInteriorId || resizingInterior || activeInteriorPreview || activeInteriorWallPunch)) {
       draggingInteriorId = null;
       resizingInterior = null;
@@ -3230,6 +3246,18 @@
     }
     if (!isTyping && e.key.toLowerCase() === "u" && isGM()) {
       ungroupSelectedTokens();
+      e.preventDefault();
+      return;
+    }
+    if (!isTyping && e.key === "Backspace" && wallLine.active && isGM()) {
+      removeLastWallLinePoint();
+      requestRender();
+      e.preventDefault();
+      return;
+    }
+    if (!isTyping && e.key === "Enter" && wallLine.active && isGM()) {
+      finishWallLine();
+      requestRender();
       e.preventDefault();
       return;
     }
@@ -3858,6 +3886,12 @@
       return;
     }
 
+    if (t === "wall_line" && isGM()) {
+      addWallLinePoint(wpos.x, wpos.y);
+      requestRender();
+      return;
+    }
+
     if (t === "eraser") {
       activeStroke = null;
       activeShapePreview = null;
@@ -4223,7 +4257,14 @@
       return;
     }
 
+    if (t === "wall_line" && wallLine.active && isGM()) {
+      updateWallLineHover(wpos.x, wpos.y);
+      requestRender();
+      return;
+    }
+
     if (t === "terrain_paint" || t === "fog_paint" || t === "cave_brush") requestRender();
+    if (t === "wall_line") requestRender();
   });
 
   canvas.addEventListener("pointerleave", () => {
@@ -4284,6 +4325,16 @@
       dragSpawnOverCanvas = false;
       requestRender();
     }
+  });
+
+  canvas.addEventListener("dblclick", (e) => {
+    if (tool() !== "wall_line" || !isGM() || !wallLine.active) return;
+    // The second click of a dblclick already added a duplicate point via pointerdown.
+    // Remove it so we finish at the last intentional point.
+    if (wallLine.points.length > 1) wallLine.points.pop();
+    finishWallLine();
+    requestRender();
+    e.preventDefault();
   });
 
   function doEraseAt(wx, wy) {
