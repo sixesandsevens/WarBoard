@@ -353,6 +353,7 @@ function _drawRoomEdgeDebugOverlay(obj, edgeIndex, polygon, edgeInfo) {
 
 function drawGeometrySeamHoverFeedback() {
   if (!hoveredGeometrySeamInfo) return;
+  if (typeof tool === "function" && tool() !== "seam") return;
   const start = hoveredGeometrySeamInfo.start;
   const end = hoveredGeometrySeamInfo.end;
   if (!start || !end) return;
@@ -360,16 +361,40 @@ function drawGeometrySeamHoverFeedback() {
   const ss = worldToScreen(start.x, start.y);
   const se = worldToScreen(end.x, end.y);
   ctx.save();
-  ctx.setLineDash(hoveredGeometrySeamInfo.mode === GEOMETRY_SEAM_MODE.OPEN ? [Math.max(6, cam.z * 6), Math.max(4, cam.z * 4)] : []);
-  ctx.strokeStyle = hoveredGeometrySeamInfo.mode === GEOMETRY_SEAM_MODE.OPEN
-    ? "rgba(88, 198, 255, 0.95)"
-    : "rgba(255, 206, 92, 0.95)";
-  ctx.lineWidth = Math.max(3, cam.z * 3.25);
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(ss.x, ss.y);
-  ctx.lineTo(se.x, se.y);
-  ctx.stroke();
+
+  if (hoveredGeometrySeamInfo.mode === GEOMETRY_SEAM_MODE.OPEN) {
+    const mid = {
+      x: (ss.x + se.x) * 0.5,
+      y: (ss.y + se.y) * 0.5,
+    };
+    const radius = Math.max(5, cam.z * 5.5);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(88, 198, 255, 0.22)";
+    ctx.beginPath();
+    ctx.arc(mid.x, mid.y, radius + Math.max(3, cam.z * 2.5), 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(88, 198, 255, 0.95)";
+    ctx.lineWidth = Math.max(2, cam.z * 2.25);
+    ctx.beginPath();
+    ctx.arc(mid.x, mid.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(mid.x - radius * 0.55, mid.y);
+    ctx.lineTo(mid.x + radius * 0.55, mid.y);
+    ctx.stroke();
+  } else {
+    ctx.setLineDash([]);
+    ctx.strokeStyle = "rgba(255, 206, 92, 0.95)";
+    ctx.lineWidth = Math.max(3, cam.z * 3.25);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(ss.x, ss.y);
+    ctx.lineTo(se.x, se.y);
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
