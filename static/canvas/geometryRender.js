@@ -13,7 +13,7 @@ function drawGeometry(pass) {
   let edgeClasses = null;
   if (roomsSorted.length > 1) {
     const groups = buildStructureGroups(roomsSorted);
-    edgeClasses = classifyRoomEdges(roomsSorted, groups);
+    edgeClasses = classifyRoomEdgesSegmented(roomsSorted, groups);
   }
 
   for (const obj of sorted) {
@@ -152,20 +152,26 @@ function _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, edgeC
   const baseRenderMode = style.edgeDefaultRenderMode || EDGE_RENDER_MODE.CLEAN_STROKE;
 
   for (let i = 0; i < edgeCount; i++) {
-    const key = `${obj.id}:${i}`;
-
-    // Collinear duplicate — already drawn by a lower-z room; skip entirely
-    if (edgeClasses && edgeClasses.suppressed.has(key)) continue;
-
     const edge = edges[i] || { index: i, role: style.edgeDefaultRole || EDGE_ROLE.WALL, renderMode: baseRenderMode };
     if (edge.role === EDGE_ROLE.OPEN) continue;
     const mode = edge.renderMode || baseRenderMode;
     if (mode === EDGE_RENDER_MODE.HIDDEN) continue;
 
-    const gaps = openingMask[i] || [];
+    const key = `${obj.id}:${i}`;
+    const allGaps = openingMask[i] || [];
     const thickness = edge.thickness ? Math.max(1, edge.thickness * cam.z) : baseThickness;
-    const isSeam = !!(edgeClasses && edgeClasses.seam.has(key));
-    _drawEdgeSegmentWithGaps(obj, i, edge, polygon, gaps, style, thickness, isSeam);
+
+    // Segment-based rendering for rooms in a joined structure
+    const segments = edgeClasses ? edgeClasses.get(key) : null;
+    if (segments) {
+      for (const seg of segments) {
+        if (seg.role === "suppressed") continue;
+        _drawEdgeSubSegment(obj, i, edge, polygon, allGaps, style, thickness, seg.t0, seg.t1, seg.role === "seam");
+      }
+    } else {
+      // Full-edge rendering for caves, wall-paths, and standalone rooms
+      _drawEdgeSegmentWithGaps(obj, i, edge, polygon, allGaps, style, thickness, false);
+    }
   }
 }
 
@@ -203,6 +209,52 @@ function _strokeSegmentWithGaps(p0, p1, gaps) {
     ctx.moveTo(from.x, from.y);
     ctx.lineTo(p1.x, p1.y);
     ctx.stroke();
+  }
+}
+
+// Draw a sub-segment [t0, t1] of source edge edgeIndex, clipping openings to that span.
+function _drawEdgeSubSegment(obj, edgeIndex, edge, polygon, allGaps, style, thickness, t0, t1, isSeam) {
+  const n = obj.outer.length;
+  const pfull0 = polygon[edgeIndex];
+  const pfull1 = polygon[(edgeIndex + 1) % n];
+
+  const p0 = _lerpScreen(pfull0, pfull1, t0);
+  const p1 = _lerpScreen(pfull0, pfull1, t1);
+
+  // Clip openings to [t0, t1] and re-normalize to [0, 1] of this sub-segment
+  const segLen = t1 - t0;
+  const gaps = [];
+  for (const gap of allGaps) {
+    const gStart = Math.max(gap.t0, t0);
+    const gEnd   = Math.min(gap.t1, t1);
+    if (gEnd <= gStart + 1e-6) continue;
+    gaps.push({ t0: (gStart - t0) / segLen, t1: (gEnd - t0) / segLen });
+  }
+
+  ctx.lineCap = "square";
+  ctx.lineJoin = "miter";
+
+  if (isSeam) {
+    const dash = Math.max(4, cam.z * 7);
+    const gap  = Math.max(3, cam.z * 4);
+    ctx.setLineDash([dash, gap]);
+    ctx.strokeStyle = "rgba(80, 52, 24, 0.50)";
+    ctx.lineWidth = Math.max(1, cam.z * 1.5);
+    _strokeSegmentWithGaps(p0, p1, gaps);
+    ctx.setLineDash([]);
+  } else if (obj.kind === GEOMETRY_KIND.ROOM) {
+    ctx.setLineDash([]);
+    ctx.strokeStyle = "#1a0d05";
+    ctx.lineWidth = thickness * 2.2;
+    _strokeSegmentWithGaps(p0, p1, gaps);
+    ctx.strokeStyle = "#3d2a14";
+    ctx.lineWidth = thickness;
+    _strokeSegmentWithGaps(p0, p1, gaps);
+  } else {
+    ctx.setLineDash([]);
+    ctx.strokeStyle = _edgeStrokeColor(obj, edge);
+    ctx.lineWidth = thickness;
+    _strokeSegmentWithGaps(p0, p1, gaps);
   }
 }
 

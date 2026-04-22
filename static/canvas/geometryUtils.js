@@ -386,53 +386,162 @@ function buildStructureGroups(roomObjects) {
   return groups;
 }
 
-// Classify every room edge as suppressed (duplicate collinear wall already drawn
-// by a lower-z room) or seam (interior division inside the joined structure).
-// Returns { suppressed: Set<"objId:edgeIdx">, seam: Set<"objId:edgeIdx"> }.
-// sortedRoomObjects must be sorted by ascending zIndex.
-function classifyRoomEdges(sortedRoomObjects, structureGroups) {
-  const suppressed = new Set();
-  const seam = new Set();
+// ─── Segment-level edge helpers ───────────────────────────────────────────────
+
+// Returns t ∈ (0,1) on a0→a1 where b0→b1 crosses it, or null (no interior crossing).
+function _segmentIntersectT(a0, a1, b0, b1) {
+  const d1x = a1.x - a0.x, d1y = a1.y - a0.y;
+  const d2x = b1.x - b0.x, d2y = b1.y - b0.y;
+  const cross = d1x * d2y - d1y * d2x;
+  if (Math.abs(cross) < 1e-10) return null;
+  const dx = b0.x - a0.x, dy = b0.y - a0.y;
+  const t = (dx * d2y - dy * d2x) / cross;
+  const u = (dx * d1y - dy * d1x) / cross;
+  const eps = 1e-6;
+  if (t <= eps || t >= 1 - eps || u <= eps || u >= 1 - eps) return null;
+  return t;
+}
+
+// Projects b0 and b1 onto the line a0→a1 and returns their t-values in (0,1)
+// only when both endpoints of b lie within `tolerance` of that line (collinear pair).
+function _collinearProjectTs(a0, a1, b0, b1, tolerance) {
+  const dx = a1.x - a0.x, dy = a1.y - a0.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-10) return [];
+  const len = Math.sqrt(len2);
+  const nx = -dy / len, ny = dx / len; // unit normal to a0→a1
+  if (Math.abs((b0.x - a0.x) * nx + (b0.y - a0.y) * ny) > tolerance) return [];
+  if (Math.abs((b1.x - a0.x) * nx + (b1.y - a0.y) * ny) > tolerance) return [];
+  const eps = 1e-6;
+  const ts = [];
+  const tB0 = ((b0.x - a0.x) * dx + (b0.y - a0.y) * dy) / len2;
+  const tB1 = ((b1.x - a0.x) * dx + (b1.y - a0.y) * dy) / len2;
+  if (tB0 > eps && tB0 < 1 - eps) ts.push(tB0);
+  if (tB1 > eps && tB1 < 1 - eps) ts.push(tB1);
+  return ts;
+}
+
+// True when (px,py) lies on segment (ax,ay)→(bx,by) within `tolerance` world units.
+function _pointOnSegmentTol(px, py, ax, ay, bx, by, tolerance) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-10) return Math.hypot(px - ax, py - ay) <= tolerance;
+  const t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  if (t < -1e-6 || t > 1 + 1e-6) return false;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy)) <= tolerance;
+}
+
+// Classify every room edge at sub-segment resolution.
+// Returns Map<"objId:edgeIdx", Array<{t0, t1, role}>> where role is
+// "exterior" | "seam" | "suppressed".
+// sortedRoomObjects must be sorted by ascending zIndex (that order is also the
+// suppression priority: lower-index edges suppress coincident higher-index edges).
+function classifyRoomEdgesSegmented(sortedRoomObjects, structureGroups) {
+  const result = new Map();
+  const COLLINEAR_TOL = 4;   // world units — same line test
+  const SUPPRESS_TOL  = 6;   // world units — midpoint-on-edge suppression test
   const n = sortedRoomObjects.length;
 
-  // Pass 1 — collinear shared wall: suppress the duplicate on the higher-z room
-  for (let i = 0; i < n; i++) {
-    const a = sortedRoomObjects[i];
-    const aCount = getEdgeCount(a);
-    for (let j = i + 1; j < n; j++) {
-      const b = sortedRoomObjects[j];
-      if (structureGroups.get(a.id) !== structureGroups.get(b.id)) continue;
-      const bCount = getEdgeCount(b);
-      for (let ei = 0; ei < aCount; ei++) {
-        for (let ej = 0; ej < bCount; ej++) {
-          if (edgesAreCollinearAndOverlap(a, ei, b, ej)) {
-            suppressed.add(`${b.id}:${ej}`);
+  // Build a sorted-position index for suppression tiebreaking
+  const sortedIdx = new Map();
+  for (let i = 0; i < n; i++) sortedIdx.set(sortedRoomObjects[i].id, i);
+
+  for (let ri = 0; ri < n; ri++) {
+    const obj = sortedRoomObjects[ri];
+    const edgeCount = getEdgeCount(obj);
+    const myRoot = structureGroups.get(obj.id);
+
+    const peers = sortedRoomObjects.filter(
+      o => o.id !== obj.id && structureGroups.get(o.id) === myRoot
+    );
+
+    for (let i = 0; i < edgeCount; i++) {
+      const key = `${obj.id}:${i}`;
+      const a0 = getEdgeStart(obj, i);
+      const a1 = getEdgeEnd(obj, i);
+
+      if (peers.length === 0) {
+        result.set(key, [{ t0: 0, t1: 1, role: "exterior" }]);
+        continue;
+      }
+
+      // ── Collect split t-values from peer geometry ──────────────────────────
+      const splitTs = new Set([0, 1]);
+
+      for (const peer of peers) {
+        const peerEdgeCount = getEdgeCount(peer);
+        for (let j = 0; j < peerEdgeCount; j++) {
+          const b0 = getEdgeStart(peer, j);
+          const b1 = getEdgeEnd(peer, j);
+
+          // Strict edge-edge crossing (T/L junctions)
+          const tInt = _segmentIntersectT(a0, a1, b0, b1);
+          if (tInt !== null) splitTs.add(tInt);
+
+          // Collinear overlap boundaries
+          for (const t of _collinearProjectTs(a0, a1, b0, b1, COLLINEAR_TOL)) {
+            splitTs.add(t);
+          }
+        }
+
+        // Peer corners that land (nearly) on our edge — catches touching T tips
+        const adx = a1.x - a0.x, ady = a1.y - a0.y;
+        const alen2 = adx * adx + ady * ady;
+        if (alen2 > 1e-10) {
+          for (const p of peer.outer) {
+            const t = ((p.x - a0.x) * adx + (p.y - a0.y) * ady) / alen2;
+            if (t <= 1e-6 || t >= 1 - 1e-6) continue;
+            const fx = a0.x + t * adx, fy = a0.y + t * ady;
+            if (Math.hypot(p.x - fx, p.y - fy) <= COLLINEAR_TOL) splitTs.add(t);
           }
         }
       }
-    }
-  }
 
-  // Pass 2 — interior edges: edge whose midpoint falls inside another room in
-  // the same structure → it's an interior seam, not an exterior wall
-  for (const obj of sortedRoomObjects) {
-    const edgeCount = getEdgeCount(obj);
-    const myRoot = structureGroups.get(obj.id);
-    for (let i = 0; i < edgeCount; i++) {
-      if (suppressed.has(`${obj.id}:${i}`)) continue;
-      const mid = pointAlongEdge(obj, i, 0.5);
-      for (const other of sortedRoomObjects) {
-        if (other.id === obj.id) continue;
-        if (structureGroups.get(other.id) !== myRoot) continue;
-        if (_pointInPolygon(mid.x, mid.y, other.outer)) {
-          seam.add(`${obj.id}:${i}`);
-          break;
+      const sortedTs = [...splitTs].sort((a, b) => a - b);
+
+      // ── Classify each sub-segment ──────────────────────────────────────────
+      const segments = [];
+      for (let k = 0; k + 1 < sortedTs.length; k++) {
+        const t0 = sortedTs[k], t1 = sortedTs[k + 1];
+        if (t1 - t0 < 1e-6) continue;
+
+        const midT = (t0 + t1) / 2;
+        const mid = { x: a0.x + (a1.x - a0.x) * midT, y: a0.y + (a1.y - a0.y) * midT };
+
+        let role = "exterior";
+
+        // Suppressed: midpoint lies on a lower-sorted-index peer's edge
+        outer: for (const peer of peers) {
+          if (sortedIdx.get(peer.id) >= ri) continue; // only earlier (lower-z) peers suppress
+          const peerEdgeCount = getEdgeCount(peer);
+          for (let j = 0; j < peerEdgeCount; j++) {
+            const b0 = getEdgeStart(peer, j);
+            const b1 = getEdgeEnd(peer, j);
+            if (_pointOnSegmentTol(mid.x, mid.y, b0.x, b0.y, b1.x, b1.y, SUPPRESS_TOL)) {
+              role = "suppressed";
+              break outer;
+            }
+          }
         }
+
+        // Seam: midpoint is inside another room in the same structure
+        if (role === "exterior") {
+          for (const peer of peers) {
+            if (_pointInPolygon(mid.x, mid.y, peer.outer)) {
+              role = "seam";
+              break;
+            }
+          }
+        }
+
+        segments.push({ t0, t1, role });
       }
+
+      result.set(key, segments.length > 0 ? segments : [{ t0: 0, t1: 1, role: "exterior" }]);
     }
   }
 
-  return { suppressed, seam };
+  return result;
 }
 
 // Returns the id of the topmost visible geometry object at (wx, wy),
