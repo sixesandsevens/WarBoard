@@ -7,19 +7,25 @@
 function drawGeometry(pass) {
   if (!state.geometry || !state.geometry.size) return;
   const under = pass === "under";
-  const sorted = getSortedGeometryObjects(); // ascending zIndex
+  const sorted = getSortedGeometryObjects(); // ascending zIndex — also the correct input order for classifyRoomEdges
   const roomsSorted = sorted.filter(o => o.kind === GEOMETRY_KIND.ROOM);
-  const sharedEdges = roomsSorted.length > 1 ? buildSharedEdgeSet(roomsSorted) : null;
+
+  let edgeClasses = null;
+  if (roomsSorted.length > 1) {
+    const groups = buildStructureGroups(roomsSorted);
+    edgeClasses = classifyRoomEdges(roomsSorted, groups);
+  }
+
   for (const obj of sorted) {
     const z = Number(obj.zIndex || 0);
     if (under ? z >= 0 : z < 0) continue;
-    drawGeometryObject(obj, sharedEdges);
+    drawGeometryObject(obj, edgeClasses);
   }
 }
 
 // ─── Per-object rendering ─────────────────────────────────────────────────────
 
-function drawGeometryObject(obj, sharedEdges) {
+function drawGeometryObject(obj, edgeClasses) {
   if (!obj.outer || obj.outer.length < 2) return;
   const style = obj.style || {};
 
@@ -41,10 +47,10 @@ function drawGeometryObject(obj, sharedEdges) {
     _renderGeometryFill(obj, polygon, style);
   }
 
-  // 2 — Edges (shared edges suppressed to avoid doubled wall rendering)
-  _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, sharedEdges);
+  // 2 — Edges: exterior walls, seams, and suppressed duplicates
+  _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, edgeClasses);
 
-  // 3 — Opening overlays (always rendered, even on shared edges)
+  // 3 — Opening overlays (always rendered regardless of edge classification)
   for (const op of (obj.openings || [])) {
     _renderOpeningOverlay(obj, op);
   }
@@ -140,14 +146,16 @@ function _drawPolygonCavePattern(polygon, style) {
 
 // ─── Edge strokes ─────────────────────────────────────────────────────────────
 
-function _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, sharedEdges) {
+function _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, edgeClasses) {
   const edges = obj.edges || buildDefaultEdges(obj);
   const baseThickness = Math.max(1, (style.edgeThickness || 2) * cam.z);
   const baseRenderMode = style.edgeDefaultRenderMode || EDGE_RENDER_MODE.CLEAN_STROKE;
 
   for (let i = 0; i < edgeCount; i++) {
-    // Skip edges whose wall is already rendered by a lower-zIndex room
-    if (sharedEdges && sharedEdges.has(`${obj.id}:${i}`)) continue;
+    const key = `${obj.id}:${i}`;
+
+    // Collinear duplicate — already drawn by a lower-z room; skip entirely
+    if (edgeClasses && edgeClasses.suppressed.has(key)) continue;
 
     const edge = edges[i] || { index: i, role: style.edgeDefaultRole || EDGE_ROLE.WALL, renderMode: baseRenderMode };
     if (edge.role === EDGE_ROLE.OPEN) continue;
@@ -156,7 +164,8 @@ function _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, share
 
     const gaps = openingMask[i] || [];
     const thickness = edge.thickness ? Math.max(1, edge.thickness * cam.z) : baseThickness;
-    _drawEdgeSegmentWithGaps(obj, i, edge, polygon, gaps, style, thickness);
+    const isSeam = !!(edgeClasses && edgeClasses.seam.has(key));
+    _drawEdgeSegmentWithGaps(obj, i, edge, polygon, gaps, style, thickness, isSeam);
   }
 }
 
@@ -197,17 +206,27 @@ function _strokeSegmentWithGaps(p0, p1, gaps) {
   }
 }
 
-function _drawEdgeSegmentWithGaps(obj, edgeIndex, edge, polygon, gaps, style, thickness) {
+function _drawEdgeSegmentWithGaps(obj, edgeIndex, edge, polygon, gaps, style, thickness, isSeam) {
   const n = obj.outer.length;
   const p0 = polygon[edgeIndex];
   const p1 = polygon[(edgeIndex + 1) % n];
 
   ctx.lineCap = "square";
   ctx.lineJoin = "miter";
-  ctx.setLineDash([]);
 
-  if (obj.kind === GEOMETRY_KIND.ROOM) {
-    // Dual-pass: wide dark under-stroke for wall mass + crisp top stroke for definition
+  if (isSeam) {
+    // Interior seam — thin dashed line showing the room boundary within the joined structure.
+    // Dashes scale with zoom so they stay readable but never overpower the exterior walls.
+    const dash = Math.max(4, cam.z * 7);
+    const gap  = Math.max(3, cam.z * 4);
+    ctx.setLineDash([dash, gap]);
+    ctx.strokeStyle = "rgba(80, 52, 24, 0.50)";
+    ctx.lineWidth = Math.max(1, cam.z * 1.5);
+    _strokeSegmentWithGaps(p0, p1, gaps);
+    ctx.setLineDash([]);
+  } else if (obj.kind === GEOMETRY_KIND.ROOM) {
+    // Exterior wall — dual-pass for wall mass + crisp definition
+    ctx.setLineDash([]);
     ctx.strokeStyle = "#1a0d05";
     ctx.lineWidth = thickness * 2.2;
     _strokeSegmentWithGaps(p0, p1, gaps);
@@ -215,6 +234,7 @@ function _drawEdgeSegmentWithGaps(obj, edgeIndex, edge, polygon, gaps, style, th
     ctx.lineWidth = thickness;
     _strokeSegmentWithGaps(p0, p1, gaps);
   } else {
+    ctx.setLineDash([]);
     ctx.strokeStyle = _edgeStrokeColor(obj, edge);
     ctx.lineWidth = thickness;
     _strokeSegmentWithGaps(p0, p1, gaps);

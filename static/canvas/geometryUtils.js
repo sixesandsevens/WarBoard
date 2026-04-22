@@ -283,7 +283,7 @@ function clampOpeningToEdgeMargin(t0, t1, edgeLength, marginWorld) {
   return nt1 > nt0 ? { t0: nt0, t1: nt1 } : null;
 }
 
-// ─── Shared-Wall Detection ────────────────────────────────────────────────────
+// ─── Shared-Wall + Structure Detection ───────────────────────────────────────
 
 // Returns true when two axis-aligned edges (one from each object) are collinear
 // and their projected spans overlap. Only handles horizontal / vertical edges.
@@ -314,17 +314,94 @@ function edgesAreCollinearAndOverlap(objA, edgeI, objB, edgeJ, tolerance) {
   return false;
 }
 
-// Build a Set of "objId:edgeIdx" strings for room edges that should be suppressed
-// during rendering because a lower-zIndex room already renders the same wall.
-// Objects must be pre-sorted by ascending zIndex.
-function buildSharedEdgeSet(sortedRoomObjects) {
+// Strict segment intersection: returns true when the two segments properly cross
+// (not counting endpoint-touches, which are handled by the collinear check above).
+function segmentsIntersect(p0, p1, p2, p3) {
+  const d1x = p1.x - p0.x, d1y = p1.y - p0.y;
+  const d2x = p3.x - p2.x, d2y = p3.y - p2.y;
+  const cross = d1x * d2y - d1y * d2x;
+  if (Math.abs(cross) < 1e-10) return false; // parallel / collinear
+  const dx = p2.x - p0.x, dy = p2.y - p0.y;
+  const t = (dx * d2y - dy * d2x) / cross;
+  const u = (dx * d1y - dy * d1x) / cross;
+  const eps = 1e-8;
+  return t > eps && t < 1 - eps && u > eps && u < 1 - eps;
+}
+
+// Returns true when two room polygons overlap or touch in a way that warrants
+// joining them into the same structure. Handles area overlap, T/L-junctions,
+// and collinear shared edges. minContactLen guards against snap fuzz.
+const ROOM_JOIN_MIN_CONTACT = 8; // world units
+function roomsMeaningfullyOverlap(objA, objB) {
+  // Fast AABB pre-reject with contact threshold
+  const ba = objA.bounds, bb = objB.bounds;
+  if (ba && bb) {
+    const pad = ROOM_JOIN_MIN_CONTACT * 0.5;
+    if (ba.x + ba.width  < bb.x - pad || bb.x + bb.width  < ba.x - pad ||
+        ba.y + ba.height < bb.y - pad || bb.y + bb.height < ba.y - pad) return false;
+  }
+
+  // Any vertex of A strictly inside B, or vice versa → area overlap
+  for (const p of objA.outer) {
+    if (_pointInPolygon(p.x, p.y, objB.outer)) return true;
+  }
+  for (const p of objB.outer) {
+    if (_pointInPolygon(p.x, p.y, objA.outer)) return true;
+  }
+
+  // Edge-pair checks: strict crossing (T/L junctions) or collinear overlap
+  const aCount = getEdgeCount(objA), bCount = getEdgeCount(objB);
+  for (let i = 0; i < aCount; i++) {
+    const a0 = getEdgeStart(objA, i), a1 = getEdgeEnd(objA, i);
+    for (let j = 0; j < bCount; j++) {
+      const b0 = getEdgeStart(objB, j), b1 = getEdgeEnd(objB, j);
+      if (segmentsIntersect(a0, a1, b0, b1)) return true;
+      if (edgesAreCollinearAndOverlap(objA, i, objB, j, ROOM_JOIN_MIN_CONTACT)) return true;
+    }
+  }
+  return false;
+}
+
+// Union-Find: group rooms into connected "structure" components.
+// Returns Map<roomId, structureRootId>.
+function buildStructureGroups(roomObjects) {
+  const parent = Object.create(null);
+  function find(id) {
+    if (parent[id] === undefined) parent[id] = id;
+    if (parent[id] !== id) parent[id] = find(parent[id]); // path compression
+    return parent[id];
+  }
+  function union(a, b) { parent[find(a)] = find(b); }
+
+  for (const obj of roomObjects) find(obj.id);
+  for (let i = 0; i < roomObjects.length; i++) {
+    for (let j = i + 1; j < roomObjects.length; j++) {
+      if (roomsMeaningfullyOverlap(roomObjects[i], roomObjects[j])) {
+        union(roomObjects[i].id, roomObjects[j].id);
+      }
+    }
+  }
+  const groups = new Map();
+  for (const obj of roomObjects) groups.set(obj.id, find(obj.id));
+  return groups;
+}
+
+// Classify every room edge as suppressed (duplicate collinear wall already drawn
+// by a lower-z room) or seam (interior division inside the joined structure).
+// Returns { suppressed: Set<"objId:edgeIdx">, seam: Set<"objId:edgeIdx"> }.
+// sortedRoomObjects must be sorted by ascending zIndex.
+function classifyRoomEdges(sortedRoomObjects, structureGroups) {
   const suppressed = new Set();
+  const seam = new Set();
   const n = sortedRoomObjects.length;
+
+  // Pass 1 — collinear shared wall: suppress the duplicate on the higher-z room
   for (let i = 0; i < n; i++) {
     const a = sortedRoomObjects[i];
     const aCount = getEdgeCount(a);
     for (let j = i + 1; j < n; j++) {
-      const b = sortedRoomObjects[j]; // b has higher or equal zIndex → its wall is suppressed
+      const b = sortedRoomObjects[j];
+      if (structureGroups.get(a.id) !== structureGroups.get(b.id)) continue;
       const bCount = getEdgeCount(b);
       for (let ei = 0; ei < aCount; ei++) {
         for (let ej = 0; ej < bCount; ej++) {
@@ -335,7 +412,27 @@ function buildSharedEdgeSet(sortedRoomObjects) {
       }
     }
   }
-  return suppressed;
+
+  // Pass 2 — interior edges: edge whose midpoint falls inside another room in
+  // the same structure → it's an interior seam, not an exterior wall
+  for (const obj of sortedRoomObjects) {
+    const edgeCount = getEdgeCount(obj);
+    const myRoot = structureGroups.get(obj.id);
+    for (let i = 0; i < edgeCount; i++) {
+      if (suppressed.has(`${obj.id}:${i}`)) continue;
+      const mid = pointAlongEdge(obj, i, 0.5);
+      for (const other of sortedRoomObjects) {
+        if (other.id === obj.id) continue;
+        if (structureGroups.get(other.id) !== myRoot) continue;
+        if (_pointInPolygon(mid.x, mid.y, other.outer)) {
+          seam.add(`${obj.id}:${i}`);
+          break;
+        }
+      }
+    }
+  }
+
+  return { suppressed, seam };
 }
 
 // Returns the id of the topmost visible geometry object at (wx, wy),
