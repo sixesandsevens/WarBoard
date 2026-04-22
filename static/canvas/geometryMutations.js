@@ -18,16 +18,18 @@ function normalizeGeometryObject(raw) {
     ? raw.openings
         .map((op) => {
           const { t0, t1 } = clampOpeningRange(Number(op.t0 || 0), Number(op.t1 || 0));
+          // Accept both camelCase (live wire) and snake_case (STATE_SYNC model_dump)
+          const edgeIndex = Number(op.edgeIndex ?? op.edge_index ?? 0);
           return {
             id: String(op.id || makeId()),
-            edgeIndex: Number(op.edgeIndex || 0),
+            edgeIndex,
             t0,
             t1,
             kind: Object.values(OPENING_KIND).includes(op.kind) ? op.kind : OPENING_KIND.DOOR,
-            assetId: op.assetId || null,
-            swing: op.swing || null,
-            createdBy: String(op.createdBy || ""),
-            createdAt: Number(op.createdAt || Date.now()),
+            assetId: op.assetId ?? op.asset_id ?? null,
+            swing: op.swing ?? null,
+            createdBy: String(op.createdBy ?? op.created_by ?? ""),
+            createdAt: Number(op.createdAt ?? op.created_at ?? Date.now()),
           };
         })
         .filter((op) => op.edgeIndex >= 0 && op.edgeIndex < edgeCount)
@@ -38,8 +40,9 @@ function normalizeGeometryObject(raw) {
     ? raw.edges.map((e) => ({
         index: Number(e.index || 0),
         role: Object.values(EDGE_ROLE).includes(e.role) ? e.role : EDGE_ROLE.WALL,
-        renderMode: Object.values(EDGE_RENDER_MODE).includes(e.renderMode)
-          ? e.renderMode
+        // Accept both camelCase (live wire) and snake_case (STATE_SYNC model_dump)
+        renderMode: Object.values(EDGE_RENDER_MODE).includes(e.renderMode ?? e.render_mode)
+          ? (e.renderMode ?? e.render_mode)
           : EDGE_RENDER_MODE.CLEAN_STROKE,
         thickness: e.thickness != null ? Number(e.thickness) : undefined,
       }))
@@ -110,6 +113,7 @@ function geometryAdd(raw) {
   const obj = normalizeAndValidateGeometry(raw);
   if (!obj) return null;
   state.geometry.set(obj.id, obj);
+  send("GEOMETRY_ADD", _geometryWirePayload(obj));
   requestRender();
   return obj;
 }
@@ -143,6 +147,23 @@ function _geometryWirePayload(obj) {
     kind: obj.kind,
     outer: obj.outer,
     closed: obj.closed,
+    openings: Array.isArray(obj.openings) ? obj.openings.map((op) => ({
+      id: op.id,
+      edgeIndex: op.edgeIndex,
+      t0: op.t0,
+      t1: op.t1,
+      kind: op.kind,
+      assetId: op.assetId || null,
+      swing: op.swing || null,
+      createdBy: op.createdBy || "",
+      createdAt: op.createdAt || 0,
+    })) : [],
+    edges: Array.isArray(obj.edges) ? obj.edges.map((e) => ({
+      index: e.index,
+      role: e.role,
+      renderMode: e.renderMode,
+      thickness: e.thickness != null ? e.thickness : undefined,
+    })) : [],
     style: obj.style || {},
     createdBy: obj.createdBy || "",
     createdAt: obj.createdAt || 0,

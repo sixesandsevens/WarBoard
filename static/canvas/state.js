@@ -295,6 +295,9 @@ const OFFLINE_MUTATION_TYPES = new Set([
   "FOG_SET_ENABLED",
   "COGM_ADD",
   "COGM_REMOVE",
+  "GEOMETRY_ADD",
+  "GEOMETRY_UPDATE",
+  "GEOMETRY_DELETE",
 ]);
 
 // ─── WS readiness helpers ──────────────────────────────────────────────────────

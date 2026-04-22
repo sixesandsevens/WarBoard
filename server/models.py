@@ -174,11 +174,32 @@ class InteriorWallCut(BaseModel):
     creator_id: Optional[str] = None
 
 
+class GeometryOpening(BaseModel):
+    id: str
+    edge_index: int = 0
+    t0: float = 0.0
+    t1: float = 1.0
+    kind: Literal["door", "window", "arch", "gap"] = "door"
+    asset_id: Optional[str] = None
+    swing: Optional[str] = None
+    created_by: str = ""
+    created_at: float = 0.0
+
+
+class GeometryEdge(BaseModel):
+    index: int = 0
+    role: Literal["wall", "open", "boundary"] = "wall"
+    render_mode: Literal["clean_stroke", "rough_stroke", "rock_wall", "hidden"] = "clean_stroke"
+    thickness: Optional[float] = None
+
+
 class GeometryObject(BaseModel):
     id: str
     kind: Literal["room", "cave", "wall_path"] = "cave"
     outer: List[Point] = Field(default_factory=list)
     closed: bool = True
+    openings: List[GeometryOpening] = Field(default_factory=list)
+    edges: List[GeometryEdge] = Field(default_factory=list)
     style: Dict[str, Any] = Field(default_factory=dict)
     created_by: str = ""
     created_at: float = 0.0

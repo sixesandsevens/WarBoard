@@ -2289,6 +2289,27 @@
       return;
     }
 
+    if (type === "GEOMETRY_ADD" || type === "GEOMETRY_UPDATE") {
+      const obj = normalizeAndValidateGeometry(payload);
+      if (obj) {
+        state.geometry.set(obj.id, obj);
+        requestRender();
+        scheduleOfflineSave();
+      }
+      return;
+    }
+
+    if (type === "GEOMETRY_DELETE") {
+      const id = String(payload?.id || "");
+      if (id) {
+        state.geometry.delete(id);
+        if (selectedGeometryId === id) selectedGeometryId = null;
+        requestRender();
+        scheduleOfflineSave();
+      }
+      return;
+    }
+
     if (type === "TOKEN_DELETE") {
       state.tokens.delete(payload.id);
       if (selectedTokenId === payload.id) selectedTokenId = null;

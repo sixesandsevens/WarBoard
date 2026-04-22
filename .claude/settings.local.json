@@ -16,7 +16,8 @@
       "Bash(wait)",
       "Bash(.venv/bin/pytest -q --tb=short)",
       "Bash(python -m pytest tests/ -x -q)",
-      "Bash(python3 -m pytest tests/ -x -q)"
+      "Bash(python3 -m pytest tests/ -x -q)",
+      "Bash(python -m pytest tests/test_geometry.py -v)"
     ]
   }
 }
