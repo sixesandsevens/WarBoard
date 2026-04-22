@@ -8,6 +8,14 @@ function loadStoredAssetMoveLock() {
   }
 }
 
+function loadStoredBool(key) {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
 let ws = null;
 let wsConnectSeq = 0;
 let appInitialized = false;
@@ -140,6 +148,7 @@ const ui = {
   textDraft: "",
   textFontSize: 24,
   lockAssetMove: loadStoredAssetMoveLock(),
+  debugRoomEdgeSegments: loadStoredBool("warhamster:v1:debug_room_edge_segments"),
 };
 
 let draggingTokenId = null;

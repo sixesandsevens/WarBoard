@@ -3204,6 +3204,16 @@
     }
     if (!isTyping) {
       const k = e.key.toLowerCase();
+      if (k === "g" && e.altKey && isGM()) {
+        ui.debugRoomEdgeSegments = !ui.debugRoomEdgeSegments;
+        try {
+          localStorage.setItem("warhamster:v1:debug_room_edge_segments", ui.debugRoomEdgeSegments ? "1" : "0");
+        } catch (_) {}
+        toast(`Room edge debug ${ui.debugRoomEdgeSegments ? "enabled" : "disabled"}.`);
+        requestRender();
+        e.preventDefault();
+        return;
+      }
       if (k === "v") { setTool("move"); e.preventDefault(); return; }
       if (k === "p") { setTool("pen"); e.preventDefault(); return; }
       if (k === "s") { setTool("shape"); e.preventDefault(); return; }

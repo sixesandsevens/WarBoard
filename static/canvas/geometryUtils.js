@@ -431,8 +431,181 @@ function _pointOnSegmentTol(px, py, ax, ay, bx, by, tolerance) {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy)) <= tolerance;
 }
 
+function _normalizeEdgeSplitTs(values, edgeLength, mergeWorldTol, minSegmentWorld) {
+  const safeEdgeLength = Math.max(1e-6, edgeLength);
+  const mergeTolT = Math.max(1e-6, mergeWorldTol / safeEdgeLength);
+  const minSpanT = Math.max(1e-6, minSegmentWorld / safeEdgeLength);
+  const sorted = values
+    .map((t) => clamp(Number(t), 0, 1))
+    .filter((t) => Number.isFinite(t))
+    .sort((a, b) => a - b);
+
+  if (!sorted.length) return [0, 1];
+
+  const merged = [];
+  for (const t of sorted) {
+    if (!merged.length) {
+      merged.push(t);
+      continue;
+    }
+    const last = merged[merged.length - 1];
+    if (Math.abs(t - last) <= mergeTolT) {
+      merged[merged.length - 1] = (last + t) * 0.5;
+    } else {
+      merged.push(t);
+    }
+  }
+
+  merged[0] = 0;
+  merged[merged.length - 1] = 1;
+
+  const normalized = [0];
+  for (let i = 1; i < merged.length - 1; i++) {
+    const t = merged[i];
+    if (t - normalized[normalized.length - 1] < minSpanT) continue;
+    if (1 - t < minSpanT) continue;
+    normalized.push(t);
+  }
+  normalized.push(1);
+  return normalized;
+}
+
+function _sampleSegmentPoints(a0, a1, t0, t1) {
+  const ts = [0.2, 0.5, 0.8].map((f) => t0 + (t1 - t0) * f);
+  return ts.map((t) => ({
+    t,
+    x: a0.x + (a1.x - a0.x) * t,
+    y: a0.y + (a1.y - a0.y) * t,
+  }));
+}
+
+function _polygonSignedArea(polygon) {
+  let area2 = 0;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    area2 += polygon[j].x * polygon[i].y - polygon[i].x * polygon[j].y;
+  }
+  return area2 * 0.5;
+}
+
+function _samplesCoincidentWithEdge(samples, b0, b1, tolerance) {
+  let hits = 0;
+  for (const sample of samples) {
+    if (_pointOnSegmentTol(sample.x, sample.y, b0.x, b0.y, b1.x, b1.y, tolerance)) hits++;
+  }
+  return hits;
+}
+
+function _segmentSuppressedByEarlierPeer(samples, peers, sortedIdx, roomSortIndex, tolerance) {
+  for (const peer of peers) {
+    if (sortedIdx.get(peer.id) >= roomSortIndex) continue;
+    const peerEdgeCount = getEdgeCount(peer);
+    for (let j = 0; j < peerEdgeCount; j++) {
+      const b0 = getEdgeStart(peer, j);
+      const b1 = getEdgeEnd(peer, j);
+      if (_samplesCoincidentWithEdge(samples, b0, b1, tolerance) >= 2) return true;
+    }
+  }
+  return false;
+}
+
+function _segmentExteriorSamples(obj, samples, a0, a1, offsetWorld) {
+  const dx = a1.x - a0.x;
+  const dy = a1.y - a0.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return samples;
+
+  const nx = -dy / len;
+  const ny = dx / len;
+  let leftInside = 0;
+  let rightInside = 0;
+  const leftSamples = [];
+  const rightSamples = [];
+
+  for (const sample of samples) {
+    const left = { x: sample.x + nx * offsetWorld, y: sample.y + ny * offsetWorld };
+    const right = { x: sample.x - nx * offsetWorld, y: sample.y - ny * offsetWorld };
+    leftSamples.push(left);
+    rightSamples.push(right);
+    if (_pointInPolygon(left.x, left.y, obj.outer)) leftInside++;
+    if (_pointInPolygon(right.x, right.y, obj.outer)) rightInside++;
+  }
+
+  if (leftInside > rightInside) return rightSamples;
+  if (rightInside > leftInside) return leftSamples;
+
+  // Fall back to polygon winding when near-boundary sampling is ambiguous.
+  const signedArea = _polygonSignedArea(obj.outer);
+  return signedArea >= 0 ? rightSamples : leftSamples;
+}
+
+function _samplesInsideAnyPeer(samples, peers) {
+  let hits = 0;
+  for (const sample of samples) {
+    for (const peer of peers) {
+      if (_pointInPolygon(sample.x, sample.y, peer.outer)) {
+        hits++;
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
+function _collectEdgeSplitTs(obj, edgeIndex, peers, collinearTolerance) {
+  const a0 = getEdgeStart(obj, edgeIndex);
+  const a1 = getEdgeEnd(obj, edgeIndex);
+  const splitTs = [0, 1];
+
+  for (const peer of peers) {
+    const peerEdgeCount = getEdgeCount(peer);
+    for (let j = 0; j < peerEdgeCount; j++) {
+      const b0 = getEdgeStart(peer, j);
+      const b1 = getEdgeEnd(peer, j);
+
+      const tInt = _segmentIntersectT(a0, a1, b0, b1);
+      if (tInt !== null) splitTs.push(tInt);
+
+      for (const t of _collinearProjectTs(a0, a1, b0, b1, collinearTolerance)) {
+        splitTs.push(t);
+      }
+    }
+
+    const adx = a1.x - a0.x;
+    const ady = a1.y - a0.y;
+    const alen2 = adx * adx + ady * ady;
+    if (alen2 <= 1e-10) continue;
+    for (const p of peer.outer) {
+      const t = ((p.x - a0.x) * adx + (p.y - a0.y) * ady) / alen2;
+      if (t <= 1e-6 || t >= 1 - 1e-6) continue;
+      const fx = a0.x + t * adx;
+      const fy = a0.y + t * ady;
+      if (Math.hypot(p.x - fx, p.y - fy) <= collinearTolerance) splitTs.push(t);
+    }
+  }
+
+  return splitTs;
+}
+
+function _classifyEdgeSubSegment(obj, peers, sortedIdx, roomSortIndex, a0, a1, t0, t1, opts) {
+  const samples = _sampleSegmentPoints(a0, a1, t0, t1);
+  if (_segmentSuppressedByEarlierPeer(samples, peers, sortedIdx, roomSortIndex, opts.suppressTolerance)) {
+    return "suppressed";
+  }
+
+  const exteriorSamples = _segmentExteriorSamples(obj, samples, a0, a1, opts.classifyOffsetWorld);
+  if (_samplesInsideAnyPeer(exteriorSamples, peers) >= 2) return "seam";
+
+  const midT = (t0 + t1) * 0.5;
+  const mid = { x: a0.x + (a1.x - a0.x) * midT, y: a0.y + (a1.y - a0.y) * midT };
+  for (const peer of peers) {
+    if (_pointInPolygon(mid.x, mid.y, peer.outer)) return "seam";
+  }
+
+  return "exterior";
+}
+
 // Classify every room edge at sub-segment resolution.
-// Returns Map<"objId:edgeIdx", Array<{t0, t1, role}>> where role is
+// Returns Map<"objId:edgeIdx", { splitTs, segments }> where role is
 // "exterior" | "seam" | "suppressed".
 // sortedRoomObjects must be sorted by ascending zIndex (that order is also the
 // suppression priority: lower-index edges suppress coincident higher-index edges).
@@ -440,6 +613,9 @@ function classifyRoomEdgesSegmented(sortedRoomObjects, structureGroups) {
   const result = new Map();
   const COLLINEAR_TOL = 4;   // world units — same line test
   const SUPPRESS_TOL  = 6;   // world units — midpoint-on-edge suppression test
+  const SPLIT_MERGE_TOL = 1.25; // world units — merge nearly identical split events
+  const MIN_SEGMENT_LEN = 2.0;  // world units — drop noisy sliver segments
+  const CLASSIFY_OFFSET = 3.0;  // world units — test the "outside" side of a boundary
   const n = sortedRoomObjects.length;
 
   // Build a sorted-position index for suppression tiebreaking
@@ -461,87 +637,138 @@ function classifyRoomEdgesSegmented(sortedRoomObjects, structureGroups) {
       const a1 = getEdgeEnd(obj, i);
 
       if (peers.length === 0) {
-        result.set(key, [{ t0: 0, t1: 1, role: "exterior" }]);
+        result.set(key, { splitTs: [0, 1], segments: [{ t0: 0, t1: 1, role: "exterior" }] });
         continue;
       }
 
-      // ── Collect split t-values from peer geometry ──────────────────────────
-      const splitTs = new Set([0, 1]);
-
-      for (const peer of peers) {
-        const peerEdgeCount = getEdgeCount(peer);
-        for (let j = 0; j < peerEdgeCount; j++) {
-          const b0 = getEdgeStart(peer, j);
-          const b1 = getEdgeEnd(peer, j);
-
-          // Strict edge-edge crossing (T/L junctions)
-          const tInt = _segmentIntersectT(a0, a1, b0, b1);
-          if (tInt !== null) splitTs.add(tInt);
-
-          // Collinear overlap boundaries
-          for (const t of _collinearProjectTs(a0, a1, b0, b1, COLLINEAR_TOL)) {
-            splitTs.add(t);
-          }
-        }
-
-        // Peer corners that land (nearly) on our edge — catches touching T tips
-        const adx = a1.x - a0.x, ady = a1.y - a0.y;
-        const alen2 = adx * adx + ady * ady;
-        if (alen2 > 1e-10) {
-          for (const p of peer.outer) {
-            const t = ((p.x - a0.x) * adx + (p.y - a0.y) * ady) / alen2;
-            if (t <= 1e-6 || t >= 1 - 1e-6) continue;
-            const fx = a0.x + t * adx, fy = a0.y + t * ady;
-            if (Math.hypot(p.x - fx, p.y - fy) <= COLLINEAR_TOL) splitTs.add(t);
-          }
-        }
-      }
-
-      const sortedTs = [...splitTs].sort((a, b) => a - b);
+      const edgeLength = Math.hypot(a1.x - a0.x, a1.y - a0.y);
+      const rawSplitTs = _collectEdgeSplitTs(obj, i, peers, COLLINEAR_TOL);
+      const sortedTs = _normalizeEdgeSplitTs(rawSplitTs, edgeLength, SPLIT_MERGE_TOL, MIN_SEGMENT_LEN);
 
       // ── Classify each sub-segment ──────────────────────────────────────────
       const segments = [];
       for (let k = 0; k + 1 < sortedTs.length; k++) {
         const t0 = sortedTs[k], t1 = sortedTs[k + 1];
         if (t1 - t0 < 1e-6) continue;
-
-        const midT = (t0 + t1) / 2;
-        const mid = { x: a0.x + (a1.x - a0.x) * midT, y: a0.y + (a1.y - a0.y) * midT };
-
-        let role = "exterior";
-
-        // Suppressed: midpoint lies on a lower-sorted-index peer's edge
-        outer: for (const peer of peers) {
-          if (sortedIdx.get(peer.id) >= ri) continue; // only earlier (lower-z) peers suppress
-          const peerEdgeCount = getEdgeCount(peer);
-          for (let j = 0; j < peerEdgeCount; j++) {
-            const b0 = getEdgeStart(peer, j);
-            const b1 = getEdgeEnd(peer, j);
-            if (_pointOnSegmentTol(mid.x, mid.y, b0.x, b0.y, b1.x, b1.y, SUPPRESS_TOL)) {
-              role = "suppressed";
-              break outer;
-            }
-          }
-        }
-
-        // Seam: midpoint is inside another room in the same structure
-        if (role === "exterior") {
-          for (const peer of peers) {
-            if (_pointInPolygon(mid.x, mid.y, peer.outer)) {
-              role = "seam";
-              break;
-            }
-          }
-        }
-
+        const role = _classifyEdgeSubSegment(obj, peers, sortedIdx, ri, a0, a1, t0, t1, {
+          suppressTolerance: SUPPRESS_TOL,
+          classifyOffsetWorld: Math.min(CLASSIFY_OFFSET, Math.max(1.5, edgeLength * 0.25)),
+        });
         segments.push({ t0, t1, role });
       }
 
-      result.set(key, segments.length > 0 ? segments : [{ t0: 0, t1: 1, role: "exterior" }]);
+      result.set(key, {
+        splitTs: sortedTs,
+        segments: segments.length > 0 ? segments : [{ t0: 0, t1: 1, role: "exterior" }],
+      });
     }
   }
 
   return result;
+}
+
+function _makeRegressionRoom(id, x, y, w, h, zIndex) {
+  return {
+    id,
+    type: "geometry",
+    kind: GEOMETRY_KIND.ROOM,
+    closed: true,
+    visible: true,
+    zIndex: zIndex || 0,
+    outer: [
+      { x, y },
+      { x: x + w, y },
+      { x: x + w, y: y + h },
+      { x, y: y + h },
+    ],
+    bounds: { x, y, width: w, height: h },
+  };
+}
+
+function _segmentRoles(edgeInfo) {
+  return (edgeInfo && edgeInfo.segments) ? edgeInfo.segments.map((segment) => segment.role) : [];
+}
+
+function runRoomBoundarySegmentationRegressionFixtures() {
+  const fixtures = [
+    {
+      name: "partial-overlap",
+      rooms: [
+        _makeRegressionRoom("a", 0, 0, 120, 120, 0),
+        _makeRegressionRoom("b", 60, 20, 80, 80, 1),
+      ],
+      assert(classified) {
+        const roles = _segmentRoles(classified.get("a:1"));
+        if (!roles.includes("seam") || !roles.includes("exterior")) {
+          throw new Error("expected mixed seam/exterior roles on partial overlap edge");
+        }
+      },
+    },
+    {
+      name: "offset-t-junction",
+      rooms: [
+        _makeRegressionRoom("a", 0, 0, 160, 120, 0),
+        _makeRegressionRoom("b", 60, -60, 40, 60, 1),
+      ],
+      assert(classified) {
+        const splitCount = (classified.get("a:0")?.splitTs || []).length;
+        if (splitCount < 3) throw new Error("expected T-junction to create a split on the host edge");
+      },
+    },
+    {
+      name: "contained-room",
+      rooms: [
+        _makeRegressionRoom("a", 0, 0, 180, 180, 0),
+        _makeRegressionRoom("b", 50, 50, 60, 60, 1),
+      ],
+      assert(classified) {
+        for (let edgeIndex = 0; edgeIndex < 4; edgeIndex++) {
+          const roles = _segmentRoles(classified.get(`b:${edgeIndex}`));
+          if (!roles.length || roles.some((role) => role !== "seam")) {
+            throw new Error("expected contained room edges to resolve entirely as seams");
+          }
+        }
+      },
+    },
+    {
+      name: "corridor-join",
+      rooms: [
+        _makeRegressionRoom("a", 0, 0, 120, 120, 0),
+        _makeRegressionRoom("b", 40, 120, 40, 100, 1),
+      ],
+      assert(classified) {
+        const roles = _segmentRoles(classified.get("a:2"));
+        if (!roles.includes("seam") || !roles.includes("exterior")) {
+          throw new Error("expected corridor join to split the shared wall into seam and exterior spans");
+        }
+      },
+    },
+    {
+      name: "multi-room-junction",
+      rooms: [
+        _makeRegressionRoom("a", 0, 0, 100, 100, 0),
+        _makeRegressionRoom("b", 100, 20, 80, 60, 1),
+        _makeRegressionRoom("c", 40, 100, 20, 80, 2),
+      ],
+      assert(classified) {
+        const rightEdgeSplits = (classified.get("a:1")?.splitTs || []).length;
+        const bottomEdgeSplits = (classified.get("a:2")?.splitTs || []).length;
+        if (rightEdgeSplits < 3 || bottomEdgeSplits < 3) {
+          throw new Error("expected multi-room junction to preserve multiple split events");
+        }
+      },
+    },
+  ];
+
+  const results = [];
+  for (const fixture of fixtures) {
+    const sorted = [...fixture.rooms].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+    const groups = buildStructureGroups(sorted);
+    const classified = classifyRoomEdgesSegmented(sorted, groups);
+    fixture.assert(classified);
+    results.push({ name: fixture.name, ok: true });
+  }
+  return results;
 }
 
 // Returns the id of the topmost visible geometry object at (wx, wy),

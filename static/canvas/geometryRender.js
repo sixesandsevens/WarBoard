@@ -162,11 +162,15 @@ function _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, edgeC
     const thickness = edge.thickness ? Math.max(1, edge.thickness * cam.z) : baseThickness;
 
     // Segment-based rendering for rooms in a joined structure
-    const segments = edgeClasses ? edgeClasses.get(key) : null;
+    const edgeInfo = edgeClasses ? edgeClasses.get(key) : null;
+    const segments = edgeInfo ? edgeInfo.segments : null;
     if (segments) {
       for (const seg of segments) {
         if (seg.role === "suppressed") continue;
         _drawEdgeSubSegment(obj, i, edge, polygon, allGaps, style, thickness, seg.t0, seg.t1, seg.role === "seam");
+      }
+      if (ui.debugRoomEdgeSegments) {
+        _drawRoomEdgeDebugOverlay(obj, i, polygon, edgeInfo);
       }
     } else {
       // Full-edge rendering for caves, wall-paths, and standalone rooms
@@ -295,6 +299,59 @@ function _drawEdgeSegmentWithGaps(obj, edgeIndex, edge, polygon, gaps, style, th
 
 function _lerpScreen(p0, p1, t) {
   return { x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t };
+}
+
+function _debugSegmentStrokeColor(role) {
+  if (role === "seam") return "rgba(255, 190, 64, 0.95)";
+  if (role === "suppressed") return "rgba(235, 92, 92, 0.95)";
+  return "rgba(70, 210, 120, 0.95)";
+}
+
+function _drawRoomEdgeDebugOverlay(obj, edgeIndex, polygon, edgeInfo) {
+  if (!edgeInfo || !edgeInfo.segments) return;
+  const n = obj.outer.length;
+  const p0 = polygon[edgeIndex];
+  const p1 = polygon[(edgeIndex + 1) % n];
+
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (const segment of edgeInfo.segments) {
+    const from = _lerpScreen(p0, p1, segment.t0);
+    const to = _lerpScreen(p0, p1, segment.t1);
+    ctx.strokeStyle = _debugSegmentStrokeColor(segment.role);
+    ctx.lineWidth = Math.max(2, cam.z * 2.25);
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+
+    const label = `${obj.id}:${edgeIndex} ${segment.t0.toFixed(2)}-${segment.t1.toFixed(2)}`;
+    const mid = _lerpScreen(p0, p1, (segment.t0 + segment.t1) * 0.5);
+    ctx.font = `${Math.max(10, Math.round(cam.z * 10))}px monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.strokeText(label, mid.x, mid.y - 6);
+    ctx.fillStyle = _debugSegmentStrokeColor(segment.role);
+    ctx.fillText(label, mid.x, mid.y - 6);
+  }
+
+  for (const t of (edgeInfo.splitTs || [])) {
+    const marker = _lerpScreen(p0, p1, t);
+    ctx.beginPath();
+    ctx.fillStyle = "rgba(105, 225, 255, 0.95)";
+    ctx.arc(marker.x, marker.y, Math.max(2.5, cam.z * 2.5), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }
 
 // ─── Opening overlays ─────────────────────────────────────────────────────────
