@@ -99,7 +99,7 @@ function createRectangleRoomGeometry(x, y, w, h, opts = {}) {
 }
 
 function createCaveGeometry(points, style = {}) {
-  return createGeometryObject(GEOMETRY_KIND.CAVE, points, true, { style });
+  return createGeometryObject(GEOMETRY_KIND.CAVE, points, true, { style, zIndex: -1 });
 }
 
 function createWallPath(points, closed = false, style = {}) {

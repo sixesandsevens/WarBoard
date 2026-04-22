@@ -1700,6 +1700,10 @@
         canvas.style.cursor = "crosshair";
         return;
       }
+      if (hoveredGeometryOpeningInfo) {
+        canvas.style.cursor = "pointer"; // click to remove
+        return;
+      }
       if (hoveredInteriorWallCut) {
         canvas.style.cursor = canEditInteriorWallCut(hoveredInteriorWallCut) ? "pointer" : "default";
         return;
@@ -1929,6 +1933,7 @@
     hoveredInteriorResize = null;
     hoveredInteriorWall = null;
     hoveredInteriorWallCut = null;
+    hoveredGeometryOpeningInfo = null;
     currentInteriorContextId = null;
     currentInteriorEdge = null;
     currentInteriorWallCutId = null;
@@ -3101,6 +3106,14 @@
     });
   }
 
+  // Remove a specific opening from a geometry object.
+  function _removeGeometryOpening(geometryId, openingId) {
+    const obj = state.geometry.get(geometryId);
+    if (!obj) return;
+    const updated = removeOpening(obj, openingId);
+    geometryUpdate(geometryId, { openings: updated.openings });
+  }
+
   // Single-click geometry door punch: find edge hit, validate, insert opening.
   function _punchGeometryOpening(hit) {
     const obj = state.geometry.get(hit.geometryId);
@@ -3789,7 +3802,14 @@
     }
 
     if (t === "wall_punch" && isGM()) {
-      // Geometry punch takes priority over interior wall cuts.
+      // Clicking an existing geometry opening removes it.
+      if (hoveredGeometryOpeningInfo) {
+        _removeGeometryOpening(hoveredGeometryOpeningInfo.geometryId, hoveredGeometryOpeningInfo.openingId);
+        hoveredGeometryOpeningInfo = null;
+        requestRender();
+        return;
+      }
+      // Geometry edge punch takes priority over interior wall cuts.
       const geomEdgeHit = hitTestGeometryEdge(wpos.x, wpos.y);
       if (geomEdgeHit) {
         _punchGeometryOpening(geomEdgeHit);
@@ -4025,6 +4045,21 @@
           requestRender();
         }
       } else {
+        // Check if hovering an existing geometry opening (click will remove it).
+        let nextOpeningHover = null;
+        if (state.geometry) {
+          for (const obj of getSortedGeometryObjects({ reverse: true })) {
+            const opId = openingHitTest(obj, wpos.x, wpos.y);
+            if (opId) { nextOpeningHover = { geometryId: obj.id, openingId: opId }; break; }
+          }
+        }
+        const prevKey = hoveredGeometryOpeningInfo ? `${hoveredGeometryOpeningInfo.geometryId}:${hoveredGeometryOpeningInfo.openingId}` : "";
+        const nextKey = nextOpeningHover ? `${nextOpeningHover.geometryId}:${nextOpeningHover.openingId}` : "";
+        if (prevKey !== nextKey) {
+          hoveredGeometryOpeningInfo = nextOpeningHover;
+          updateCanvasCursor();
+          requestRender();
+        }
         const wallHit = cutHit ? null : hitTestInteriorWall(wpos.x, wpos.y);
         setInteriorWallHoverState(wallHit, cutHit);
       }

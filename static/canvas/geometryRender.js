@@ -7,16 +7,19 @@
 function drawGeometry(pass) {
   if (!state.geometry || !state.geometry.size) return;
   const under = pass === "under";
-  for (const obj of getSortedGeometryObjects()) {
+  const sorted = getSortedGeometryObjects(); // ascending zIndex
+  const roomsSorted = sorted.filter(o => o.kind === GEOMETRY_KIND.ROOM);
+  const sharedEdges = roomsSorted.length > 1 ? buildSharedEdgeSet(roomsSorted) : null;
+  for (const obj of sorted) {
     const z = Number(obj.zIndex || 0);
     if (under ? z >= 0 : z < 0) continue;
-    drawGeometryObject(obj);
+    drawGeometryObject(obj, sharedEdges);
   }
 }
 
 // ─── Per-object rendering ─────────────────────────────────────────────────────
 
-function drawGeometryObject(obj) {
+function drawGeometryObject(obj, sharedEdges) {
   if (!obj.outer || obj.outer.length < 2) return;
   const style = obj.style || {};
 
@@ -38,10 +41,10 @@ function drawGeometryObject(obj) {
     _renderGeometryFill(obj, polygon, style);
   }
 
-  // 2 — Edges
-  _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask);
+  // 2 — Edges (shared edges suppressed to avoid doubled wall rendering)
+  _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, sharedEdges);
 
-  // 3 — Opening overlays
+  // 3 — Opening overlays (always rendered, even on shared edges)
   for (const op of (obj.openings || [])) {
     _renderOpeningOverlay(obj, op);
   }
@@ -137,12 +140,15 @@ function _drawPolygonCavePattern(polygon, style) {
 
 // ─── Edge strokes ─────────────────────────────────────────────────────────────
 
-function _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask) {
+function _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, sharedEdges) {
   const edges = obj.edges || buildDefaultEdges(obj);
   const baseThickness = Math.max(1, (style.edgeThickness || 2) * cam.z);
   const baseRenderMode = style.edgeDefaultRenderMode || EDGE_RENDER_MODE.CLEAN_STROKE;
 
   for (let i = 0; i < edgeCount; i++) {
+    // Skip edges whose wall is already rendered by a lower-zIndex room
+    if (sharedEdges && sharedEdges.has(`${obj.id}:${i}`)) continue;
+
     const edge = edges[i] || { index: i, role: style.edgeDefaultRole || EDGE_ROLE.WALL, renderMode: baseRenderMode };
     if (edge.role === EDGE_ROLE.OPEN) continue;
     const mode = edge.renderMode || baseRenderMode;
@@ -282,6 +288,53 @@ function _renderOpeningOverlay(obj, opening) {
     ctx.arc(0, 0, spanLen / 2, Math.PI, 0, false);
     ctx.stroke();
   }
+
+  ctx.restore();
+}
+
+// ─── Door tool hover feedback ─────────────────────────────────────────────────
+
+// Highlights the opening the Door tool is hovering so the GM can see that
+// clicking will remove it rather than add a new one.
+function drawGeometryOpeningHoverFeedback() {
+  if (!hoveredGeometryOpeningInfo) return;
+  const { geometryId, openingId } = hoveredGeometryOpeningInfo;
+  const obj = state.geometry && state.geometry.get(geometryId);
+  if (!obj) return;
+  const op = (obj.openings || []).find(o => o.id === openingId);
+  if (!op) return;
+
+  const span = openingWorldSpan(obj, op);
+  const center = openingCenterPoint(obj, op);
+  const rot = openingRotationRadians(obj, op);
+  const cs = worldToScreen(center.x, center.y);
+  const ss = worldToScreen(span.start.x, span.start.y);
+  const se = worldToScreen(span.end.x, span.end.y);
+  const spanLen = Math.hypot(se.x - ss.x, se.y - ss.y);
+  if (spanLen < 4) return;
+
+  ctx.save();
+  ctx.translate(cs.x, cs.y);
+  ctx.rotate(rot);
+  ctx.setLineDash([]);
+
+  // Bright highlight over the opening span
+  ctx.strokeStyle = "rgba(220, 60, 40, 0.85)";
+  ctx.lineWidth = Math.max(3, cam.z * 3.5);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-spanLen / 2, 0);
+  ctx.lineTo(spanLen / 2, 0);
+  ctx.stroke();
+
+  // Small × at the center to signal "remove"
+  const cx = Math.max(4, cam.z * 5);
+  ctx.lineWidth = Math.max(1.5, cam.z * 1.5);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.beginPath();
+  ctx.moveTo(-cx, -cx); ctx.lineTo(cx, cx);
+  ctx.moveTo(cx, -cx);  ctx.lineTo(-cx, cx);
+  ctx.stroke();
 
   ctx.restore();
 }

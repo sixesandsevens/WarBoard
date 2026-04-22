@@ -283,6 +283,61 @@ function clampOpeningToEdgeMargin(t0, t1, edgeLength, marginWorld) {
   return nt1 > nt0 ? { t0: nt0, t1: nt1 } : null;
 }
 
+// ─── Shared-Wall Detection ────────────────────────────────────────────────────
+
+// Returns true when two axis-aligned edges (one from each object) are collinear
+// and their projected spans overlap. Only handles horizontal / vertical edges.
+function edgesAreCollinearAndOverlap(objA, edgeI, objB, edgeJ, tolerance) {
+  if (tolerance === undefined) tolerance = 4;
+  const a0 = getEdgeStart(objA, edgeI);
+  const a1 = getEdgeEnd(objA, edgeI);
+  const b0 = getEdgeStart(objB, edgeJ);
+  const b1 = getEdgeEnd(objB, edgeJ);
+
+  const aHoriz = Math.abs(a1.y - a0.y) <= tolerance;
+  const aVert  = Math.abs(a1.x - a0.x) <= tolerance;
+  const bHoriz = Math.abs(b1.y - b0.y) <= tolerance;
+  const bVert  = Math.abs(b1.x - b0.x) <= tolerance;
+
+  if (aHoriz && bHoriz) {
+    if (Math.abs(a0.y - b0.y) > tolerance) return false;
+    const aMin = Math.min(a0.x, a1.x), aMax = Math.max(a0.x, a1.x);
+    const bMin = Math.min(b0.x, b1.x), bMax = Math.max(b0.x, b1.x);
+    return aMax > bMin + tolerance && bMax > aMin + tolerance;
+  }
+  if (aVert && bVert) {
+    if (Math.abs(a0.x - b0.x) > tolerance) return false;
+    const aMin = Math.min(a0.y, a1.y), aMax = Math.max(a0.y, a1.y);
+    const bMin = Math.min(b0.y, b1.y), bMax = Math.max(b0.y, b1.y);
+    return aMax > bMin + tolerance && bMax > aMin + tolerance;
+  }
+  return false;
+}
+
+// Build a Set of "objId:edgeIdx" strings for room edges that should be suppressed
+// during rendering because a lower-zIndex room already renders the same wall.
+// Objects must be pre-sorted by ascending zIndex.
+function buildSharedEdgeSet(sortedRoomObjects) {
+  const suppressed = new Set();
+  const n = sortedRoomObjects.length;
+  for (let i = 0; i < n; i++) {
+    const a = sortedRoomObjects[i];
+    const aCount = getEdgeCount(a);
+    for (let j = i + 1; j < n; j++) {
+      const b = sortedRoomObjects[j]; // b has higher or equal zIndex → its wall is suppressed
+      const bCount = getEdgeCount(b);
+      for (let ei = 0; ei < aCount; ei++) {
+        for (let ej = 0; ej < bCount; ej++) {
+          if (edgesAreCollinearAndOverlap(a, ei, b, ej)) {
+            suppressed.add(`${b.id}:${ej}`);
+          }
+        }
+      }
+    }
+  }
+  return suppressed;
+}
+
 // Returns the id of the topmost visible geometry object at (wx, wy),
 // matching the object the user sees on top (reverse of render order).
 function hitTestGeometryObjects(wx, wy) {

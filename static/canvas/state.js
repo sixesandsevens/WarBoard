@@ -205,6 +205,7 @@ let hoveredInteriorEdge = null;
 let hoveredInteriorResize = null;
 let hoveredInteriorWall = null;
 let hoveredInteriorWallCut = null;
+let hoveredGeometryOpeningInfo = null; // { geometryId, openingId } while Door tool hovers an existing opening
 let erasingActive = false;
 let lastEraseWorld = null;
 

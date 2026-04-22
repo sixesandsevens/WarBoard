@@ -1305,6 +1305,7 @@ function render() {
   drawGeometry("under");
   drawInteriors();
   drawGeometry("over");
+  drawGeometryOpeningHoverFeedback();
   drawCaveBrushOverlay();
   drawWallLinePreview();
   drawStrokes("below_assets");
