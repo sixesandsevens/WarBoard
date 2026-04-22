@@ -871,6 +871,17 @@ function getResolvedGeometryStructures() {
             start: pointAlongEdge(obj, edgeIndex, segment.t0),
             end: pointAlongEdge(obj, edgeIndex, segment.t1),
           });
+        } else if (segment.role === "suppressed") {
+          const seamKey = _makeStableSeamKey(obj, edgeIndex, a0, a1, segment.t0, segment.t1, peers, {
+            suppressTolerance: 6,
+            classifyOffsetWorld: Math.min(3.0, Math.max(1.5, edgeLength * 0.25)),
+          });
+          const override = state.geometry_seams.get(seamKey);
+          if (override?.mode === GEOMETRY_SEAM_MODE.WALL) {
+            next.seamKey = seamKey;
+            next.seamMode = override.mode;
+            next.renderRole = "wall";
+          }
         }
         return next;
       });
