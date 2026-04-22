@@ -983,7 +983,7 @@
     return null;
   }
 
-  function handleCtxAction(action) {
+  async function handleCtxAction(action) {
     switch (action) {
       case "spawn_default": {
         const w = mapCtxWorld || screenToWorld(canvas.getBoundingClientRect().width / 2, canvas.getBoundingClientRect().height / 2);
@@ -1031,15 +1031,15 @@
         break;
       case "clear_drawings":
         if (!isGM()) return;
-        if (confirm("Clear drawings for this room?")) clearDrawings();
+        if (await openConfirmModal({ title: "Clear Drawings", message: "Clear drawings for this room?", confirmLabel: "Clear" })) clearDrawings();
         break;
       case "clear_shapes":
         if (!isGM()) return;
-        if (confirm("Clear shapes for this room?")) clearShapes();
+        if (await openConfirmModal({ title: "Clear Shapes", message: "Clear shapes for this room?", confirmLabel: "Clear" })) clearShapes();
         break;
       case "clear_tokens":
         if (!isGM()) return;
-        if (confirm("Clear all tokens for this room?")) clearTokens();
+        if (await openConfirmModal({ title: "Clear Tokens", message: "Clear all tokens for this room?", confirmLabel: "Clear" })) clearTokens();
         break;
       case "save_snapshot":
         if (isGM()) document.getElementById("saveSnapshotBtn").click();
@@ -1168,7 +1168,7 @@
         const id = selectedGeometryId;
         if (!id) break;
         if (!isGM()) break;
-        if (!confirm("Delete this geometry object?")) break;
+        if (!(await openConfirmModal({ title: "Delete Geometry", message: "Delete this geometry object?", confirmLabel: "Delete" }))) break;
         geometryDelete(id);
         selectedGeometryId = null;
         break;
@@ -1191,7 +1191,7 @@
         const deletable = delIds.filter((id) => { const a = state.assets.get(id || ""); return a && canDeleteAssetLocal(a); });
         if (!deletable.length) break;
         const msg = deletable.length > 1 ? `Delete ${deletable.length} selected assets?` : "Delete selected asset?";
-        if (!confirm(msg)) break;
+        if (!(await openConfirmModal({ title: "Delete Asset", message: msg, confirmLabel: "Delete" }))) break;
         for (const id of deletable) send("ASSET_INSTANCE_DELETE", { id });
         selectedAssetIds.clear();
         selectedAssetId = null;
@@ -1732,6 +1732,47 @@
       return;
     }
     canvas.style.cursor = "default";
+  }
+
+  let confirmModalResolver = null;
+
+  function closeConfirmModal(result = false) {
+    if (confirmModalEl) confirmModalEl.classList.add("hidden");
+    if (confirmModalBackdropEl) confirmModalBackdropEl.classList.add("hidden");
+    const resolver = confirmModalResolver;
+    confirmModalResolver = null;
+    if (resolver) resolver(!!result);
+  }
+
+  function openConfirmModal(options = {}) {
+    const title = String(options.title || "Confirm Action");
+    const message = String(options.message || "");
+    const confirmLabel = String(options.confirmLabel || "Confirm");
+    const cancelLabel = String(options.cancelLabel || "Cancel");
+    const confirmTone = options.confirmTone === "primary" ? "primary" : "danger";
+
+    if (!confirmModalEl || !confirmModalBackdropEl || !confirmModalTitleEl || !confirmModalMessageEl || !confirmModalCancelEl || !confirmModalConfirmEl) {
+      log(`CONFIRM MODAL ERROR: ${title}`);
+      return Promise.resolve(false);
+    }
+
+    if (confirmModalResolver) closeConfirmModal(false);
+
+    confirmModalTitleEl.textContent = title;
+    confirmModalMessageEl.textContent = message;
+    confirmModalCancelEl.textContent = cancelLabel;
+    confirmModalConfirmEl.textContent = confirmLabel;
+    confirmModalConfirmEl.classList.toggle("danger", confirmTone === "danger");
+    confirmModalConfirmEl.classList.toggle("primary", confirmTone === "primary");
+    confirmModalBackdropEl.classList.remove("hidden");
+    confirmModalEl.classList.remove("hidden");
+
+    return new Promise((resolve) => {
+      confirmModalResolver = resolve;
+      requestAnimationFrame(() => {
+        try { confirmModalConfirmEl.focus(); } catch (_) {}
+      });
+    });
   }
 
   function applyTokenSizePreset(scale) {
@@ -2764,6 +2805,10 @@
   initDoorPunchPanelBindings();
   // Session auth/connect controls should stay available even if later UI panels fail.
   initSessionBindings();
+  if (confirmModalCloseEl) confirmModalCloseEl.onclick = () => closeConfirmModal(false);
+  if (confirmModalCancelEl) confirmModalCancelEl.onclick = () => closeConfirmModal(false);
+  if (confirmModalConfirmEl) confirmModalConfirmEl.onclick = () => closeConfirmModal(true);
+  if (confirmModalBackdropEl) confirmModalBackdropEl.onclick = () => closeConfirmModal(false);
   updateSessionPill();
   try {
     initAssetLibBindings();
@@ -2788,7 +2833,7 @@
       if (!action) return;
       e.preventDefault();
       e.stopPropagation();
-      handleCtxAction(action);
+      void handleCtxAction(action);
       hideAllCtx();
     });
     menuEl.addEventListener("mouseenter", (e) => {
@@ -3244,6 +3289,10 @@
     if (e.key === "Shift") isShiftDown = true;
     const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
     const isTyping = tag === "input" || tag === "textarea" || tag === "select" || (e.target && e.target.isContentEditable);
+    if (e.key === "Escape" && confirmModalEl && !confirmModalEl.classList.contains("hidden")) {
+      closeConfirmModal(false);
+      return;
+    }
     if (e.key === "Escape" && !sessionModal.classList.contains("hidden")) {
       closeSessionModal();
       return;

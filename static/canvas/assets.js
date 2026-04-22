@@ -2322,12 +2322,18 @@ function initAssetLibBindings() {
     if (!saveAssetSet(name)) { toast("Could not save set."); return; }
     toast(`Saved set: ${name.trim()}`);
   });
-  if (assetSetDeleteBtnEl) assetSetDeleteBtnEl.addEventListener("click", () => {
+  if (assetSetDeleteBtnEl) assetSetDeleteBtnEl.addEventListener("click", async () => {
     const id = String(assetState.selectedSetId || assetSetSelectEl?.value || "");
     if (!id) { toast("Select a saved set first."); return; }
     const row = (assetState.savedSets || []).find((item) => item.id === id);
     if (!row) { toast("Saved set was not found."); renderAssetSavedSets(); return; }
-    if (!confirm(`Delete saved set '${row.name}'?`)) return;
+    const confirmed = await openConfirmModal({
+      title: "Delete Saved Set",
+      message: `Delete saved set '${row.name}'?`,
+      confirmLabel: "Delete",
+      confirmTone: "danger",
+    });
+    if (!confirmed) return;
     if (!deleteSelectedAssetSet()) { toast("Delete failed."); return; }
     toast(`Deleted set: ${row.name}`);
   });

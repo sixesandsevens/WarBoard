@@ -93,6 +93,13 @@
   const roomMovePromptJoinEl = document.getElementById("roomMovePromptJoin");
   const roomMovePromptDismissEl = document.getElementById("roomMovePromptDismiss");
   const roomMovePromptCloseEl = document.getElementById("roomMovePromptClose");
+  const confirmModalBackdropEl = document.getElementById("confirmModalBackdrop");
+  const confirmModalEl = document.getElementById("confirmModal");
+  const confirmModalTitleEl = document.getElementById("confirmModalTitle");
+  const confirmModalMessageEl = document.getElementById("confirmModalMessage");
+  const confirmModalCloseEl = document.getElementById("confirmModalClose");
+  const confirmModalCancelEl = document.getElementById("confirmModalCancel");
+  const confirmModalConfirmEl = document.getElementById("confirmModalConfirm");
   const snapshotsListEl = document.getElementById("snapshotsList");
   const snapshotRoomLabelEl = document.getElementById("snapshotRoomLabel");
   const newRoomNameEl = document.getElementById("newRoomName");

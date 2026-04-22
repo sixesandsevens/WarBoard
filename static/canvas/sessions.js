@@ -1094,7 +1094,13 @@ async function refreshRoomsPanel() {
     roomsListEl.querySelectorAll("button[data-delete-room]").forEach((btn) => {
       btn.onclick = async () => {
         const rid = btn.getAttribute("data-delete-room");
-        if (!confirm(`Delete room '${rid}'? This also deletes snapshots.`)) return;
+        const confirmed = await openConfirmModal({
+          title: "Delete Room",
+          message: `Delete room '${rid}'? This also deletes snapshots.`,
+          confirmLabel: "Delete",
+          confirmTone: "danger",
+        });
+        if (!confirmed) return;
         try {
           const url = apiUrl(`/api/rooms/${encodeURIComponent(rid)}`, true);
           const res = await fetch(url, { method: "DELETE" });

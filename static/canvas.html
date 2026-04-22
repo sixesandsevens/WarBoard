@@ -199,6 +199,20 @@
         </div>
       </div>
     </div>
+    <div id="confirmModalBackdrop" class="modal-backdrop hidden"></div>
+    <div id="confirmModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Confirm action">
+      <div class="modal-header">
+        <div id="confirmModalTitle" class="modal-title">Confirm Action</div>
+        <button id="confirmModalClose" class="modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="confirmModalMessage" style="white-space:pre-wrap; line-height:1.4;"></div>
+        <div class="modal-actions">
+          <button id="confirmModalCancel" class="ghost">Cancel</button>
+          <button id="confirmModalConfirm" class="danger">Confirm</button>
+        </div>
+      </div>
+    </div>
     <div id="drawer" class="drawer hidden">
       <div class="drawer-header">
         <span>WarHamster</span>

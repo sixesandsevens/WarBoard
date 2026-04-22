@@ -592,4 +592,11 @@ button.ghost {
 }
 button.ghost:hover { background: #414141; color: #eeeeec; }
 
+button.danger {
+  padding: 7px 12px; border-radius: 4px;
+  background: #b3261e; border: 1px solid #8f1f18;
+  color: #fff; cursor: pointer; font-weight: 600;
+}
+button.danger:hover { background: #c7332a; }
+
 .hidden { display: none !important; }
