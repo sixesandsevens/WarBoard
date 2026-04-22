@@ -73,13 +73,25 @@ function normalizeGeometrySeamOverride(raw) {
   if (!raw || typeof raw !== "object") return null;
   const seamKey = String(raw.seamKey ?? raw.seam_key ?? raw.id ?? "").trim();
   if (!seamKey) return null;
-  const mode = (raw.mode === GEOMETRY_SEAM_MODE.OPEN) ? GEOMETRY_SEAM_MODE.OPEN : GEOMETRY_SEAM_MODE.WALL;
+  const schemaVersion = Math.max(1, Number(raw.schemaVersion ?? raw.schema_version ?? 1) || 1);
+  let mode = String(raw.mode || "");
+  if (mode === GEOMETRY_SEAM_MODE.OPEN) {
+    mode = GEOMETRY_SEAM_MODE.OPEN;
+  } else if (mode === GEOMETRY_SEAM_MODE.CLOSED) {
+    mode = GEOMETRY_SEAM_MODE.CLOSED;
+  } else if (mode === GEOMETRY_SEAM_MODE.WALL) {
+    // Legacy binary seam data used "wall" to mean "visible seam marker".
+    mode = schemaVersion >= 2 ? GEOMETRY_SEAM_MODE.WALL : GEOMETRY_SEAM_MODE.CLOSED;
+  } else {
+    mode = GEOMETRY_SEAM_MODE.CLOSED;
+  }
   return {
     id: String(raw.id || seamKey),
     seamKey,
     mode,
     createdBy: String(raw.createdBy ?? raw.created_by ?? ""),
     updatedAt: Number(raw.updatedAt ?? raw.updated_at ?? Date.now()),
+    schemaVersion,
   };
 }
 
@@ -162,6 +174,7 @@ function geometrySetSeamMode(seamKey, mode) {
     mode: normalized.mode,
     createdBy: normalized.createdBy,
     updatedAt: normalized.updatedAt,
+    schemaVersion: 2,
   });
   requestRender();
   return normalized;

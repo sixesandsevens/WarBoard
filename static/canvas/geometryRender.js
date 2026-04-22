@@ -45,8 +45,10 @@ function drawGeometryObject(obj, edgeClasses) {
   // 2 — Edges: exterior walls, seams, and suppressed duplicates
   _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, edgeClasses);
 
-  // 3 — Opening overlays (always rendered regardless of edge classification)
+  // 3 — Opening overlays only render where the resolved boundary is a true wall.
   for (const op of (obj.openings || [])) {
+    const edgeInfo = edgeClasses ? edgeClasses.get(`${obj.id}:${op.edgeIndex}`) : null;
+    if (!_openingIntersectsRenderableSegment(edgeInfo, op)) continue;
     _renderOpeningOverlay(obj, op);
   }
 
@@ -162,7 +164,7 @@ function _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, edgeC
     if (segments) {
       for (const seg of segments) {
         if (seg.renderRole === "suppressed" || seg.renderRole === "open") continue;
-        _drawEdgeSubSegment(obj, i, edge, polygon, allGaps, style, thickness, seg.t0, seg.t1, seg.renderRole === "seam");
+        _drawEdgeSubSegment(obj, i, edge, polygon, allGaps, style, thickness, seg.t0, seg.t1, seg.renderRole);
       }
       if (ui.debugRoomEdgeSegments) {
         _drawRoomEdgeDebugOverlay(obj, i, polygon, edgeInfo);
@@ -212,7 +214,7 @@ function _strokeSegmentWithGaps(p0, p1, gaps) {
 }
 
 // Draw a sub-segment [t0, t1] of source edge edgeIndex, clipping openings to that span.
-function _drawEdgeSubSegment(obj, edgeIndex, edge, polygon, allGaps, style, thickness, t0, t1, isSeam) {
+function _drawEdgeSubSegment(obj, edgeIndex, edge, polygon, allGaps, style, thickness, t0, t1, renderRole) {
   const n = obj.outer.length;
   const pfull0 = polygon[edgeIndex];
   const pfull1 = polygon[(edgeIndex + 1) % n];
@@ -223,17 +225,19 @@ function _drawEdgeSubSegment(obj, edgeIndex, edge, polygon, allGaps, style, thic
   // Clip openings to [t0, t1] and re-normalize to [0, 1] of this sub-segment
   const segLen = t1 - t0;
   const gaps = [];
-  for (const gap of allGaps) {
-    const gStart = Math.max(gap.t0, t0);
-    const gEnd   = Math.min(gap.t1, t1);
-    if (gEnd <= gStart + 1e-6) continue;
-    gaps.push({ t0: (gStart - t0) / segLen, t1: (gEnd - t0) / segLen });
+  if (renderRole === "exterior" || renderRole === "wall") {
+    for (const gap of allGaps) {
+      const gStart = Math.max(gap.t0, t0);
+      const gEnd   = Math.min(gap.t1, t1);
+      if (gEnd <= gStart + 1e-6) continue;
+      gaps.push({ t0: (gStart - t0) / segLen, t1: (gEnd - t0) / segLen });
+    }
   }
 
   ctx.lineCap = "square";
   ctx.lineJoin = "miter";
 
-  if (isSeam) {
+  if (renderRole === "seam") {
     const dash = Math.max(4, cam.z * 7);
     const gap  = Math.max(3, cam.z * 4);
     ctx.setLineDash([dash, gap]);
@@ -255,6 +259,20 @@ function _drawEdgeSubSegment(obj, edgeIndex, edge, polygon, allGaps, style, thic
     ctx.lineWidth = thickness;
     _strokeSegmentWithGaps(p0, p1, gaps);
   }
+}
+
+function _segmentSupportsOpenings(segment) {
+  if (!segment) return true;
+  return segment.renderRole === "exterior" || segment.renderRole === "wall";
+}
+
+function _openingIntersectsRenderableSegment(edgeInfo, opening) {
+  if (!edgeInfo || !edgeInfo.segments) return true;
+  return edgeInfo.segments.some((segment) => (
+    _segmentSupportsOpenings(segment) &&
+    opening.t1 > segment.t0 + 1e-6 &&
+    opening.t0 < segment.t1 - 1e-6
+  ));
 }
 
 function _drawEdgeSegmentWithGaps(obj, edgeIndex, edge, polygon, gaps, style, thickness, isSeam) {
@@ -384,9 +402,18 @@ function drawGeometrySeamHoverFeedback() {
     ctx.moveTo(mid.x - radius * 0.55, mid.y);
     ctx.lineTo(mid.x + radius * 0.55, mid.y);
     ctx.stroke();
+  } else if (hoveredGeometrySeamInfo.mode === GEOMETRY_SEAM_MODE.CLOSED) {
+    ctx.setLineDash([Math.max(6, cam.z * 6), Math.max(4, cam.z * 4)]);
+    ctx.strokeStyle = "rgba(255, 206, 92, 0.95)";
+    ctx.lineWidth = Math.max(2, cam.z * 2.5);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(ss.x, ss.y);
+    ctx.lineTo(se.x, se.y);
+    ctx.stroke();
   } else {
     ctx.setLineDash([]);
-    ctx.strokeStyle = "rgba(255, 206, 92, 0.95)";
+    ctx.strokeStyle = "rgba(255, 170, 92, 0.95)";
     ctx.lineWidth = Math.max(3, cam.z * 3.25);
     ctx.lineCap = "round";
     ctx.beginPath();

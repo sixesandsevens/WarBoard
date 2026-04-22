@@ -28,8 +28,9 @@ const OPENING_KIND = Object.freeze({
 });
 
 const GEOMETRY_SEAM_MODE = Object.freeze({
-  WALL: "wall",
   OPEN: "open",
+  CLOSED: "closed",
+  WALL: "wall",
 });
 
 // ─── Default Style Presets ────────────────────────────────────────────────────

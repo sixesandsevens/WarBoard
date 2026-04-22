@@ -3148,6 +3148,8 @@
   function _punchGeometryOpening(hit) {
     const obj = state.geometry.get(hit.geometryId);
     if (!obj) return;
+    const resolvedSegment = getGeometryEdgeResolvedSegment(hit.geometryId, hit.edgeIndex, hit.t);
+    if (resolvedSegment?.seamMode && resolvedSegment.seamMode !== GEOMETRY_SEAM_MODE.WALL) return;
 
     const edgeLen = getEdgeLength(obj, hit.edgeIndex);
     const MARGIN = 10; // world units from edge endpoints
@@ -3171,9 +3173,11 @@
 
   function _toggleHoveredGeometrySeam() {
     if (!hoveredGeometrySeamInfo) return;
-    const nextMode = hoveredGeometrySeamInfo.mode === GEOMETRY_SEAM_MODE.OPEN
+    const nextMode = hoveredGeometrySeamInfo.mode === GEOMETRY_SEAM_MODE.CLOSED
       ? GEOMETRY_SEAM_MODE.WALL
-      : GEOMETRY_SEAM_MODE.OPEN;
+      : hoveredGeometrySeamInfo.mode === GEOMETRY_SEAM_MODE.WALL
+        ? GEOMETRY_SEAM_MODE.OPEN
+        : GEOMETRY_SEAM_MODE.CLOSED;
     const next = geometrySetSeamMode(hoveredGeometrySeamInfo.seamKey, nextMode);
     if (next) {
       hoveredGeometrySeamInfo = { ...hoveredGeometrySeamInfo, mode: next.mode };

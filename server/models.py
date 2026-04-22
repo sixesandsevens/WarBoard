@@ -213,9 +213,10 @@ class GeometryObject(BaseModel):
 class GeometrySeamOverride(BaseModel):
     id: str
     seam_key: str
-    mode: Literal["wall", "open"] = "wall"
+    mode: Literal["open", "closed", "wall"] = "closed"
     created_by: str = ""
     updated_at: float = 0.0
+    schema_version: int = 2
 
 
 class TerrainStroke(BaseModel):

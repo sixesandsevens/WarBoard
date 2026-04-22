@@ -857,8 +857,10 @@ function getResolvedGeometryStructures() {
           });
           const override = state.geometry_seams.get(seamKey);
           next.seamKey = seamKey;
-          next.seamMode = override?.mode || GEOMETRY_SEAM_MODE.WALL;
-          next.renderRole = next.seamMode === GEOMETRY_SEAM_MODE.OPEN ? "open" : "seam";
+          next.seamMode = override?.mode || GEOMETRY_SEAM_MODE.CLOSED;
+          if (next.seamMode === GEOMETRY_SEAM_MODE.OPEN) next.renderRole = "open";
+          else if (next.seamMode === GEOMETRY_SEAM_MODE.WALL) next.renderRole = "wall";
+          else next.renderRole = "seam";
           seamSegments.push({
             seamKey,
             mode: next.seamMode,
@@ -878,6 +880,16 @@ function getResolvedGeometryStructures() {
 
   _geometryDerivedCache = { roomsSorted, groups, edgeClasses, seamSegments };
   return _geometryDerivedCache;
+}
+
+function getGeometryEdgeResolvedSegment(geometryId, edgeIndex, t) {
+  const edgeInfo = getResolvedGeometryStructures().edgeClasses.get(`${geometryId}:${edgeIndex}`);
+  if (!edgeInfo || !edgeInfo.segments) return null;
+  const targetT = clamp(Number(t), 0, 1);
+  for (const segment of edgeInfo.segments) {
+    if (targetT + 1e-6 >= segment.t0 && targetT - 1e-6 <= segment.t1) return segment;
+  }
+  return null;
 }
 
 function hitTestGeometrySeam(worldX, worldY, options = {}) {

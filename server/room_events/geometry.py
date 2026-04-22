@@ -11,7 +11,7 @@ _VALID_KINDS = {"room", "cave", "wall_path"}
 _VALID_OPENING_KINDS = {"door", "window", "arch", "gap"}
 _VALID_EDGE_ROLES = {"wall", "open", "boundary"}
 _VALID_RENDER_MODES = {"clean_stroke", "rough_stroke", "rock_wall", "hidden"}
-_VALID_SEAM_MODES = {"wall", "open"}
+_VALID_SEAM_MODES = {"open", "closed", "wall"}
 
 
 def _parse_points(raw: object) -> list[Point]:
@@ -198,10 +198,13 @@ def apply_geometry_event(
         seam_key = str(payload.get("seamKey") or payload.get("seam_key") or "").strip()
         override_id = str(payload.get("id") or seam_key).strip()
         mode = str(payload.get("mode") or "wall").strip()
+        schema_version = int(payload.get("schemaVersion") or payload.get("schema_version") or 1)
         if not seam_key:
             return WireEvent(type="ERROR", payload={"message": "Missing seam key"})
         if mode not in _VALID_SEAM_MODES:
             return WireEvent(type="ERROR", payload={"message": f"Invalid seam mode: {mode}"})
+        if mode == "wall" and schema_version < 2:
+            mode = "closed"
         manager._push_history(room)
         seam = GeometrySeamOverride(
             id=override_id or seam_key,
@@ -209,6 +212,7 @@ def apply_geometry_event(
             mode=mode,
             created_by=str(payload.get("createdBy") or payload.get("created_by") or client_id),
             updated_at=float(payload.get("updatedAt") or payload.get("updated_at") or 0),
+            schema_version=max(1, schema_version),
         )
         room.state.geometry_seams[seam.seam_key] = seam
         manager._mark_dirty(room_id, room)
@@ -263,4 +267,5 @@ def _dump_seam(seam: GeometrySeamOverride) -> dict:
         "mode": seam.mode,
         "createdBy": seam.created_by,
         "updatedAt": seam.updated_at,
+        "schemaVersion": seam.schema_version,
     }
