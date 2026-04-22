@@ -4551,13 +4551,11 @@
     updateCanvasCursor();
 
     if (t === "interior" && pendingInteriorPreview && isGM()) {
-      const room = normalizeInteriorRecord({
-        ...pendingInteriorPreview,
-        creator_id: myId(),
-      });
+      const { x, y, w, h } = pendingInteriorPreview;
+      const raw = createRectangleRoomGeometry(x, y, w, h, { createdBy: String(myId() || "") });
+      const obj = geometryAdd(raw);
       activeInteriorPreview = null;
-      selectedInteriorId = room.id;
-      send("INTERIOR_ADD", room);
+      if (obj) selectedGeometryId = obj.id;
       requestRender();
     } else if (t !== "interior") {
       activeInteriorPreview = null;

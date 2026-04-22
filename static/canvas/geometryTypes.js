@@ -86,6 +86,18 @@ function createRoomGeometry(points, style = {}) {
   return createGeometryObject(GEOMETRY_KIND.ROOM, points, true, { style });
 }
 
+// Builds a closed 4-corner room polygon from axis-aligned rectangle bounds.
+// Corners are in consistent winding order regardless of drag direction.
+function createRectangleRoomGeometry(x, y, w, h, opts = {}) {
+  const pts = [
+    { x,     y     },
+    { x: x + w, y     },
+    { x: x + w, y: y + h },
+    { x,     y: y + h },
+  ];
+  return createGeometryObject(GEOMETRY_KIND.ROOM, pts, true, opts);
+}
+
 function createCaveGeometry(points, style = {}) {
   return createGeometryObject(GEOMETRY_KIND.CAVE, points, true, { style });
 }

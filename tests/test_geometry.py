@@ -501,3 +501,108 @@ class TestGeometryEdges:
                              id="geo1", edges=edges)
         assert result.type == "GEOMETRY_UPDATE"
         assert room.state.geometry["geo1"].edges[0].render_mode == "hidden"
+
+
+# ---------------------------------------------------------------------------
+# Rectangle-drag room convergence — new rectangle rooms are geometry rooms
+# ---------------------------------------------------------------------------
+
+def _rectangle_outer(x=0, y=0, w=144, h=144):
+    """Four corners in consistent winding order, as createRectangleRoomGeometry emits."""
+    return [
+        {"x": x,     "y": y},
+        {"x": x + w, "y": y},
+        {"x": x + w, "y": y + h},
+        {"x": x,     "y": y + h},
+    ]
+
+
+class TestRectangleRoomGeometry:
+    async def test_rectangle_room_accepted_as_geometry(self, gm_room):
+        """A 4-corner closed room polygon is accepted as a geometry room."""
+        rm, room, room_id = gm_room
+        result = await apply(rm, room, room_id, "GEOMETRY_ADD",
+                             id="rect1", kind="room",
+                             outer=_rectangle_outer(), closed=True)
+        assert result.type == "GEOMETRY_ADD"
+        assert "rect1" in room.state.geometry
+
+    async def test_rectangle_room_is_closed(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "GEOMETRY_ADD",
+                    id="rect1", kind="room",
+                    outer=_rectangle_outer(), closed=True)
+        assert room.state.geometry["rect1"].closed is True
+
+    async def test_rectangle_room_has_four_corners(self, gm_room):
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "GEOMETRY_ADD",
+                    id="rect1", kind="room",
+                    outer=_rectangle_outer(x=72, y=72, w=144, h=216), closed=True)
+        obj = room.state.geometry["rect1"]
+        assert len(obj.outer) == 4
+
+    async def test_rectangle_room_corner_values_preserved(self, gm_room):
+        rm, room, room_id = gm_room
+        outer = _rectangle_outer(x=72, y=144, w=288, h=144)
+        await apply(rm, room, room_id, "GEOMETRY_ADD",
+                    id="rect1", kind="room", outer=outer, closed=True)
+        pts = room.state.geometry["rect1"].outer
+        xs = {p.x for p in pts}
+        ys = {p.y for p in pts}
+        assert xs == {72.0, 72.0 + 288.0}
+        assert ys == {144.0, 144.0 + 144.0}
+
+    async def test_rectangle_room_survives_state_sync(self, gm_room):
+        """Rectangle-created geometry room must round-trip through STATE_SYNC."""
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "GEOMETRY_ADD",
+                    id="rect1", kind="room",
+                    outer=_rectangle_outer(), closed=True)
+        sync = await apply(rm, room, room_id, "REQ_STATE_SYNC")
+        assert "rect1" in sync.payload["geometry"]
+        assert sync.payload["geometry"]["rect1"]["kind"] == "room"
+
+    async def test_rectangle_room_accepts_door_opening(self, gm_room):
+        """A door opening can be punched into a rectangle-created geometry room."""
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "GEOMETRY_ADD",
+                    id="rect1", kind="room",
+                    outer=_rectangle_outer(), closed=True)
+        op = _opening(edge_index=0, t0=0.3, t1=0.7, kind="door", op_id="door1")
+        result = await apply(rm, room, room_id, "GEOMETRY_UPDATE",
+                             id="rect1", openings=[op])
+        assert result.type == "GEOMETRY_UPDATE"
+        assert len(room.state.geometry["rect1"].openings) == 1
+        assert room.state.geometry["rect1"].openings[0].kind == "door"
+
+    async def test_rectangle_room_door_survives_reconnect(self, gm_room):
+        """Door on a rectangle room must persist through STATE_SYNC (reconnect path)."""
+        rm, room, room_id = gm_room
+        await apply(rm, room, room_id, "GEOMETRY_ADD",
+                    id="rect1", kind="room",
+                    outer=_rectangle_outer(), closed=True)
+        op = _opening(edge_index=2, t0=0.2, t1=0.8, kind="door", op_id="door2")
+        await apply(rm, room, room_id, "GEOMETRY_UPDATE", id="rect1", openings=[op])
+        sync = await apply(rm, room, room_id, "REQ_STATE_SYNC")
+        geo_data = sync.payload["geometry"]["rect1"]
+        openings = geo_data.get("openings", [])
+        assert len(openings) == 1
+        op_data = openings[0]
+        assert op_data.get("edge_index") == 2 or op_data.get("edgeIndex") == 2
+
+    async def test_rectangle_room_non_gm_rejected(self, gm_room):
+        rm, room, room_id = gm_room
+        result = await apply_as_player(rm, room, room_id, "GEOMETRY_ADD",
+                                       id="rect1", kind="room",
+                                       outer=_rectangle_outer(), closed=True)
+        assert result.type == "ERROR"
+        assert "rect1" not in room.state.geometry
+
+    async def test_legacy_interiors_still_load_after_convergence(self):
+        """Old rooms with interior data load safely — geometry convergence is forward-only."""
+        from server.models import InteriorRoom
+        interior = InteriorRoom(id="old1", x=0, y=0, w=144, h=144, style="wood")
+        state = RoomState(room_id="legacy-room", interiors={"old1": interior})
+        assert "old1" in state.interiors
+        assert state.geometry == {}
