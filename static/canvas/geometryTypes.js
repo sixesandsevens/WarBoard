@@ -34,7 +34,7 @@ const GEOMETRY_STYLE_PRESETS = Object.freeze({
     fillColor: "#b99d79",
     edgeDefaultRole: "wall",
     edgeDefaultRenderMode: "clean_stroke",
-    edgeThickness: 2,
+    edgeThickness: 6,
     smoothing: 0,
     edgeJitter: 0,
   },

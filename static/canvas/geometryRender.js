@@ -160,17 +160,8 @@ function _edgeStrokeColor(obj, edge) {
   return "#3d2a14";
 }
 
-function _drawEdgeSegmentWithGaps(obj, edgeIndex, edge, polygon, gaps, style, thickness) {
-  const n = obj.outer.length;
-  const p0 = polygon[edgeIndex];
-  const p1 = polygon[(edgeIndex + 1) % n];
-
-  ctx.strokeStyle = _edgeStrokeColor(obj, edge);
-  ctx.lineWidth = thickness;
-  ctx.lineCap = "square";
-  ctx.lineJoin = "miter";
-  ctx.setLineDash([]);
-
+// Stroke p0→p1 skipping the gap ranges (each gap: { t0, t1 } in [0,1]).
+function _strokeSegmentWithGaps(p0, p1, gaps) {
   if (!gaps.length) {
     ctx.beginPath();
     ctx.moveTo(p0.x, p0.y);
@@ -178,8 +169,6 @@ function _drawEdgeSegmentWithGaps(obj, edgeIndex, edge, polygon, gaps, style, th
     ctx.stroke();
     return;
   }
-
-  // Draw wall segments around openings
   const sorted = [...gaps].sort((a, b) => a.t0 - b.t0);
   let cursor = 0;
   for (const gap of sorted) {
@@ -199,6 +188,30 @@ function _drawEdgeSegmentWithGaps(obj, edgeIndex, edge, polygon, gaps, style, th
     ctx.moveTo(from.x, from.y);
     ctx.lineTo(p1.x, p1.y);
     ctx.stroke();
+  }
+}
+
+function _drawEdgeSegmentWithGaps(obj, edgeIndex, edge, polygon, gaps, style, thickness) {
+  const n = obj.outer.length;
+  const p0 = polygon[edgeIndex];
+  const p1 = polygon[(edgeIndex + 1) % n];
+
+  ctx.lineCap = "square";
+  ctx.lineJoin = "miter";
+  ctx.setLineDash([]);
+
+  if (obj.kind === GEOMETRY_KIND.ROOM) {
+    // Dual-pass: wide dark under-stroke for wall mass + crisp top stroke for definition
+    ctx.strokeStyle = "#1a0d05";
+    ctx.lineWidth = thickness * 2.2;
+    _strokeSegmentWithGaps(p0, p1, gaps);
+    ctx.strokeStyle = "#3d2a14";
+    ctx.lineWidth = thickness;
+    _strokeSegmentWithGaps(p0, p1, gaps);
+  } else {
+    ctx.strokeStyle = _edgeStrokeColor(obj, edge);
+    ctx.lineWidth = thickness;
+    _strokeSegmentWithGaps(p0, p1, gaps);
   }
 }
 
@@ -226,14 +239,23 @@ function _renderOpeningOverlay(obj, opening) {
   ctx.setLineDash([]);
 
   if (opening.kind === OPENING_KIND.DOOR) {
-    ctx.strokeStyle = "rgba(140, 100, 60, 0.9)";
-    ctx.lineWidth = Math.max(1, cam.z);
+    // Hinge pivot dot at the pivot end of the slab
+    const hingeR = Math.max(2.5, cam.z * 2.5);
+    ctx.fillStyle = "rgba(70, 40, 10, 0.95)";
+    ctx.beginPath();
+    ctx.arc(spanLen / 2, 0, hingeR, 0, Math.PI * 2);
+    ctx.fill();
     // Door slab
+    ctx.strokeStyle = "rgba(80, 48, 14, 0.95)";
+    ctx.lineWidth = Math.max(2, cam.z * 2.5);
+    ctx.lineCap = "round";
     ctx.beginPath();
     ctx.moveTo(-spanLen / 2, 0);
     ctx.lineTo(spanLen / 2, 0);
     ctx.stroke();
-    // Swing arc
+    // Swing arc — lighter so it reads as the sweep path, not a second wall
+    ctx.strokeStyle = "rgba(100, 65, 20, 0.55)";
+    ctx.lineWidth = Math.max(1.5, cam.z * 1.5);
     ctx.beginPath();
     ctx.arc(spanLen / 2, 0, spanLen, Math.PI * 0.5, Math.PI);
     ctx.stroke();
