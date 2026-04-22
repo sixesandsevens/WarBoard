@@ -164,7 +164,13 @@ function geometryUpdate(id, changes) {
 }
 
 function geometrySetSeamMode(seamKey, mode) {
-  const normalized = normalizeGeometrySeamOverride({ id: seamKey, seamKey, mode, updatedAt: Date.now() });
+  const normalized = normalizeGeometrySeamOverride({
+    id: seamKey,
+    seamKey,
+    mode,
+    updatedAt: Date.now(),
+    schemaVersion: 2,
+  });
   if (!normalized) return null;
   state.geometry_seams.set(normalized.seamKey, normalized);
   if (typeof markGeometryDerivedDirty === "function") markGeometryDerivedDirty();
