@@ -69,6 +69,20 @@ function normalizeGeometryObject(raw) {
   };
 }
 
+function normalizeGeometrySeamOverride(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const seamKey = String(raw.seamKey ?? raw.seam_key ?? raw.id ?? "").trim();
+  if (!seamKey) return null;
+  const mode = (raw.mode === GEOMETRY_SEAM_MODE.OPEN) ? GEOMETRY_SEAM_MODE.OPEN : GEOMETRY_SEAM_MODE.WALL;
+  return {
+    id: String(raw.id || seamKey),
+    seamKey,
+    mode,
+    createdBy: String(raw.createdBy ?? raw.created_by ?? ""),
+    updatedAt: Number(raw.updatedAt ?? raw.updated_at ?? Date.now()),
+  };
+}
+
 // Normalize, validate, and compute bounds in one step.
 // Returns a ready-to-store object or null if validation fails.
 // Use this at every insertion point so invalid geometry never enters state.
@@ -94,6 +108,7 @@ function applyGeometryMutation(mutation) {
     const id = typeof entry === "string" ? entry : entry.id;
     if (id) {
       state.geometry.delete(id);
+      if (typeof markGeometryDerivedDirty === "function") markGeometryDerivedDirty();
       send("GEOMETRY_DELETE", { id });
     }
   }
@@ -101,6 +116,7 @@ function applyGeometryMutation(mutation) {
     const obj = normalizeAndValidateGeometry(raw);
     if (obj) {
       state.geometry.set(obj.id, obj);
+      if (typeof markGeometryDerivedDirty === "function") markGeometryDerivedDirty();
       send("GEOMETRY_ADD", _geometryWirePayload(obj));
     }
   }
@@ -113,6 +129,7 @@ function geometryAdd(raw) {
   const obj = normalizeAndValidateGeometry(raw);
   if (!obj) return null;
   state.geometry.set(obj.id, obj);
+  if (typeof markGeometryDerivedDirty === "function") markGeometryDerivedDirty();
   send("GEOMETRY_ADD", _geometryWirePayload(obj));
   requestRender();
   return obj;
@@ -128,13 +145,31 @@ function geometryUpdate(id, changes) {
   const obj = normalizeAndValidateGeometry(merged);
   if (obj) {
     state.geometry.set(id, obj);
+    if (typeof markGeometryDerivedDirty === "function") markGeometryDerivedDirty();
     send("GEOMETRY_UPDATE", _geometryWirePayload(obj));
     requestRender();
   }
 }
 
+function geometrySetSeamMode(seamKey, mode) {
+  const normalized = normalizeGeometrySeamOverride({ id: seamKey, seamKey, mode, updatedAt: Date.now() });
+  if (!normalized) return null;
+  state.geometry_seams.set(normalized.seamKey, normalized);
+  if (typeof markGeometryDerivedDirty === "function") markGeometryDerivedDirty();
+  send("GEOMETRY_SEAM_SET", {
+    id: normalized.id,
+    seamKey: normalized.seamKey,
+    mode: normalized.mode,
+    createdBy: normalized.createdBy,
+    updatedAt: normalized.updatedAt,
+  });
+  requestRender();
+  return normalized;
+}
+
 function geometryDelete(id) {
   if (state.geometry.delete(id)) {
+    if (typeof markGeometryDerivedDirty === "function") markGeometryDerivedDirty();
     send("GEOMETRY_DELETE", { id });
     requestRender();
   }
@@ -219,10 +254,18 @@ function applyGeometryEvent(type, payload) {
     const obj = normalizeAndValidateGeometry(payload);
     if (obj) {
       state.geometry.set(obj.id, obj);
+      if (typeof markGeometryDerivedDirty === "function") markGeometryDerivedDirty();
       requestRender();
     }
   } else if (type === "GEOMETRY_DELETE") {
     const id = String(payload.id || "");
     if (id) geometryDelete(id);
+  } else if (type === "GEOMETRY_SEAM_SET") {
+    const seam = normalizeGeometrySeamOverride(payload);
+    if (seam) {
+      state.geometry_seams.set(seam.seamKey, seam);
+      if (typeof markGeometryDerivedDirty === "function") markGeometryDerivedDirty();
+      requestRender();
+    }
   }
 }

@@ -63,6 +63,7 @@ EventType = Literal[
     "GEOMETRY_ADD",
     "GEOMETRY_UPDATE",
     "GEOMETRY_DELETE",
+    "GEOMETRY_SEAM_SET",
     "ERROR",
 ]
 
@@ -209,6 +210,14 @@ class GeometryObject(BaseModel):
     z_index: int = 0
 
 
+class GeometrySeamOverride(BaseModel):
+    id: str
+    seam_key: str
+    mode: Literal["wall", "open"] = "wall"
+    created_by: str = ""
+    updated_at: float = 0.0
+
+
 class TerrainStroke(BaseModel):
     id: str
     material_id: str
@@ -285,6 +294,7 @@ class RoomState(BaseModel):
     terrain_paint: TerrainPaintState = Field(default_factory=TerrainPaintState)
     fog_paint: FogPaintState = Field(default_factory=FogPaintState)
     geometry: Dict[str, GeometryObject] = Field(default_factory=dict)
+    geometry_seams: Dict[str, GeometrySeamOverride] = Field(default_factory=dict)
 
 
 class ClientHello(BaseModel):

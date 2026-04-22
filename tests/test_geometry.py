@@ -53,6 +53,16 @@ def _opening(edge_index=0, t0=0.3, t1=0.7, kind="door", op_id="op1"):
     }
 
 
+def _seam(seam_key="seam|geo1,geo2|0,0|100,0", mode="open", seam_id="seam1"):
+    return {
+        "id": seam_id,
+        "seamKey": seam_key,
+        "mode": mode,
+        "createdBy": "gm",
+        "updatedAt": 1234567890.0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # GEOMETRY_ADD — basic
 # ---------------------------------------------------------------------------
@@ -411,6 +421,16 @@ class TestGeometryStateSync:
         sync = await apply(rm, room, room_id, "REQ_STATE_SYNC")
         assert sync.payload["geometry"] == {}
 
+    async def test_state_sync_preserves_geometry_seams(self, gm_room):
+        rm, room, room_id = gm_room
+        seam = _seam()
+        result = await apply(rm, room, room_id, "GEOMETRY_SEAM_SET", **seam)
+        assert result.type == "GEOMETRY_SEAM_SET"
+        sync = await apply(rm, room, room_id, "REQ_STATE_SYNC")
+        seam_data = sync.payload["geometry_seams"][seam["seamKey"]]
+        assert seam_data.get("mode") == "open"
+        assert seam_data.get("seam_key") == seam["seamKey"] or seam_data.get("seamKey") == seam["seamKey"]
+
     async def test_old_room_without_openings_loads_safely(self):
         """A GeometryObject saved without openings/edges defaults to empty lists."""
         obj = GeometryObject(
@@ -463,6 +483,35 @@ class TestOpeningMetadata:
         obj = room.state.geometry["geo1"]
         if obj.openings:
             assert obj.openings[0].kind == "door"
+
+
+# ---------------------------------------------------------------------------
+# Seam override persistence
+# ---------------------------------------------------------------------------
+
+class TestGeometrySeams:
+    async def test_gm_can_set_geometry_seam_override(self, gm_room):
+        rm, room, room_id = gm_room
+        seam = _seam()
+        result = await apply(rm, room, room_id, "GEOMETRY_SEAM_SET", **seam)
+        assert result.type == "GEOMETRY_SEAM_SET"
+        assert seam["seamKey"] in room.state.geometry_seams
+        assert room.state.geometry_seams[seam["seamKey"]].mode == "open"
+
+    async def test_geometry_seam_set_non_gm_rejected(self, gm_room):
+        rm, room, room_id = gm_room
+        seam = _seam()
+        result = await apply_as_player(rm, room, room_id, "GEOMETRY_SEAM_SET", **seam)
+        assert result.type == "ERROR"
+        assert seam["seamKey"] not in room.state.geometry_seams
+
+    async def test_geometry_seam_can_toggle_back_to_wall(self, gm_room):
+        rm, room, room_id = gm_room
+        seam = _seam(mode="open")
+        await apply(rm, room, room_id, "GEOMETRY_SEAM_SET", **seam)
+        result = await apply(rm, room, room_id, "GEOMETRY_SEAM_SET", **_seam(mode="wall"))
+        assert result.type == "GEOMETRY_SEAM_SET"
+        assert room.state.geometry_seams[seam["seamKey"]].mode == "wall"
 
 
 # ---------------------------------------------------------------------------

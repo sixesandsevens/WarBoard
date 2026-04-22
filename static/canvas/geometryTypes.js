@@ -27,6 +27,11 @@ const OPENING_KIND = Object.freeze({
   GAP: "gap",
 });
 
+const GEOMETRY_SEAM_MODE = Object.freeze({
+  WALL: "wall",
+  OPEN: "open",
+});
+
 // ─── Default Style Presets ────────────────────────────────────────────────────
 const GEOMETRY_STYLE_PRESETS = Object.freeze({
   room: {

@@ -549,7 +549,7 @@ class RoomManager:
         if t in {"INTERIOR_ADD", "INTERIOR_UPDATE", "INTERIOR_DELETE", "INTERIOR_SET_LOCK", "INTERIOR_EDGE_SET", "INTERIOR_WALL_CUT_ADD", "INTERIOR_WALL_CUT_REMOVE"}:
             return self._apply_interior_event(room_id, room, t, p, client_id, user_id)
 
-        if t in {"GEOMETRY_ADD", "GEOMETRY_UPDATE", "GEOMETRY_DELETE"}:
+        if t in {"GEOMETRY_ADD", "GEOMETRY_UPDATE", "GEOMETRY_DELETE", "GEOMETRY_SEAM_SET"}:
             return self._apply_geometry_event(room_id, room, t, p, client_id, user_id)
 
         if t in {"TERRAIN_STROKE_ADD", "TERRAIN_STROKE_UNDO"}:

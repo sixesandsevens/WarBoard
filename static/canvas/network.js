@@ -344,6 +344,7 @@ function connectWS(force = false, options = {}) {
         const obj = normalizeAndValidateGeometry(p);
         if (obj) state.geometry.set(obj.id, obj);
       }
+      markGeometryDerivedDirty();
       requestRender();
       return;
     }
@@ -354,6 +355,20 @@ function connectWS(force = false, options = {}) {
         state.geometry.delete(id);
         if (selectedGeometryId === id) selectedGeometryId = null;
       }
+      markGeometryDerivedDirty();
+      requestRender();
+      return;
+    }
+
+    if (ev.type === "GEOMETRY_SEAM_SET") {
+      const seam = normalizeGeometrySeamOverride(ev.payload);
+      if (seam) {
+        state.geometry_seams.set(seam.seamKey, seam);
+        if (hoveredGeometrySeamInfo?.seamKey === seam.seamKey) {
+          hoveredGeometrySeamInfo = { ...hoveredGeometrySeamInfo, mode: seam.mode };
+        }
+      }
+      markGeometryDerivedDirty();
       requestRender();
       return;
     }

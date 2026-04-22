@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from ..models import GeometryEdge, GeometryObject, GeometryOpening, Point, WireEvent
+from ..models import GeometryEdge, GeometryObject, GeometryOpening, GeometrySeamOverride, Point, WireEvent
 
 if TYPE_CHECKING:
     from ..rooms import Room, RoomManager
@@ -11,6 +11,7 @@ _VALID_KINDS = {"room", "cave", "wall_path"}
 _VALID_OPENING_KINDS = {"door", "window", "arch", "gap"}
 _VALID_EDGE_ROLES = {"wall", "open", "boundary"}
 _VALID_RENDER_MODES = {"clean_stroke", "rough_stroke", "rock_wall", "hidden"}
+_VALID_SEAM_MODES = {"wall", "open"}
 
 
 def _parse_points(raw: object) -> list[Point]:
@@ -193,6 +194,26 @@ def apply_geometry_event(
         manager._mark_dirty(room_id, room)
         return WireEvent(type="GEOMETRY_DELETE", payload={"id": geo_id})
 
+    if event_type == "GEOMETRY_SEAM_SET":
+        seam_key = str(payload.get("seamKey") or payload.get("seam_key") or "").strip()
+        override_id = str(payload.get("id") or seam_key).strip()
+        mode = str(payload.get("mode") or "wall").strip()
+        if not seam_key:
+            return WireEvent(type="ERROR", payload={"message": "Missing seam key"})
+        if mode not in _VALID_SEAM_MODES:
+            return WireEvent(type="ERROR", payload={"message": f"Invalid seam mode: {mode}"})
+        manager._push_history(room)
+        seam = GeometrySeamOverride(
+            id=override_id or seam_key,
+            seam_key=seam_key,
+            mode=mode,
+            created_by=str(payload.get("createdBy") or payload.get("created_by") or client_id),
+            updated_at=float(payload.get("updatedAt") or payload.get("updated_at") or 0),
+        )
+        room.state.geometry_seams[seam.seam_key] = seam
+        manager._mark_dirty(room_id, room)
+        return WireEvent(type="GEOMETRY_SEAM_SET", payload=_dump_seam(seam))
+
     return WireEvent(type="ERROR", payload={"message": f"Unhandled geometry event: {event_type}"})
 
 
@@ -232,4 +253,14 @@ def _dump(obj: GeometryObject) -> dict:
         "locked": obj.locked,
         "visible": obj.visible,
         "zIndex": obj.z_index,
+    }
+
+
+def _dump_seam(seam: GeometrySeamOverride) -> dict:
+    return {
+        "id": seam.id,
+        "seamKey": seam.seam_key,
+        "mode": seam.mode,
+        "createdBy": seam.created_by,
+        "updatedAt": seam.updated_at,
     }

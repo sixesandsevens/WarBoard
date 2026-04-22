@@ -386,6 +386,13 @@ function buildStructureGroups(roomObjects) {
   return groups;
 }
 
+let _geometryDerivedDirty = true;
+let _geometryDerivedCache = null;
+
+function markGeometryDerivedDirty() {
+  _geometryDerivedDirty = true;
+}
+
 // ─── Segment-level edge helpers ───────────────────────────────────────────────
 
 // Returns t ∈ (0,1) on a0→a1 where b0→b1 crosses it, or null (no interior crossing).
@@ -769,6 +776,130 @@ function runRoomBoundarySegmentationRegressionFixtures() {
     results.push({ name: fixture.name, ok: true });
   }
   return results;
+}
+
+function _formatSeamCoord(value) {
+  return Number(value.toFixed(3)).toString();
+}
+
+function _canonicalSegmentEndpointKey(p0, p1) {
+  const a = `${_formatSeamCoord(p0.x)},${_formatSeamCoord(p0.y)}`;
+  const b = `${_formatSeamCoord(p1.x)},${_formatSeamCoord(p1.y)}`;
+  return a <= b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+function _segmentCoincidentPeerIds(samples, peers, tolerance) {
+  const ids = [];
+  for (const peer of peers) {
+    const peerEdgeCount = getEdgeCount(peer);
+    for (let j = 0; j < peerEdgeCount; j++) {
+      const b0 = getEdgeStart(peer, j);
+      const b1 = getEdgeEnd(peer, j);
+      if (_samplesCoincidentWithEdge(samples, b0, b1, tolerance) >= 2) {
+        ids.push(peer.id);
+        break;
+      }
+    }
+  }
+  return ids;
+}
+
+function _segmentContainingPeerIds(exteriorSamples, peers) {
+  const ids = [];
+  for (const peer of peers) {
+    let hits = 0;
+    for (const sample of exteriorSamples) {
+      if (_pointInPolygon(sample.x, sample.y, peer.outer)) hits++;
+    }
+    if (hits >= 2) ids.push(peer.id);
+  }
+  return ids;
+}
+
+function _makeStableSeamKey(obj, edgeIndex, a0, a1, t0, t1, peers, options) {
+  const samples = _sampleSegmentPoints(a0, a1, t0, t1);
+  const exteriorSamples = _segmentExteriorSamples(obj, samples, a0, a1, options.classifyOffsetWorld);
+  const participantIds = new Set([obj.id]);
+  for (const id of _segmentCoincidentPeerIds(samples, peers, options.suppressTolerance)) participantIds.add(id);
+  for (const id of _segmentContainingPeerIds(exteriorSamples, peers)) participantIds.add(id);
+
+  const p0 = pointAlongEdge(obj, edgeIndex, t0);
+  const p1 = pointAlongEdge(obj, edgeIndex, t1);
+  return `seam|${[...participantIds].sort().join(",")}|${_canonicalSegmentEndpointKey(p0, p1)}`;
+}
+
+function getResolvedGeometryStructures() {
+  if (!_geometryDerivedDirty && _geometryDerivedCache) return _geometryDerivedCache;
+
+  _geometryDerivedDirty = false;
+  const roomsSorted = getSortedGeometryObjects().filter((obj) => obj.kind === GEOMETRY_KIND.ROOM);
+  const groups = roomsSorted.length > 1 ? buildStructureGroups(roomsSorted) : new Map(roomsSorted.map((obj) => [obj.id, obj.id]));
+  const rawEdgeClasses = roomsSorted.length > 1 ? classifyRoomEdgesSegmented(roomsSorted, groups) : new Map();
+  const edgeClasses = new Map();
+  const seamSegments = [];
+
+  for (const obj of roomsSorted) {
+    const myRoot = groups.get(obj.id);
+    const peers = roomsSorted.filter((other) => other.id !== obj.id && groups.get(other.id) === myRoot);
+    const edgeCount = getEdgeCount(obj);
+    for (let edgeIndex = 0; edgeIndex < edgeCount; edgeIndex++) {
+      const key = `${obj.id}:${edgeIndex}`;
+      const rawEdgeInfo = rawEdgeClasses.get(key) || { splitTs: [0, 1], segments: [{ t0: 0, t1: 1, role: "exterior" }] };
+      const a0 = getEdgeStart(obj, edgeIndex);
+      const a1 = getEdgeEnd(obj, edgeIndex);
+      const edgeLength = Math.hypot(a1.x - a0.x, a1.y - a0.y);
+      const segments = rawEdgeInfo.segments.map((segment) => {
+        const next = { ...segment, renderRole: segment.role, seamKey: null, seamMode: null };
+        if (segment.role === "seam") {
+          const seamKey = _makeStableSeamKey(obj, edgeIndex, a0, a1, segment.t0, segment.t1, peers, {
+            suppressTolerance: 6,
+            classifyOffsetWorld: Math.min(3.0, Math.max(1.5, edgeLength * 0.25)),
+          });
+          const override = state.geometry_seams.get(seamKey);
+          next.seamKey = seamKey;
+          next.seamMode = override?.mode || GEOMETRY_SEAM_MODE.WALL;
+          next.renderRole = next.seamMode === GEOMETRY_SEAM_MODE.OPEN ? "open" : "seam";
+          seamSegments.push({
+            seamKey,
+            mode: next.seamMode,
+            objId: obj.id,
+            edgeIndex,
+            t0: segment.t0,
+            t1: segment.t1,
+            start: pointAlongEdge(obj, edgeIndex, segment.t0),
+            end: pointAlongEdge(obj, edgeIndex, segment.t1),
+          });
+        }
+        return next;
+      });
+      edgeClasses.set(key, { splitTs: rawEdgeInfo.splitTs, segments });
+    }
+  }
+
+  _geometryDerivedCache = { roomsSorted, groups, edgeClasses, seamSegments };
+  return _geometryDerivedCache;
+}
+
+function hitTestGeometrySeam(worldX, worldY, options = {}) {
+  const resolved = getResolvedGeometryStructures();
+  const tolerance = options.tolerance != null ? options.tolerance : Math.max(14, 18 / (cam?.z || 1));
+  let best = null;
+
+  for (const seam of resolved.seamSegments) {
+    const proj = projectPointToSegment(worldX, worldY, seam.start.x, seam.start.y, seam.end.x, seam.end.y);
+    if (proj.distance > tolerance) continue;
+    const length = Math.hypot(seam.end.x - seam.start.x, seam.end.y - seam.start.y);
+    if (
+      !best ||
+      proj.distance < best.distance ||
+      (proj.distance === best.distance && length < best.length) ||
+      (proj.distance === best.distance && length === best.length && seam.seamKey < best.seamKey)
+    ) {
+      best = { ...seam, distance: proj.distance, length, point: { x: proj.x, y: proj.y }, t: proj.t };
+    }
+  }
+
+  return best;
 }
 
 // Returns the id of the topmost visible geometry object at (wx, wy),

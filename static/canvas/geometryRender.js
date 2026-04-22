@@ -8,13 +8,8 @@ function drawGeometry(pass) {
   if (!state.geometry || !state.geometry.size) return;
   const under = pass === "under";
   const sorted = getSortedGeometryObjects(); // ascending zIndex — also the correct input order for classifyRoomEdges
-  const roomsSorted = sorted.filter(o => o.kind === GEOMETRY_KIND.ROOM);
-
-  let edgeClasses = null;
-  if (roomsSorted.length > 1) {
-    const groups = buildStructureGroups(roomsSorted);
-    edgeClasses = classifyRoomEdgesSegmented(roomsSorted, groups);
-  }
+  const derived = getResolvedGeometryStructures();
+  const edgeClasses = derived.edgeClasses;
 
   for (const obj of sorted) {
     const z = Number(obj.zIndex || 0);
@@ -166,8 +161,8 @@ function _renderGeometryEdges(obj, polygon, edgeCount, style, openingMask, edgeC
     const segments = edgeInfo ? edgeInfo.segments : null;
     if (segments) {
       for (const seg of segments) {
-        if (seg.role === "suppressed") continue;
-        _drawEdgeSubSegment(obj, i, edge, polygon, allGaps, style, thickness, seg.t0, seg.t1, seg.role === "seam");
+        if (seg.renderRole === "suppressed" || seg.renderRole === "open") continue;
+        _drawEdgeSubSegment(obj, i, edge, polygon, allGaps, style, thickness, seg.t0, seg.t1, seg.renderRole === "seam");
       }
       if (ui.debugRoomEdgeSegments) {
         _drawRoomEdgeDebugOverlay(obj, i, polygon, edgeInfo);
@@ -304,6 +299,7 @@ function _lerpScreen(p0, p1, t) {
 function _debugSegmentStrokeColor(role) {
   if (role === "seam") return "rgba(255, 190, 64, 0.95)";
   if (role === "suppressed") return "rgba(235, 92, 92, 0.95)";
+  if (role === "open") return "rgba(90, 190, 255, 0.95)";
   return "rgba(70, 210, 120, 0.95)";
 }
 
@@ -321,7 +317,8 @@ function _drawRoomEdgeDebugOverlay(obj, edgeIndex, polygon, edgeInfo) {
   for (const segment of edgeInfo.segments) {
     const from = _lerpScreen(p0, p1, segment.t0);
     const to = _lerpScreen(p0, p1, segment.t1);
-    ctx.strokeStyle = _debugSegmentStrokeColor(segment.role);
+    const debugRole = segment.renderRole || segment.role;
+    ctx.strokeStyle = _debugSegmentStrokeColor(debugRole);
     ctx.lineWidth = Math.max(2, cam.z * 2.25);
     ctx.beginPath();
     ctx.moveTo(from.x, from.y);
@@ -336,7 +333,7 @@ function _drawRoomEdgeDebugOverlay(obj, edgeIndex, polygon, edgeInfo) {
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
     ctx.strokeText(label, mid.x, mid.y - 6);
-    ctx.fillStyle = _debugSegmentStrokeColor(segment.role);
+    ctx.fillStyle = _debugSegmentStrokeColor(debugRole);
     ctx.fillText(label, mid.x, mid.y - 6);
   }
 
@@ -351,6 +348,28 @@ function _drawRoomEdgeDebugOverlay(obj, edgeIndex, polygon, edgeInfo) {
     ctx.stroke();
   }
 
+  ctx.restore();
+}
+
+function drawGeometrySeamHoverFeedback() {
+  if (!hoveredGeometrySeamInfo) return;
+  const start = hoveredGeometrySeamInfo.start;
+  const end = hoveredGeometrySeamInfo.end;
+  if (!start || !end) return;
+
+  const ss = worldToScreen(start.x, start.y);
+  const se = worldToScreen(end.x, end.y);
+  ctx.save();
+  ctx.setLineDash(hoveredGeometrySeamInfo.mode === GEOMETRY_SEAM_MODE.OPEN ? [Math.max(6, cam.z * 6), Math.max(4, cam.z * 4)] : []);
+  ctx.strokeStyle = hoveredGeometrySeamInfo.mode === GEOMETRY_SEAM_MODE.OPEN
+    ? "rgba(88, 198, 255, 0.95)"
+    : "rgba(255, 206, 92, 0.95)";
+  ctx.lineWidth = Math.max(3, cam.z * 3.25);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(ss.x, ss.y);
+  ctx.lineTo(se.x, se.y);
+  ctx.stroke();
   ctx.restore();
 }
 

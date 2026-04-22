@@ -60,6 +60,10 @@ const STATE_CHANGE_EVENTS = new Set([
   "INTERIOR_EDGE_SET",
   "INTERIOR_WALL_CUT_ADD",
   "INTERIOR_WALL_CUT_REMOVE",
+  "GEOMETRY_ADD",
+  "GEOMETRY_UPDATE",
+  "GEOMETRY_DELETE",
+  "GEOMETRY_SEAM_SET",
 ]);
 const WATCHDOG_MUTATION_EVENTS = new Set([
   "ROOM_SETTINGS",
@@ -89,6 +93,10 @@ const WATCHDOG_MUTATION_EVENTS = new Set([
   "INTERIOR_EDGE_SET",
   "INTERIOR_WALL_CUT_ADD",
   "INTERIOR_WALL_CUT_REMOVE",
+  "GEOMETRY_ADD",
+  "GEOMETRY_UPDATE",
+  "GEOMETRY_DELETE",
+  "GEOMETRY_SEAM_SET",
 ]);
 
 const state = {
@@ -115,6 +123,7 @@ const state = {
   interior_edges: new Map(),
   interior_wall_cuts: new Map(),
   geometry: new Map(),
+  geometry_seams: new Map(),
   terrain_paint: {
     materials: {
       mud:       { id: "mud",       label: "Mud",       style: "dirt",      seedOfs: 101, mode: "mud",        scale: 1.0, zOrder: 0 },
@@ -215,6 +224,7 @@ let hoveredInteriorResize = null;
 let hoveredInteriorWall = null;
 let hoveredInteriorWallCut = null;
 let hoveredGeometryOpeningInfo = null; // { geometryId, openingId } while Door tool hovers an existing opening
+let hoveredGeometrySeamInfo = null; // { seamKey, mode, ... } while Seam tool hovers a derived seam
 let erasingActive = false;
 let lastEraseWorld = null;
 
@@ -308,6 +318,7 @@ const OFFLINE_MUTATION_TYPES = new Set([
   "GEOMETRY_ADD",
   "GEOMETRY_UPDATE",
   "GEOMETRY_DELETE",
+  "GEOMETRY_SEAM_SET",
 ]);
 
 // ─── WS readiness helpers ──────────────────────────────────────────────────────

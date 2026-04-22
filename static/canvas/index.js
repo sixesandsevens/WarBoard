@@ -1715,6 +1715,10 @@
       canvas.style.cursor = isGM() ? "crosshair" : "default";
       return;
     }
+    if (t === "seam") {
+      canvas.style.cursor = hoveredGeometrySeamInfo ? "pointer" : (isGM() ? "crosshair" : "default");
+      return;
+    }
     if (t === "wall_line") {
       canvas.style.cursor = isGM() ? "crosshair" : "default";
       return;
@@ -1934,6 +1938,7 @@
     hoveredInteriorWall = null;
     hoveredInteriorWallCut = null;
     hoveredGeometryOpeningInfo = null;
+    hoveredGeometrySeamInfo = null;
     currentInteriorContextId = null;
     currentInteriorEdge = null;
     currentInteriorWallCutId = null;
@@ -1982,6 +1987,11 @@
       const obj = normalizeAndValidateGeometry({ id, ...raw });
       if (obj) state.geometry.set(id, obj);
     }
+    state.geometry_seams.clear();
+    for (const [seamKey, raw] of Object.entries(s.geometry_seams || {})) {
+      const seam = normalizeGeometrySeamOverride({ id: seamKey, ...raw });
+      if (seam) state.geometry_seams.set(seam.seamKey, seam);
+    }
     state.draw_order = {
       strokes: Array.isArray(s.draw_order?.strokes) ? s.draw_order.strokes.filter((id) => state.strokes.has(id)) : [],
       shapes: Array.isArray(s.draw_order?.shapes) ? s.draw_order.shapes.filter((id) => state.shapes.has(id)) : [],
@@ -1994,6 +2004,7 @@
     for (const id of state.interiors.keys()) if (!state.draw_order.interiors.includes(id)) state.draw_order.interiors.push(id);
     markAssetOrderDirty();
     markInteriorsDirty();
+    markGeometryDerivedDirty();
 
     if (s.terrain_paint) {
       state.terrain_paint.strokes = s.terrain_paint.strokes || {};
@@ -2048,6 +2059,8 @@
       interiors: toPlainObjectMap(state.interiors),
       interior_edges: toPlainObjectMap(state.interior_edges),
       interior_wall_cuts: toPlainObjectMap(state.interior_wall_cuts),
+      geometry: toPlainObjectMap(state.geometry),
+      geometry_seams: toPlainObjectMap(state.geometry_seams),
       draw_order: {
         strokes: [...(state.draw_order?.strokes || [])],
         shapes: [...(state.draw_order?.shapes || [])],
@@ -2298,6 +2311,7 @@
       const obj = normalizeAndValidateGeometry(payload);
       if (obj) {
         state.geometry.set(obj.id, obj);
+        markGeometryDerivedDirty();
         requestRender();
         scheduleOfflineSave();
       }
@@ -2309,6 +2323,21 @@
       if (id) {
         state.geometry.delete(id);
         if (selectedGeometryId === id) selectedGeometryId = null;
+        markGeometryDerivedDirty();
+        requestRender();
+        scheduleOfflineSave();
+      }
+      return;
+    }
+
+    if (type === "GEOMETRY_SEAM_SET") {
+      const seam = normalizeGeometrySeamOverride(payload);
+      if (seam) {
+        state.geometry_seams.set(seam.seamKey, seam);
+        if (hoveredGeometrySeamInfo?.seamKey === seam.seamKey) {
+          hoveredGeometrySeamInfo = { ...hoveredGeometrySeamInfo, mode: seam.mode };
+        }
+        markGeometryDerivedDirty();
         requestRender();
         scheduleOfflineSave();
       }
@@ -2719,7 +2748,7 @@
     log(`UI INIT ERROR: ${e?.message || e}`);
     toast(`UI init error: ${e?.message || e}`);
   }
-  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnInterior, toolBtnWallPunch, toolBtnTerrainPaint, toolBtnFogPaint, toolBtnCaveBrush, toolBtnWallLine].forEach((btn) => {
+  [toolBtnMove, toolBtnPen, toolBtnShape, toolBtnText, toolBtnErase, toolBtnRuler, toolBtnInterior, toolBtnSeam, toolBtnWallPunch, toolBtnTerrainPaint, toolBtnFogPaint, toolBtnCaveBrush, toolBtnWallLine].forEach((btn) => {
     if (!btn) return;
     btn.onclick = () => setTool(btn.dataset.tool);
     btn.addEventListener("mouseenter", () => showTooltipFor(btn));
@@ -3018,6 +3047,7 @@
     toolBtnErase.classList.toggle("active", t === "eraser");
     toolBtnRuler.classList.toggle("active", t === "ruler");
     if (toolBtnInterior) toolBtnInterior.classList.toggle("active", t === "interior");
+    if (toolBtnSeam) toolBtnSeam.classList.toggle("active", t === "seam");
     if (toolBtnWallPunch) toolBtnWallPunch.classList.toggle("active", t === "wall_punch");
     if (toolBtnTerrainPaint) toolBtnTerrainPaint.classList.toggle("active", t === "terrain_paint");
     if (toolBtnFogPaint) toolBtnFogPaint.classList.toggle("active", t === "fog_paint");
@@ -3139,8 +3169,20 @@
     geometryUpdate(hit.geometryId, { openings: newOpenings });
   }
 
+  function _toggleHoveredGeometrySeam() {
+    if (!hoveredGeometrySeamInfo) return;
+    const nextMode = hoveredGeometrySeamInfo.mode === GEOMETRY_SEAM_MODE.OPEN
+      ? GEOMETRY_SEAM_MODE.WALL
+      : GEOMETRY_SEAM_MODE.OPEN;
+    const next = geometrySetSeamMode(hoveredGeometrySeamInfo.seamKey, nextMode);
+    if (next) {
+      hoveredGeometrySeamInfo = { ...hoveredGeometrySeamInfo, mode: next.mode };
+      updateCanvasCursor();
+    }
+  }
+
   function setTool(next) {
-    if ((next === "terrain_paint" || next === "fog_paint" || next === "interior" || next === "wall_punch" || next === "cave_brush" || next === "wall_line") && !isGM()) return;
+    if ((next === "terrain_paint" || next === "fog_paint" || next === "interior" || next === "seam" || next === "wall_punch" || next === "cave_brush" || next === "wall_line") && !isGM()) return;
     const prev = tool();
     if (prev === "terrain_paint" && next !== "terrain_paint" && activePaintStroke && isGM()) {
       commitActiveTerrainStroke();
@@ -3169,6 +3211,8 @@
       }
     }
     const current = tool();
+    if (current !== "seam" && hoveredGeometrySeamInfo) hoveredGeometrySeamInfo = null;
+    if (current !== "wall_punch" && hoveredGeometryOpeningInfo) hoveredGeometryOpeningInfo = null;
     if (current !== prev) {
       if (current === "move") flashToolActivate(toolBtnMove);
       else if (current === "pen") flashToolActivate(toolBtnPen);
@@ -3177,6 +3221,7 @@
       else if (current === "eraser") flashToolActivate(toolBtnErase);
       else if (current === "ruler") flashToolActivate(toolBtnRuler);
       else if (current === "interior" && toolBtnInterior) flashToolActivate(toolBtnInterior);
+      else if (current === "seam" && toolBtnSeam) flashToolActivate(toolBtnSeam);
       else if (current === "wall_punch" && toolBtnWallPunch) flashToolActivate(toolBtnWallPunch);
       else if (current === "terrain_paint" && toolBtnTerrainPaint) flashToolActivate(toolBtnTerrainPaint);
       else if (current === "fog_paint" && toolBtnFogPaint) flashToolActivate(toolBtnFogPaint);
@@ -3185,6 +3230,7 @@
     }
     refreshToolButtons();
     updateCanvasCursor();
+    requestRender();
     scheduleOfflineSave();
   }
   function brushColor() { return colorEl.value; }
@@ -3221,6 +3267,7 @@
       if (k === "e") { setTool("eraser"); e.preventDefault(); return; }
       if (k === "r") { setTool("ruler"); e.preventDefault(); return; }
       if (k === "i" && isGM()) { setTool("interior"); e.preventDefault(); return; }
+      if (k === "q" && isGM()) { setTool("seam"); e.preventDefault(); return; }
       if (k === "w" && isGM()) { setTool("wall_line"); e.preventDefault(); return; }
       if (k === "f" && isGM()) { setTool("terrain_paint"); e.preventDefault(); return; }
       if (k === "h" && isGM()) { setTool("fog_paint"); e.preventDefault(); return; }
@@ -3858,6 +3905,14 @@
       return;
     }
 
+    if (t === "seam" && isGM()) {
+      if (hoveredGeometrySeamInfo) {
+        _toggleHoveredGeometrySeam();
+        requestRender();
+      }
+      return;
+    }
+
     if (t === "pen") {
       activeStroke = {
         id: makeId(),
@@ -4074,12 +4129,49 @@
         setInteriorWallHoverState(wallHit, cutHit);
       }
       if (hoveredInteriorId || hoveredInteriorEdge || hoveredInteriorResize) setInteriorHoverState(null, null, null);
+      if (hoveredGeometrySeamInfo) {
+        hoveredGeometrySeamInfo = null;
+        updateCanvasCursor();
+        requestRender();
+      }
+    } else if (t === "seam") {
+      const seamHit = hitTestGeometrySeam(wpos.x, wpos.y);
+      const prevKey = hoveredGeometrySeamInfo ? `${hoveredGeometrySeamInfo.seamKey}:${hoveredGeometrySeamInfo.mode}` : "";
+      const nextKey = seamHit ? `${seamHit.seamKey}:${seamHit.mode}` : "";
+      let seamVisualChanged = false;
+      if (prevKey !== nextKey) {
+        hoveredGeometrySeamInfo = seamHit;
+        updateCanvasCursor();
+        seamVisualChanged = true;
+      }
+      if (hoveredInteriorId || hoveredInteriorEdge || hoveredInteriorResize) setInteriorHoverState(null, null, null);
+      if (hoveredInteriorWall || hoveredInteriorWallCut) setInteriorWallHoverState(null, null);
+      if (hoveredGeometryOpeningInfo) {
+        hoveredGeometryOpeningInfo = null;
+        seamVisualChanged = true;
+      }
+      if (seamVisualChanged) requestRender();
     } else if (hoveredInteriorId || hoveredInteriorEdge || hoveredInteriorResize) {
       setInteriorHoverState(null, null, null);
       setInteriorWallHoverState(null, null);
+      if (hoveredGeometrySeamInfo) {
+        hoveredGeometrySeamInfo = null;
+        updateCanvasCursor();
+        requestRender();
+      }
     } else if (hoveredInteriorWall || hoveredInteriorWallCut) {
       setInteriorWallHoverState(null, null);
+      if (hoveredGeometrySeamInfo) {
+        hoveredGeometrySeamInfo = null;
+        updateCanvasCursor();
+        requestRender();
+      }
     } else {
+      if (hoveredGeometrySeamInfo) {
+        hoveredGeometrySeamInfo = null;
+        updateCanvasCursor();
+        requestRender();
+      }
       updateCanvasCursor();
     }
 

@@ -155,6 +155,7 @@
   const toolBtnErase = document.getElementById("toolBtnErase");
   const toolBtnRuler = document.getElementById("toolBtnRuler");
   const toolBtnInterior = document.getElementById("toolBtnInterior");
+  const toolBtnSeam = document.getElementById("toolBtnSeam");
   const toolBtnTerrainPaint = document.getElementById("toolBtnTerrainPaint");
   const toolBtnFogPaint = document.getElementById("toolBtnFogPaint");
   const toolBtnCaveBrush = document.getElementById("toolBtnCaveBrush");
